@@ -7,11 +7,8 @@ from forge.skills.resolver import resolve_skill_paths
 
 @pytest.fixture
 def skills_dir(tmp_path: Path) -> Path:
-    """Create a skills directory with default skills."""
-    default = tmp_path / "default"
-    default.mkdir()
-    (default / "generate-prd").mkdir()
-    (default / "analyze-ci").mkdir()
+    """Create a skills directory with a default subdirectory."""
+    (tmp_path / "default").mkdir()
     return tmp_path
 
 
@@ -48,6 +45,7 @@ def test_nonexistent_project_dir_returns_default(skills_dir: Path) -> None:
     assert result == [str(skills_dir / "default") + "/"]
 
 
-def test_paths_have_trailing_slash(skills_dir: Path) -> None:
-    result = resolve_skill_paths("PROJ-1", skills_dir)
-    assert all(p.endswith("/") for p in result)
+def test_override_path_is_file_returns_default(skills_dir: Path) -> None:
+    (skills_dir / "proj").touch()  # file, not a directory
+    result = resolve_skill_paths("PROJ-123", skills_dir)
+    assert result == [str(skills_dir / "default") + "/"]
