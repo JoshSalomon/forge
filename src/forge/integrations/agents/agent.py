@@ -33,6 +33,7 @@ except ImportError:
 from forge.config import Settings, get_settings
 from forge.integrations.langfuse import get_langfuse_config, get_langfuse_context
 from forge.prompts import load_prompt, set_default_version
+from forge.skills.resolver import resolve_skill_paths
 
 # Optional Vertex AI support (Claude and Gemini)
 try:
@@ -159,7 +160,6 @@ class ForgeAgent:
         the agent_skill_paths setting.
         """
         if ticket_key:
-            from forge.skills.resolver import resolve_skill_paths
             skills_dir = PROJECT_ROOT / "skills"
             paths = resolve_skill_paths(ticket_key, skills_dir)
             logger.debug(f"Using skill paths (resolver): {paths}")
@@ -423,47 +423,6 @@ class ForgeAgent:
             system_prompt=system_prompt,
             checkpointer=self._checkpointer,
             tools=mcp_tools if mcp_tools else None,
-        )
-
-        return agent
-
-    def _create_agent(
-        self,
-        system_prompt: str,
-    ) -> Any:
-        """Create a Deep Agent instance (sync wrapper).
-
-        For MCP tools, use _create_agent_async instead.
-        This sync version does not load MCP tools.
-
-        Args:
-            system_prompt: System prompt for the agent.
-
-        Returns:
-            Configured Deep Agent.
-        """
-        root_dir = self._get_root_dir()
-        skill_paths = self._get_skill_paths()
-        mcp_config = self._load_mcp_config()
-
-        # Log configuration for visibility
-        logger.info(f"Agent config: root_dir={root_dir}, skills={skill_paths}")
-        logger.info(
-            f"Agent MCP servers: {list(mcp_config.keys())} (sync - no tools loaded)")
-
-        # Create filesystem backend
-        backend = FilesystemBackend(root_dir=str(root_dir))
-
-        # Create the model (supports both direct API and Vertex AI)
-        model = self._create_model()
-
-        # Create the agent (MCP tools loaded in async version)
-        agent = create_deep_agent(
-            model=model,
-            backend=backend,
-            skills=skill_paths,
-            system_prompt=system_prompt,
-            checkpointer=self._checkpointer,
         )
 
         return agent
