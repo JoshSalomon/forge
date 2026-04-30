@@ -165,6 +165,7 @@ async def regenerate_spec_with_feedback(state: WorkflowState) -> WorkflowState:
             original_content=original_spec,
             feedback=feedback,
             content_type="spec",
+            ticket_key=ticket_key,
         )
 
         # Store updated spec in Jira (comment or custom field based on config)

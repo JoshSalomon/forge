@@ -498,6 +498,7 @@ async def update_single_task(state: WorkflowState) -> WorkflowState:
             original_content=original_description,
             feedback=feedback,
             content_type="task",
+            ticket_key=ticket_key,
         )
 
         # Update Task in Jira

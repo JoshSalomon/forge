@@ -288,6 +288,7 @@ async def update_single_epic(state: WorkflowState) -> WorkflowState:
             original_content=original_plan,
             feedback=feedback,
             content_type="epic",
+            ticket_key=ticket_key,
         )
 
         # Update Epic description

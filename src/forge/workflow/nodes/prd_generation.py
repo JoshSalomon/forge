@@ -158,6 +158,7 @@ async def regenerate_prd_with_feedback(state: WorkflowState) -> WorkflowState:
             original_content=original_prd,
             feedback=feedback,
             content_type="prd",
+            ticket_key=ticket_key,
         )
 
         # Update Jira with regenerated PRD

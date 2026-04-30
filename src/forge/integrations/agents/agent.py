@@ -943,6 +943,7 @@ NOTE: No repositories configured. Use REPO: unknown for now."""
         original_content: str,
         feedback: str,
         content_type: str,
+        ticket_key: str | None = None,
     ) -> str:
         """Regenerate content incorporating feedback.
 
@@ -958,6 +959,7 @@ NOTE: No repositories configured. Use REPO: unknown for now."""
             "prd": "generate-prd",
             "spec": "generate-spec",
             "epic": "decompose-epics",
+            "task": "generate-tasks",
         }
         skill_name = skill_map.get(content_type, "generate-prd")
 
@@ -973,7 +975,7 @@ NOTE: No repositories configured. Use REPO: unknown for now."""
         result = await self.run_task(
             task=skill_name,
             prompt=prompt,
-            context={"is_revision": True},
+            context={"is_revision": True, "ticket_key": ticket_key or ""},
         )
 
         logger.info(f"Regenerated {content_type} ({len(result)} chars)")
