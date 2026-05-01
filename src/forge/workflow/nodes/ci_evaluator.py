@@ -65,7 +65,7 @@ async def evaluate_ci_status(state: WorkflowState) -> WorkflowState:
         _permanent_pending = settings.ignored_ci_checks
 
         all_passed = True
-        any_skipped = False
+        _any_skipped = False
         any_still_running = False
         failed_checks = []
 
@@ -99,7 +99,7 @@ async def evaluate_ci_status(state: WorkflowState) -> WorkflowState:
                     logger.info(
                         f"CI check skipped by human override: {check.get('name')}"
                     )
-                    any_skipped = True
+                    _any_skipped = True
                     continue
 
                 check_name = check.get("name", "")
@@ -529,6 +529,27 @@ async def escalate_to_blocked(state: WorkflowState) -> WorkflowState:
         await jira.close()
 
 
+def _parse_gh_log_command(log_url: str, check_name: str) -> str | None:
+    """Build a ready-to-run gh command to fetch job logs from a GitHub Actions URL.
+
+    Expects URL format:
+      https://github.com/{owner}/{repo}/actions/runs/{run_id}/job/{job_id}
+
+    Returns:
+      A gh command string, or None if the URL doesn't match the expected format.
+    """
+    parts = log_url.rstrip("/").split("/")
+    # ["", "", "github.com", owner, repo, "actions", "runs", run_id, "job", job_id]
+    if len(parts) < 10 or parts[5] != "actions" or parts[8] != "job":
+        return None
+    owner, repo, job_id = parts[3], parts[4], parts[9]
+    safe_name = check_name.replace(" ", "-").replace("/", "-")
+    return (
+        f"gh api repos/{owner}/{repo}/actions/jobs/{job_id}/logs"
+        f" > .forge/logs/{safe_name}-{job_id}.txt"
+    )
+
+
 def _collect_error_info(failed_checks: list[dict[str, Any]]) -> str:
     """Collect and format error information from failed checks.
 
@@ -545,8 +566,12 @@ def _collect_error_info(failed_checks: list[dict[str, Any]]) -> str:
         parts.append(f"Result: {check.get('conclusion', 'failed')}")
 
         log_url = check.get("log_url", "")
+        check_name = check.get("name", "unknown")
         if log_url:
             parts.append(f"Log URL: {log_url}")
+            gh_cmd = _parse_gh_log_command(log_url, check_name)
+            if gh_cmd:
+                parts.append(f"Fetch logs: `{gh_cmd}`")
 
         output = check.get("output", {})
         if output:
