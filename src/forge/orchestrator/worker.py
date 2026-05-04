@@ -281,9 +281,30 @@ class OrchestratorWorker:
 
         # GitHub check_run/check_suite events are the explicit signal for wait_for_ci_gate.
         # They don't carry Jira labels or comments, so handle them before the label loop.
+        # For check_suite and check_run events (both real GitHub webhooks and poller
+        # forwarded ones), only wake up CI evaluation when the suite is completed.
+        # GitHub fires check_suite webhooks for created/in_progress/completed — evaluating
+        # on the earlier actions would see a partial set of check runs and could
+        # prematurely declare success. Other event types (push, pull_request) always wake up.
         if current_node == "wait_for_ci_gate" and message.source == EventSource.GITHUB:
-            is_ci_webhook = True
-            logger.info(f"Detected GitHub CI webhook signal for {current_node}")
+            event = message.event_type
+            is_check_event = "check_suite" in event or "check_run" in event
+            if is_check_event:
+                suite_status = (
+                    payload.get("check_suite", {}).get("status")
+                    or payload.get("check_run", {}).get("check_suite", {}).get("status")
+                )
+                if suite_status and suite_status != "completed":
+                    logger.info(
+                        f"Ignoring {event} for {message.ticket_key}: "
+                        f"check_suite not yet completed (status={suite_status!r})"
+                    )
+                else:
+                    is_ci_webhook = True
+                    logger.info(f"Detected GitHub CI webhook signal for {current_node}")
+            else:
+                is_ci_webhook = True
+                logger.info(f"Detected GitHub CI webhook signal for {current_node}")
 
         # GitHub issue_comment events: detect /forge skip-gate and /forge unskip-gate
         # commands posted as PR comments.
