@@ -30,9 +30,9 @@ None of these catch failures before the PR is opened.
 
 ### Overview
 
-Add an opt-in `validate-pre-pr` skill that defines structured check commands inside a YAML block. A new `pre_pr_validation` node — inserted between `implement_task` and `local_review` — reads the skill, generates a bash script from the check definitions, and runs all checks in a **single lightweight container** invocation. If blocking checks fail, the node spawns a **separate agent container** (`validation_fix`) with the failure output and the skill's fix guidance to repair the issues. The flow then loops back to `pre_pr_validation` for re-validation. The loop repeats up to `max_cycles` times before either blocking the workflow or proceeding with annotations, as configured per-check.
+Add an opt-in `validate-pre-pr` skill that defines structured check commands inside a YAML block. A new `pre_pr_validation` node — inserted between `implement_task` and `local_review` — reads the skill, generates a bash script from the check definitions, and runs all checks in a **single lightweight container** invocation. If blocking checks fail, the node spawns a **separate agent container** (`validation_fix`) with the failure output and the skill's fix guidance to repair the issues. The flow then loops back to `pre_pr_validation` for re-validation. The loop repeats up to `max_cycles` times before either blocking the workflow or proceeding with annotations, as configured per-check via a single `blocking` field (`required`, `best-effort`, or `advisory`).
 
-`local_review` is **not part of the validation loop**. It runs once after all blocking checks pass, performing its existing job of reviewing the full diff for code quality. This keeps local_review's scope unchanged and avoids compounding its internal retry logic (up to 2 passes) with the validation cycle.
+`local_review` is **not part of the validation loop**. It runs once after all required/best-effort checks pass (or cycles are exhausted), performing its existing job of reviewing the full diff for code quality. This keeps local_review's scope unchanged and avoids compounding its internal retry logic (up to 2 passes) with the validation cycle.
 
 Projects that don't define the skill skip validation entirely — current behavior is preserved.
 
@@ -56,31 +56,28 @@ max_cycles: 3
 checks:
   - name: lint
     command: "ruff check src/"
-    blocking: true
+    blocking: required
     timeout: 120
-    on_exhaustion: block
 
   - name: type-check
     command: "mypy src/forge/"
-    blocking: true
+    blocking: best-effort
     timeout: 300
-    on_exhaustion: proceed
 
   - name: unit-tests
     command: "pytest tests/unit/ -x --tb=short"
-    blocking: true
+    blocking: required
     timeout: 600
-    on_exhaustion: block
 
   - name: format-check
     command: "ruff format --check src/"
-    blocking: false
+    blocking: advisory
     timeout: 60
 ```
 
 ## Fix Guidance
 
-When a blocking check fails, focus on:
+When a required or best-effort check fails, focus on:
 - **lint**: Fix the reported violations. Do not disable rules.
 - **type-check**: Add type annotations or fix type errors. Avoid `# type: ignore`.
 - **unit-tests**: Read the failure output carefully. Fix the code, not the test.
@@ -94,9 +91,8 @@ Field definitions:
 | `max_cycles` | int | 3 | Maximum validate→fix→re-validate loops before exhaustion |
 | `checks[].name` | string | required | Human-readable check name (used in logs, PR annotations) |
 | `checks[].command` | string | required | Shell command to execute in the workspace |
-| `checks[].blocking` | bool | `true` | If true, failure prevents PR creation (subject to `on_exhaustion`) |
+| `checks[].blocking` | string | `"required"` | `"required"`: must pass, block workflow if exhausted. `"best-effort"`: try to fix, proceed with PR annotation if exhausted. `"advisory"`: report only, never fix or block. |
 | `checks[].timeout` | int | 300 | Per-check timeout in seconds |
-| `checks[].on_exhaustion` | string | `"block"` | `"block"`: escalate to blocked. `"proceed"`: create PR with failure annotation |
 
 The skill is resolved via the existing `skills/resolver.py` — project-specific overrides at `skills/{project}/validate-pre-pr/SKILL.md` take precedence over `skills/default/validate-pre-pr/SKILL.md`.
 
@@ -130,7 +126,7 @@ class PRIntegrationState(TypedDict, total=False):
     validation_cycle: int                    # current cycle count (0-based)
     validation_results: list[dict[str, Any]] # per-check results from last run
     validation_exhausted: list[str]          # check names that exhausted retries
-    validation_advisory_failures: list[str]  # advisory check names that failed
+    validation_advisory_failures: list[str]  # advisory/best-effort check names that failed
 ```
 
 Initialized to `validation_cycle=0`, empty lists for the rest.
@@ -147,10 +143,10 @@ A new workflow node that:
 6. **Read results**: Parses `.forge/validation-results.json` written by the script.
 7. **Route**:
    - All checks pass → `local_review` (standard diff quality review, no fix loop)
-   - Blocking failures + cycles remaining → `validation_fix` (agent fixes issues)
-   - Blocking failures + cycles exhausted + all `on_exhaustion: proceed` → `local_review` then `create_pr` (with annotations)
-   - Blocking failures + cycles exhausted + any `on_exhaustion: block` → `escalate_blocked`
-   - Only advisory failures → `local_review` (advisory results included for awareness)
+   - `required` or `best-effort` failures + cycles remaining → `validation_fix` (agent fixes issues)
+   - Cycles exhausted + any `required` still failing → `escalate_blocked`
+   - Cycles exhausted + only `best-effort` still failing → `local_review` then `create_pr` (with annotations)
+   - Only `advisory` failures → `local_review` (advisory results included for awareness, no fix attempted)
 
 #### Validation script generation
 
@@ -169,7 +165,7 @@ EXIT_CODE=$?
 ELAPSED=$(( $(date +%s) - START ))
 # Append JSON entry (truncate output to last 2000 chars)
 cat >> "$RESULTS_FILE" << ENTRY
-  {"name": "lint", "command": "ruff check src/", "blocking": true,
+  {"name": "lint", "command": "ruff check src/", "blocking": "required",
    "exit_code": $EXIT_CODE, "output": "...", "passed": $([ $EXIT_CODE -eq 0 ] && echo true || echo false),
    "elapsed_seconds": $ELAPSED},
 ENTRY
@@ -206,7 +202,7 @@ After the container exits, the orchestrator reads `.forge/validation-results.jso
 
 #### New node — `validation_fix`
 
-When blocking checks fail, a **separate agent container** is spawned to fix the issues. This uses the standard Deep Agents container (same as `implement_task` and `local_review`) with a dedicated prompt:
+When `required` or `best-effort` checks fail, a **separate agent container** is spawned to fix the issues. This uses the standard Deep Agents container (same as `implement_task` and `local_review`) with a dedicated prompt:
 
 ```markdown
 ## Validation Fix
@@ -245,7 +241,7 @@ The only change to `local_review`'s routing is the inbound edge — it now recei
 
 #### PR body annotations
 
-When validation proceeds with known failures (`on_exhaustion: proceed`), the PR body includes an annotation section:
+When validation proceeds with unresolved `best-effort` or `advisory` failures, the PR body includes an annotation section:
 
 ```markdown
 ## ⚠️ Pre-PR Validation Notes
@@ -257,7 +253,7 @@ The following checks could not be resolved after 3 validation cycles:
 | type-check | ❌ Failed | `mypy src/forge/` — 2 errors remaining (see logs) |
 | format-check | ⚠️ Advisory | `ruff format --check src/` — 3 files need formatting |
 
-These failures were classified as non-blocking by the project's validation configuration.
+These checks were classified as `best-effort` or `advisory` in the project's validation skill.
 ```
 
 #### Graph changes
@@ -268,18 +264,21 @@ Both feature and bug workflow graphs are updated:
 ```
 implement_task → (all tasks done) → pre_pr_validation
                                          │
-                              ┌──────────┼──────────────────┐
-                              │          │                   │
-                              │    (blocking failures)  (exhausted + block)
-                              │          │                   │
-                              │          ▼                   ▼
-                              │    validation_fix      escalate_blocked
+                              ┌──────────┼──────────────────────┐
+                              │          │                       │
+                              │    (required/best-effort    (exhausted +
+                              │     failures, cycles         required still
+                              │     remaining)               failing)
+                              │          │                       │
+                              │          ▼                       ▼
+                              │    validation_fix          escalate_blocked
                               │          │
                               │          └──→ pre_pr_validation (re-validate)
                               │
                          (all pass or
                           no skill or
-                          exhausted + proceed)
+                          exhausted with only
+                          best-effort/advisory)
                               │
                               ▼
                         local_review → create_pr
@@ -297,9 +296,9 @@ New nodes:
 New edges:
 - `implement_task` → `pre_pr_validation` (replaces direct edge to `local_review`)
 - `implement_bug_fix` → `pre_pr_validation` (replaces direct edge to `local_review` / `create_pr`)
-- `pre_pr_validation` → `local_review` (all checks pass, no skill, or exhausted with `proceed`)
-- `pre_pr_validation` → `validation_fix` (blocking failures, cycles remaining)
-- `pre_pr_validation` → `escalate_blocked` (blocking failures, exhausted with `block`)
+- `pre_pr_validation` → `local_review` (all checks pass, no skill, or exhausted with only `best-effort`/`advisory` failures)
+- `pre_pr_validation` → `validation_fix` (`required` or `best-effort` failures, cycles remaining)
+- `pre_pr_validation` → `escalate_blocked` (exhausted with `required` checks still failing)
 - `validation_fix` → `pre_pr_validation` (re-validate after fix, incrementing `validation_cycle`)
 - `local_review` → `create_pr` (unchanged — local_review no longer routes back to validation)
 
@@ -347,21 +346,22 @@ All blocking checks passed. Running local review...
 Creating PR...
 ```
 
-**Validation exhausted with on_exhaustion: block:**
+**Validation exhausted — required check still failing:**
 
 ```
 [Forge, after 3 cycles]
-Pre-PR validation failed after 3 cycles. Blocking checks still failing:
-  ❌ unit-tests — 2 test failures remaining
+Pre-PR validation failed after 3 cycles. Required checks still failing:
+  ❌ unit-tests (required) — 2 test failures remaining
 
 Workflow blocked. Add forge:retry label to retry from validation.
 ```
 
-**Validation exhausted with on_exhaustion: proceed:**
+**Validation exhausted — only best-effort check failing:**
 
 ```
 [Forge, after 3 cycles]
-Pre-PR validation: 3 cycles exhausted. Proceeding with known failures.
+Pre-PR validation: 3 cycles exhausted. Only best-effort checks remaining.
+Proceeding with annotations...
 
 Creating PR with validation notes...
 
@@ -406,7 +406,7 @@ Proceeding to local review...
 
 6. **Phase 6: PR annotation** — When validation proceeds with known failures, inject the "Pre-PR Validation Notes" section into the PR body via `pr_creation.py`. (~half day)
 
-7. **Phase 7: Tests** — Unit tests for the validation node (skip when no skill, all pass, blocking failure, advisory failure, exhaustion with block, exhaustion with proceed). Unit tests for `validation_fix` node. Flow test for the validate→fix→re-validate loop. Integration test for the full implement→validate→review→PR path. (~1 day)
+7. **Phase 7: Tests** — Unit tests for the validation node (skip when no skill, all pass, required failure, best-effort failure, advisory failure, exhaustion with required still failing, exhaustion with only best-effort remaining). Unit tests for `validation_fix` node. Flow test for the validate→fix→re-validate loop. Integration test for the full implement→validate→review→PR path. (~1 day)
 
 ### Dependencies
 
@@ -420,7 +420,7 @@ Proceeding to local review...
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
 | Check commands fail due to missing dependencies in container | High (first use per project) | Med | Document that check commands must work inside the Forge container image; allow projects to extend the image or use a custom image |
-| Validate→fix loop runs indefinitely on unfixable errors | Low (capped by `max_cycles`) | Med | `max_cycles` hard cap; `on_exhaustion` determines whether to block or proceed |
+| Validate→fix loop runs indefinitely on unfixable errors | Low (capped by `max_cycles`) | Med | `max_cycles` hard cap; `blocking` level determines whether to block (`required`) or proceed (`best-effort`) |
 | `validation_fix` agent makes things worse (introduces new failures) | Med | Med | Re-validation catches regressions immediately; cycle count limits damage; blocking checks ensure no net-negative PRs |
 | YAML block parsing breaks on edge cases (nested YAML, special characters) | Low | Low | Use `yaml.safe_load()`; unit test edge cases; graceful fallback (skip validation on parse error) |
 | Generated bash script has quoting/escaping issues with check output | Med | Low | Use a Python wrapper script inside the container instead of raw bash for JSON serialization; unit test with adversarial command output |
