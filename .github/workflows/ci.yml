@@ -51,4 +51,9 @@ jobs:
         run: uv sync --frozen --extra dev
 
       - name: Run unit tests
+        env:
+          JIRA_BASE_URL: https://example.atlassian.net
+          JIRA_API_TOKEN: dummy
+          JIRA_USER_EMAIL: dummy@example.com
+          GITHUB_TOKEN: dummy
         run: uv run pytest tests/unit/ -q
