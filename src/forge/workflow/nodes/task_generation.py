@@ -134,7 +134,11 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
                     try:
                         repo = await jira.get_project_default_repo(project_key)
                     except MissingProjectConfig:
-                        repo = settings.github_default_repo if not settings.forge_require_project_config else ""
+                        repo = (
+                            settings.github_default_repo
+                            if not settings.forge_require_project_config
+                            else ""
+                        )
 
                 if not repo or "/" not in repo:
                     logger.warning(

@@ -98,9 +98,7 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
                 await jira.add_comment(ticket_key, _missing_repo_config_comment(project_key))
                 await jira.set_workflow_label(ticket_key, ForgeLabel.BLOCKED)
                 return {**state, "last_error": str(e), "current_node": "decompose_epics"}
-            logger.warning(
-                f"Project {project_key}: {e} — falling back to GITHUB_KNOWN_REPOS"
-            )
+            logger.warning(f"Project {project_key}: {e} — falling back to GITHUB_KNOWN_REPOS")
             for repo in settings.known_repos:
                 available_repos.add(repo)
 
