@@ -1,0 +1,105 @@
+[project]
+site_name = "Forge SDLC Guide"
+site_url = "https://forge-sdlc.github.io/forge/"
+site_description = "AI-powered SDLC orchestrator — from Jira ticket to shipped PR"
+repo_url = "https://github.com/forge-sdlc/forge"
+repo_name = "forge-sdlc/forge"
+edit_uri = "edit/main/docs/"
+
+nav = [
+  {"Home" = "index.md"},
+  {"Getting Started" = "getting-started.md"},
+  {"User Guide" = [
+    {"Feature Workflow" = "guide/feature-workflow.md"},
+    {"Bug Workflow" = "guide/bug-workflow.md"},
+    {"Jira Labels" = "guide/labels.md"},
+    {"PR Commands" = "guide/pr-commands.md"},
+  ]},
+  {"Developer Guide" = [
+    {"Overview" = "developer-guide.md"},
+    {"Local Setup" = "dev/setup.md"},
+    {"Testing" = "dev/testing.md"},
+    {"Contributing" = "dev/contributing.md"},
+  ]},
+  {"Skills" = [
+    {"Overview" = "skills/index.md"},
+    {"Authoring Guide" = "skills/authoring.md"},
+    {"Default Skills" = "skills/defaults.md"},
+  ]},
+  {"Reference" = [
+    {"API Endpoints" = "reference/api.md"},
+    {"Configuration" = "reference/config.md"},
+    {"Proposals" = "reference/proposals.md"},
+  ]},
+]
+
+[project.theme]
+logo = "images/logo.png"
+favicon = "images/logo.png"
+language = "en"
+features = [
+  "navigation.tabs",
+  "navigation.sections",
+  "navigation.expand",
+  "navigation.top",
+  "toc.follow",
+  "search.suggest",
+  "search.highlight",
+  "content.code.copy",
+  "content.code.annotate",
+  "content.action.edit",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/forge-sdlc/forge"
+
+[project.markdown_extensions.admonition]
+
+[project.markdown_extensions.pymdownx.details]
+
+[project.markdown_extensions.pymdownx.superfences]
+custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
+
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+
+[project.markdown_extensions.pymdownx.inlinehilite]
+
+[project.markdown_extensions.pymdownx.snippets]
+
+[project.markdown_extensions.pymdownx.emoji]
+emoji_index = "zensical.extensions.emoji.twemoji"
+emoji_generator = "zensical.extensions.emoji.to_svg"
+
+[project.markdown_extensions.attr_list]
+
+[project.markdown_extensions.md_in_html]
+
+[project.markdown_extensions.tables]
+
+[project.markdown_extensions.toc]
+permalink = true
+
+[project.markdown_extensions.zensical.extensions.glightbox]
