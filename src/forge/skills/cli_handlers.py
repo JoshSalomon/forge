@@ -302,7 +302,23 @@ async def _resolve_head_sha(clone_dir: Path) -> str:
 
 
 async def cmd_skills_list(_args: argparse.Namespace) -> int:
-    """List installed skills (stub – not yet implemented).
+    """List all installed skills organised by project directory.
+
+    Scans the ``skills/`` directory under the current working directory for
+    project subdirectories (e.g. ``default``, ``myproj``).  Within each
+    project directory, skills are identified as subdirectories that contain a
+    ``SKILL.md`` file.  The lock file (``skills/skills.lock``) is consulted to
+    show the source URL for each skill; skills absent from the lock file are
+    labelled ``builtin``.
+
+    Output format::
+
+        skills/default/  (2 skills)
+          skill-a  [https://github.com/org/repo.git]
+          skill-b  [builtin]
+
+        skills/myproj/  (1 skill)
+          my-skill  [/abs/path/to/local/skills]
 
     Args:
         _args: Parsed CLI arguments (unused).
@@ -310,6 +326,66 @@ async def cmd_skills_list(_args: argparse.Namespace) -> int:
     Returns:
         Always ``0``.
     """
+    from forge.skills.lock import read_lock_file
+
+    skills_root = Path.cwd() / "skills"
+
+    # ------------------------------------------------------------------
+    # 1. Check that the skills directory exists.
+    # ------------------------------------------------------------------
+    if not skills_root.is_dir():
+        print("No skills directory found. Run 'forge skills install' to install skills.")
+        return 0
+
+    # ------------------------------------------------------------------
+    # 2. Collect project subdirectories (sorted for deterministic output).
+    # ------------------------------------------------------------------
+    project_dirs = sorted(
+        entry for entry in skills_root.iterdir() if entry.is_dir() and entry.name != "__pycache__"
+    )
+
+    if not project_dirs:
+        print("No skills installed. Run 'forge skills install' to install skills.")
+        return 0
+
+    # ------------------------------------------------------------------
+    # 3. Read the lock file once to look up source information.
+    # ------------------------------------------------------------------
+    lock_path = skills_root / "skills.lock"
+    lock_file = read_lock_file(lock_path)
+
+    # Build a mapping: (target, skill_name) -> source string for fast lookup.
+    # A LockEntry records all skills installed from a single source into a
+    # single target directory, so we expand skills list here.
+    skill_source: dict[tuple[str, str], str] = {}
+    for entry in lock_file.packages:
+        for skill_name in entry.skills:
+            skill_source[(entry.target, skill_name)] = entry.source
+
+    # ------------------------------------------------------------------
+    # 4. Print the hierarchical listing.
+    # ------------------------------------------------------------------
+    any_printed = False
+    for project_dir in project_dirs:
+        # Identify skills: subdirectories containing a SKILL.md file.
+        skill_dirs = sorted(
+            entry
+            for entry in project_dir.iterdir()
+            if entry.is_dir() and (entry / "SKILL.md").is_file()
+        )
+
+        skill_word = "skill" if len(skill_dirs) == 1 else "skills"
+        print(f"skills/{project_dir.name}/  ({len(skill_dirs)} {skill_word})")
+
+        for skill_dir in skill_dirs:
+            source = skill_source.get((project_dir.name, skill_dir.name), "builtin")
+            print(f"  {skill_dir.name}  [{source}]")
+
+        any_printed = True
+
+    if not any_printed:
+        print("No skills installed. Run 'forge skills install' to install skills.")
+
     return 0
 
 

@@ -554,17 +554,259 @@ class TestCmdSkillsInstallLocalPath:
 
 
 # ---------------------------------------------------------------------------
-# Stub handlers
+# Stub handlers (cmd_skills_update only – cmd_skills_list is fully tested below)
 # ---------------------------------------------------------------------------
 
 
 class TestStubHandlers:
     @pytest.mark.asyncio
-    async def test_cmd_skills_list_returns_0(self):
-        args = argparse.Namespace()
-        assert await cmd_skills_list(args) == 0
-
-    @pytest.mark.asyncio
     async def test_cmd_skills_update_returns_0(self):
         args = argparse.Namespace()
         assert await cmd_skills_update(args) == 0
+
+
+# ---------------------------------------------------------------------------
+# cmd_skills_list
+# ---------------------------------------------------------------------------
+
+
+def _make_skill_dir(parent: Path, name: str) -> Path:
+    """Create a skill directory with a SKILL.md file inside *parent*."""
+    skill = parent / name
+    skill.mkdir(parents=True, exist_ok=True)
+    (skill / "SKILL.md").write_text(f"# {name}")
+    return skill
+
+
+def _list_args() -> argparse.Namespace:
+    return argparse.Namespace()
+
+
+class TestCmdSkillsList:
+    """Tests for cmd_skills_list."""
+
+    # ------------------------------------------------------------------
+    # No skills directory / empty state
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_no_skills_dir_prints_message(self, tmp_path: Path, capsys):
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            result = await cmd_skills_list(_list_args())
+
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "No skills directory" in out
+
+    @pytest.mark.asyncio
+    async def test_empty_skills_dir_prints_message(self, tmp_path: Path, capsys):
+        (tmp_path / "skills").mkdir()
+
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            result = await cmd_skills_list(_list_args())
+
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "No skills installed" in out
+
+    # ------------------------------------------------------------------
+    # Basic listing
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_lists_skills_in_default_dir(self, tmp_path: Path, capsys):
+        default_dir = tmp_path / "skills" / "default"
+        _make_skill_dir(default_dir, "skill-a")
+        _make_skill_dir(default_dir, "skill-b")
+
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            result = await cmd_skills_list(_list_args())
+
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "skills/default/" in out
+        assert "skill-a" in out
+        assert "skill-b" in out
+
+    @pytest.mark.asyncio
+    async def test_lists_skills_in_project_dir(self, tmp_path: Path, capsys):
+        proj_dir = tmp_path / "skills" / "MYPROJ"
+        _make_skill_dir(proj_dir, "my-skill")
+
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            result = await cmd_skills_list(_list_args())
+
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "skills/MYPROJ/" in out
+        assert "my-skill" in out
+
+    @pytest.mark.asyncio
+    async def test_multiple_project_dirs_all_shown(self, tmp_path: Path, capsys):
+        _make_skill_dir(tmp_path / "skills" / "default", "common")
+        _make_skill_dir(tmp_path / "skills" / "proj-a", "alpha")
+        _make_skill_dir(tmp_path / "skills" / "proj-b", "beta")
+
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            result = await cmd_skills_list(_list_args())
+
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "skills/default/" in out
+        assert "skills/proj-a/" in out
+        assert "skills/proj-b/" in out
+
+    # ------------------------------------------------------------------
+    # Skill counts in header
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_singular_skill_count(self, tmp_path: Path, capsys):
+        proj_dir = tmp_path / "skills" / "default"
+        _make_skill_dir(proj_dir, "solo")
+
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            await cmd_skills_list(_list_args())
+
+        out = capsys.readouterr().out
+        assert "1 skill)" in out  # singular (not "skills")
+
+    @pytest.mark.asyncio
+    async def test_plural_skill_count(self, tmp_path: Path, capsys):
+        proj_dir = tmp_path / "skills" / "default"
+        _make_skill_dir(proj_dir, "skill-one")
+        _make_skill_dir(proj_dir, "skill-two")
+
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            await cmd_skills_list(_list_args())
+
+        out = capsys.readouterr().out
+        assert "2 skills)" in out
+
+    # ------------------------------------------------------------------
+    # Lock file – source attribution
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_skill_with_lock_entry_shows_source(self, tmp_path: Path, capsys):
+        """Skills that appear in the lock file display their source URL."""
+        from datetime import UTC, datetime
+
+        import yaml
+
+        from forge.skills.models import LockEntry, LockFile
+
+        proj_dir = tmp_path / "skills" / "default"
+        _make_skill_dir(proj_dir, "toolbox")
+
+        # Write a real lock file.
+        entry = LockEntry(
+            source="https://github.com/org/skills.git",
+            ref="main",
+            resolved_commit="abc123",
+            mode="path",
+            path=None,
+            skill_mapping=None,
+            target="default",
+            skills=["toolbox"],
+            fetched_at=datetime.now(tz=UTC),
+        )
+        lock = LockFile(packages=[entry])
+        lock_path = tmp_path / "skills" / "skills.lock"
+        lock_path.write_text(yaml.dump(lock.model_dump(mode="json")))
+
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            result = await cmd_skills_list(_list_args())
+
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "https://github.com/org/skills.git" in out
+
+    @pytest.mark.asyncio
+    async def test_skill_without_lock_entry_shows_builtin(self, tmp_path: Path, capsys):
+        """Skills absent from the lock file are marked as 'builtin'."""
+        proj_dir = tmp_path / "skills" / "default"
+        _make_skill_dir(proj_dir, "builtin-skill")
+        # No lock file written → all skills are "builtin".
+
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            result = await cmd_skills_list(_list_args())
+
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "[builtin]" in out
+
+    @pytest.mark.asyncio
+    async def test_mixed_skills_show_correct_sources(self, tmp_path: Path, capsys):
+        """Some skills locked, some builtin – both labelled correctly."""
+        from datetime import UTC, datetime
+
+        import yaml
+
+        from forge.skills.models import LockEntry, LockFile
+
+        proj_dir = tmp_path / "skills" / "default"
+        _make_skill_dir(proj_dir, "from-git")
+        _make_skill_dir(proj_dir, "local-builtin")
+
+        entry = LockEntry(
+            source="https://github.com/org/repo.git",
+            ref="",
+            resolved_commit="deadbeef",
+            mode="path",
+            path=None,
+            skill_mapping=None,
+            target="default",
+            skills=["from-git"],
+            fetched_at=datetime.now(tz=UTC),
+        )
+        lock = LockFile(packages=[entry])
+        lock_path = tmp_path / "skills" / "skills.lock"
+        lock_path.write_text(yaml.dump(lock.model_dump(mode="json")))
+
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            result = await cmd_skills_list(_list_args())
+
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "https://github.com/org/repo.git" in out
+        assert "[builtin]" in out
+
+    # ------------------------------------------------------------------
+    # Non-skill subdirs (no SKILL.md) are excluded
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_dirs_without_skill_md_are_excluded(self, tmp_path: Path, capsys):
+        """Subdirectories that do not contain SKILL.md are not listed as skills."""
+        proj_dir = tmp_path / "skills" / "default"
+        _make_skill_dir(proj_dir, "real-skill")
+        # Create a dir without SKILL.md – should be ignored.
+        (proj_dir / "not-a-skill").mkdir(parents=True)
+
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            await cmd_skills_list(_list_args())
+
+        out = capsys.readouterr().out
+        assert "not-a-skill" not in out
+        assert "real-skill" in out
+
+    # ------------------------------------------------------------------
+    # Always returns exit code 0
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_always_returns_0_with_skills(self, tmp_path: Path):
+        _make_skill_dir(tmp_path / "skills" / "default", "s")
+
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            result = await cmd_skills_list(_list_args())
+
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_always_returns_0_without_skills_dir(self, tmp_path: Path):
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            result = await cmd_skills_list(_list_args())
+
+        assert result == 0
