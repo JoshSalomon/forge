@@ -707,12 +707,24 @@ def main() -> int:
     # skills update subcommand
     skills_update_parser = skills_subparsers.add_parser(
         "update",
-        help="Update installed skills",
+        help="Re-fetch skill packages listed in the local lock file",
+        description=(
+            "Re-fetch and reinstall skill packages recorded in skills/skills.lock. "
+            "For each Git-sourced package the current commit SHA is resolved; "
+            "packages whose SHA has not changed are skipped. "
+            "NOTE: this command reads the LOCAL lock file only – it does NOT "
+            "consult any Jira property (e.g. forge.skills). "
+            "Use 'forge skills install' to add new packages."
+        ),
     )
     skills_update_parser.add_argument(
         "--project",
         metavar="PROJECT_KEY",
-        help="Filter updates to skills installed under a specific project key",
+        help=(
+            "Only update packages installed under this project key "
+            "(i.e. entries with target == PROJECT_KEY in the lock file). "
+            "When omitted all entries in the lock file are processed."
+        ),
     )
 
     args = parser.parse_args()

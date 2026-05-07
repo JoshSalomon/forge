@@ -554,15 +554,486 @@ class TestCmdSkillsInstallLocalPath:
 
 
 # ---------------------------------------------------------------------------
-# Stub handlers (cmd_skills_update only – cmd_skills_list is fully tested below)
+# cmd_skills_update
 # ---------------------------------------------------------------------------
 
 
-class TestStubHandlers:
+def _update_args(project: str | None = None) -> argparse.Namespace:
+    return argparse.Namespace(project=project)
+
+
+def _make_lock_entry(
+    source: str = "https://github.com/org/skills.git",
+    ref: str = "main",
+    resolved_commit: str = "aabbccdd1234aabbccdd1234aabbccdd1234aabc",
+    target: str = "default",
+    skills: list[str] | None = None,
+) -> "LockEntry":
+    from datetime import UTC, datetime
+
+    from forge.skills.models import LockEntry
+
+    return LockEntry(
+        source=source,
+        ref=ref,
+        resolved_commit=resolved_commit,
+        mode="path",
+        path=None,
+        skill_mapping=None,
+        target=target,
+        skills=skills or ["skill-a"],
+        fetched_at=datetime.now(tz=UTC),
+    )
+
+
+class TestCmdSkillsUpdate:
+    """Tests for the cmd_skills_update handler."""
+
+    # ------------------------------------------------------------------
+    # Empty / missing lock file
+    # ------------------------------------------------------------------
+
     @pytest.mark.asyncio
-    async def test_cmd_skills_update_returns_0(self):
-        args = argparse.Namespace()
-        assert await cmd_skills_update(args) == 0
+    async def test_empty_lock_file_prints_message_and_returns_0(self, tmp_path: Path, capsys):
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            result = await cmd_skills_update(_update_args())
+
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "No packages in lock file" in out
+
+    # ------------------------------------------------------------------
+    # --project filter
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_project_filter_no_match_prints_message_and_returns_0(
+        self, tmp_path: Path, capsys
+    ):
+        """When --project is given but nothing matches, return 0 with informative message."""
+        import yaml
+
+        from forge.skills.models import LockFile
+
+        entry = _make_lock_entry(target="OTHER")
+        lock = LockFile(packages=[entry])
+        lock_path = tmp_path / "skills" / "skills.lock"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.write_text(yaml.dump(lock.model_dump(mode="json")))
+
+        with patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path):
+            result = await cmd_skills_update(_update_args(project="MYPROJ"))
+
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "MYPROJ" in out
+        assert "Nothing to update" in out
+
+    @pytest.mark.asyncio
+    async def test_project_filter_only_processes_matching_entries(
+        self, tmp_path: Path, capsys
+    ):
+        """--project=MYPROJ skips entries whose target differs."""
+        import yaml
+
+        from forge.skills.models import LockFile
+
+        sha = "deadbeef1234deadbeef1234deadbeef1234dead"
+        entry_match = _make_lock_entry(target="MYPROJ", resolved_commit=sha)
+        entry_other = _make_lock_entry(
+            source="https://github.com/org/other.git", target="OTHER", resolved_commit=sha
+        )
+        lock = LockFile(packages=[entry_match, entry_other])
+        lock_path = tmp_path / "skills" / "skills.lock"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.write_text(yaml.dump(lock.model_dump(mode="json")))
+
+        # resolve_ref_sha returns same SHA → entry is up to date
+        with (
+            patch(
+                "forge.skills.cli_handlers.resolve_ref_sha",
+                new=AsyncMock(return_value=sha),
+            ),
+            patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path),
+        ):
+            result = await cmd_skills_update(_update_args(project="MYPROJ"))
+
+        assert result == 0
+        out = capsys.readouterr().out
+        # Only MYPROJ's source should appear in "up to date" output
+        assert "github.com/org/skills.git" in out
+        # The OTHER entry should NOT have been resolved
+        assert "github.com/org/other.git" not in out
+
+    # ------------------------------------------------------------------
+    # Up-to-date entries are skipped
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_unchanged_sha_skips_with_informative_message(self, tmp_path: Path, capsys):
+        import yaml
+
+        from forge.skills.models import LockFile
+
+        sha = "cafebabe1234cafebabe1234cafebabe1234cafe"
+        entry = _make_lock_entry(resolved_commit=sha)
+        lock = LockFile(packages=[entry])
+        lock_path = tmp_path / "skills" / "skills.lock"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.write_text(yaml.dump(lock.model_dump(mode="json")))
+
+        with (
+            patch(
+                "forge.skills.cli_handlers.resolve_ref_sha",
+                new=AsyncMock(return_value=sha),
+            ),
+            patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path),
+        ):
+            result = await cmd_skills_update(_update_args())
+
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "Up to date" in out
+        assert "All packages are up to date" in out
+
+    # ------------------------------------------------------------------
+    # Outdated entries trigger re-clone and install
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_new_sha_triggers_reclone_and_updates_lock(self, tmp_path: Path, capsys):
+        import yaml
+
+        from forge.skills.models import LockFile
+
+        old_sha = "old0000000000000000000000000000000000old"
+        new_sha = "new1111111111111111111111111111111111new"
+
+        entry = _make_lock_entry(resolved_commit=old_sha, skills=["skill-a"])
+        lock = LockFile(packages=[entry])
+        lock_path = tmp_path / "skills" / "skills.lock"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.write_text(yaml.dump(lock.model_dump(mode="json")))
+
+        # Build a fake clone directory with a skills/ subdir.
+        clone_dir = tmp_path / "clone"
+        skill_dir = clone_dir / "skills" / "skill-a"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("# A")
+
+        with (
+            patch(
+                "forge.skills.cli_handlers.resolve_ref_sha",
+                new=AsyncMock(return_value=new_sha),
+            ),
+            patch(
+                "forge.skills.cli_handlers.clone_skill_package",
+                new=AsyncMock(return_value=clone_dir),
+            ),
+            patch(
+                "forge.skills.cli_handlers._resolve_head_sha",
+                new=AsyncMock(return_value=new_sha),
+            ),
+            patch("forge.skills.cli_handlers.update_lock_file") as mock_update_lock,
+            patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path),
+        ):
+            result = await cmd_skills_update(_update_args())
+
+        assert result == 0
+
+        # Lock file must be updated with the new SHA.
+        mock_update_lock.assert_called_once()
+        _lp, new_entry = mock_update_lock.call_args.args
+        assert new_entry.resolved_commit == new_sha
+
+        out = capsys.readouterr().out
+        assert "Updated" in out
+        assert "Updated 1 package" in out
+
+    @pytest.mark.asyncio
+    async def test_updated_entry_printed_in_summary(self, tmp_path: Path, capsys):
+        import yaml
+
+        from forge.skills.models import LockFile
+
+        old_sha = "aaaa0000000000000000000000000000000000aa"
+        new_sha = "bbbb1111111111111111111111111111111111bb"
+        entry = _make_lock_entry(
+            source="https://github.com/org/repo.git",
+            resolved_commit=old_sha,
+        )
+        lock = LockFile(packages=[entry])
+        lock_path = tmp_path / "skills" / "skills.lock"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.write_text(yaml.dump(lock.model_dump(mode="json")))
+
+        clone_dir = tmp_path / "clone"
+        (clone_dir / "skills" / "skill-a").mkdir(parents=True)
+        (clone_dir / "skills" / "skill-a" / "SKILL.md").write_text("# A")
+
+        with (
+            patch(
+                "forge.skills.cli_handlers.resolve_ref_sha",
+                new=AsyncMock(return_value=new_sha),
+            ),
+            patch(
+                "forge.skills.cli_handlers.clone_skill_package",
+                new=AsyncMock(return_value=clone_dir),
+            ),
+            patch(
+                "forge.skills.cli_handlers._resolve_head_sha",
+                new=AsyncMock(return_value=new_sha),
+            ),
+            patch("forge.skills.cli_handlers.update_lock_file"),
+            patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path),
+        ):
+            result = await cmd_skills_update(_update_args())
+
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "github.com/org/repo.git" in out
+        assert "Updated 1 package" in out
+
+    # ------------------------------------------------------------------
+    # Error handling – exit code 1
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_ref_resolution_error_returns_1(self, tmp_path: Path, capsys):
+        import yaml
+
+        from forge.skills.fetcher import RefResolutionError
+        from forge.skills.models import LockFile
+
+        entry = _make_lock_entry()
+        lock = LockFile(packages=[entry])
+        lock_path = tmp_path / "skills" / "skills.lock"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.write_text(yaml.dump(lock.model_dump(mode="json")))
+
+        with (
+            patch(
+                "forge.skills.cli_handlers.resolve_ref_sha",
+                new=AsyncMock(side_effect=RefResolutionError("network error")),
+            ),
+            patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path),
+        ):
+            result = await cmd_skills_update(_update_args())
+
+        assert result == 1
+        err = capsys.readouterr().err
+        assert "could not resolve ref" in err
+
+    @pytest.mark.asyncio
+    async def test_clone_error_returns_1(self, tmp_path: Path, capsys):
+        import yaml
+
+        from forge.skills.fetcher import CloneError
+        from forge.skills.models import LockFile
+
+        old_sha = "aaaa0000000000000000000000000000000000aa"
+        new_sha = "bbbb1111111111111111111111111111111111bb"
+        entry = _make_lock_entry(resolved_commit=old_sha)
+        lock = LockFile(packages=[entry])
+        lock_path = tmp_path / "skills" / "skills.lock"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.write_text(yaml.dump(lock.model_dump(mode="json")))
+
+        with (
+            patch(
+                "forge.skills.cli_handlers.resolve_ref_sha",
+                new=AsyncMock(return_value=new_sha),
+            ),
+            patch(
+                "forge.skills.cli_handlers.clone_skill_package",
+                new=AsyncMock(side_effect=CloneError("network failure")),
+            ),
+            patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path),
+        ):
+            result = await cmd_skills_update(_update_args())
+
+        assert result == 1
+        err = capsys.readouterr().err
+        assert "clone failed" in err
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_continues_and_returns_1(self, tmp_path: Path, capsys):
+        """When one entry fails and another succeeds, exit code is 1 but both are processed."""
+        import yaml
+
+        from forge.skills.fetcher import CloneError
+        from forge.skills.models import LockFile
+
+        old_sha = "aaaa0000000000000000000000000000000000aa"
+        new_sha = "bbbb1111111111111111111111111111111111bb"
+
+        entry_fail = _make_lock_entry(
+            source="https://github.com/org/bad.git",
+            resolved_commit=old_sha,
+            target="default",
+        )
+        entry_ok = _make_lock_entry(
+            source="https://github.com/org/good.git",
+            resolved_commit=old_sha,
+            target="default",
+        )
+        lock = LockFile(packages=[entry_fail, entry_ok])
+        lock_path = tmp_path / "skills" / "skills.lock"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.write_text(yaml.dump(lock.model_dump(mode="json")))
+
+        clone_dir = tmp_path / "clone"
+        (clone_dir / "skills" / "skill-a").mkdir(parents=True)
+        (clone_dir / "skills" / "skill-a" / "SKILL.md").write_text("# A")
+
+        call_count = 0
+
+        async def _clone_side_effect(source, ref):
+            nonlocal call_count
+            call_count += 1
+            if "bad" in source:
+                raise CloneError("bad clone")
+            return clone_dir
+
+        with (
+            patch(
+                "forge.skills.cli_handlers.resolve_ref_sha",
+                new=AsyncMock(return_value=new_sha),
+            ),
+            patch(
+                "forge.skills.cli_handlers.clone_skill_package",
+                new=AsyncMock(side_effect=_clone_side_effect),
+            ),
+            patch(
+                "forge.skills.cli_handlers._resolve_head_sha",
+                new=AsyncMock(return_value=new_sha),
+            ),
+            patch("forge.skills.cli_handlers.update_lock_file"),
+            patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path),
+        ):
+            result = await cmd_skills_update(_update_args())
+
+        assert result == 1
+        # Both entries were attempted.
+        assert call_count == 2
+
+    # ------------------------------------------------------------------
+    # Local-path entries are skipped
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_local_path_entry_is_skipped(self, tmp_path: Path, capsys):
+        """Entries with a local-path source (no :// or git@) are skipped."""
+        import yaml
+
+        from forge.skills.models import LockFile
+
+        entry = _make_lock_entry(source="/some/local/path", resolved_commit="")
+        lock = LockFile(packages=[entry])
+        lock_path = tmp_path / "skills" / "skills.lock"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.write_text(yaml.dump(lock.model_dump(mode="json")))
+
+        with (
+            patch(
+                "forge.skills.cli_handlers.resolve_ref_sha",
+                new=AsyncMock(),
+            ) as mock_resolve,
+            patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path),
+        ):
+            result = await cmd_skills_update(_update_args())
+
+        assert result == 0
+        # resolve_ref_sha must NOT have been called for local-path entries.
+        mock_resolve.assert_not_called()
+        out = capsys.readouterr().out
+        assert "Skipping" in out
+
+    # ------------------------------------------------------------------
+    # resolve_ref_sha returns None (ref is a direct commit SHA)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_resolve_returns_none_uses_ref_as_sha(self, tmp_path: Path, capsys):
+        """When resolve_ref_sha returns None the stored ref is used as the effective SHA."""
+        import yaml
+
+        from forge.skills.models import LockFile
+
+        sha = "cafecafecafecafecafecafecafecafecafecafe"
+        # resolved_commit == ref → treated as up to date
+        entry = _make_lock_entry(ref=sha, resolved_commit=sha)
+        lock = LockFile(packages=[entry])
+        lock_path = tmp_path / "skills" / "skills.lock"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.write_text(yaml.dump(lock.model_dump(mode="json")))
+
+        with (
+            patch(
+                "forge.skills.cli_handlers.resolve_ref_sha",
+                new=AsyncMock(return_value=None),  # ref is a commit SHA
+            ),
+            patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path),
+        ):
+            result = await cmd_skills_update(_update_args())
+
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "Up to date" in out
+
+    # ------------------------------------------------------------------
+    # Summary output
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_skipped_packages_shown_in_summary(self, tmp_path: Path, capsys):
+        import yaml
+
+        from forge.skills.models import LockFile
+
+        sha = "1234abcd1234abcd1234abcd1234abcd1234abcd"
+        entry = _make_lock_entry(resolved_commit=sha)
+        lock = LockFile(packages=[entry])
+        lock_path = tmp_path / "skills" / "skills.lock"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.write_text(yaml.dump(lock.model_dump(mode="json")))
+
+        with (
+            patch(
+                "forge.skills.cli_handlers.resolve_ref_sha",
+                new=AsyncMock(return_value=sha),
+            ),
+            patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path),
+        ):
+            result = await cmd_skills_update(_update_args())
+
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "Skipped 1 package" in out
+
+    @pytest.mark.asyncio
+    async def test_returns_0_when_nothing_to_update(self, tmp_path: Path):
+        import yaml
+
+        from forge.skills.models import LockFile
+
+        sha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+        entry = _make_lock_entry(resolved_commit=sha)
+        lock = LockFile(packages=[entry])
+        lock_path = tmp_path / "skills" / "skills.lock"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.write_text(yaml.dump(lock.model_dump(mode="json")))
+
+        with (
+            patch(
+                "forge.skills.cli_handlers.resolve_ref_sha",
+                new=AsyncMock(return_value=sha),
+            ),
+            patch("forge.skills.cli_handlers.Path.cwd", return_value=tmp_path),
+        ):
+            result = await cmd_skills_update(_update_args())
+
+        assert result == 0
 
 
 # ---------------------------------------------------------------------------

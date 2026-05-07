@@ -11,9 +11,14 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from forge.skills.fetcher import CloneError, clone_skill_package
+from forge.skills.fetcher import (
+    CloneError,
+    RefResolutionError,
+    clone_skill_package,
+    resolve_ref_sha,
+)
 from forge.skills.installer import install_path_mode
-from forge.skills.lock import update_lock_file
+from forge.skills.lock import read_lock_file, update_lock_file
 from forge.skills.models import LockEntry
 
 
@@ -326,8 +331,6 @@ async def cmd_skills_list(_args: argparse.Namespace) -> int:
     Returns:
         Always ``0``.
     """
-    from forge.skills.lock import read_lock_file
-
     skills_root = Path.cwd() / "skills"
 
     # ------------------------------------------------------------------
@@ -389,13 +392,152 @@ async def cmd_skills_list(_args: argparse.Namespace) -> int:
     return 0
 
 
-async def cmd_skills_update(_args: argparse.Namespace) -> int:
-    """Update installed skills (stub – not yet implemented).
+async def cmd_skills_update(args: argparse.Namespace) -> int:
+    """Re-fetch skill packages listed in the local lock file.
+
+    Reads ``skills/skills.lock`` from the current working directory and, for
+    each entry, resolves the current commit SHA of the recorded ref.  When the
+    resolved SHA differs from the stored ``resolved_commit`` the package is
+    re-cloned, reinstalled, and the lock file is updated.  Packages whose SHA
+    has not changed are skipped with an informative message.
+
+    .. note::
+        This command reads only the *local* ``skills/skills.lock`` file.  It
+        does **not** consult any Jira property (e.g. ``forge.skills``) to
+        discover new packages.  To add new packages use ``forge skills install``
+        instead.
 
     Args:
-        _args: Parsed CLI arguments (unused).
+        args: Parsed CLI arguments with attributes:
+            - ``project``: Optional project key.  When provided only lock file
+              entries whose ``target`` matches this value are processed.
 
     Returns:
-        Always ``0``.
+        Exit code – ``0`` when all updates succeed (including when nothing
+        needed updating), ``1`` when any clone or fetch error occurs.
     """
-    return 0
+    skills_root = Path.cwd() / "skills"
+    lock_path = skills_root / "skills.lock"
+
+    # ------------------------------------------------------------------
+    # 1. Read the lock file.
+    # ------------------------------------------------------------------
+    lock_file = read_lock_file(lock_path)
+
+    if not lock_file.packages:
+        print("No packages in lock file. Run 'forge skills install' to install skills.")
+        return 0
+
+    # ------------------------------------------------------------------
+    # 2. Apply --project filter (if provided).
+    # ------------------------------------------------------------------
+    project_filter: str | None = getattr(args, "project", None)
+    entries = lock_file.packages
+    if project_filter is not None:
+        entries = [e for e in entries if e.target == project_filter]
+        if not entries:
+            print(f"No lock file entries found for project {project_filter!r}. Nothing to update.")
+            return 0
+
+    # ------------------------------------------------------------------
+    # 3. Process each entry.
+    # ------------------------------------------------------------------
+    updated: list[str] = []
+    skipped: list[str] = []
+    exit_code = 0
+
+    for entry in entries:
+        label = f"{entry.source!r} -> skills/{entry.target}/"
+
+        # Skip local-path entries (resolved_commit is "" for local paths).
+        if not _is_git_url(entry.source):
+            print(f"  Skipping {label} (local path – use 'forge skills install' to refresh)")
+            skipped.append(label)
+            continue
+
+        # ------------------------------------------------------------------
+        # 3a. Resolve the current SHA for the recorded ref.
+        # ------------------------------------------------------------------
+        ref = entry.ref or None
+        try:
+            current_sha: str | None = await resolve_ref_sha(entry.source, ref or "HEAD")
+        except RefResolutionError as exc:
+            print(f"  Error: could not resolve ref for {label}: {exc}", file=sys.stderr)
+            exit_code = 1
+            continue
+
+        # resolve_ref_sha returns None when the ref is already a commit SHA.
+        # In that case use the ref itself as the effective SHA.
+        effective_sha = current_sha if current_sha is not None else (ref or "")
+
+        if effective_sha and effective_sha == entry.resolved_commit:
+            print(f"  Up to date: {label} ({effective_sha[:12]})")
+            skipped.append(label)
+            continue
+
+        # ------------------------------------------------------------------
+        # 3b. Re-clone and reinstall.
+        # ------------------------------------------------------------------
+        print(f"  Updating {label} …", flush=True)
+
+        try:
+            clone_dir = await clone_skill_package(entry.source, ref)
+        except CloneError as exc:
+            print(f"  Error: clone failed for {label}: {exc}", file=sys.stderr)
+            exit_code = 1
+            continue
+
+        # Determine the skills source directory inside the clone.
+        skills_subdir = clone_dir / "skills"
+        source_dir = skills_subdir if skills_subdir.is_dir() else clone_dir
+
+        # Resolve the actual installed SHA.
+        resolved_commit = await _resolve_head_sha(clone_dir)
+
+        target_dir = skills_root / entry.target
+
+        try:
+            installed_skills = install_path_mode(source_dir, target_dir)
+        except (FileNotFoundError, NotADirectoryError) as exc:
+            print(f"  Error: could not install skills for {label}: {exc}", file=sys.stderr)
+            shutil.rmtree(clone_dir, ignore_errors=True)
+            exit_code = 1
+            continue
+        finally:
+            shutil.rmtree(clone_dir, ignore_errors=True)
+
+        # ------------------------------------------------------------------
+        # 3c. Update the lock file with the new resolved_commit.
+        # ------------------------------------------------------------------
+        new_entry = LockEntry(
+            source=entry.source,
+            ref=entry.ref,
+            resolved_commit=resolved_commit,
+            mode=entry.mode,
+            path=entry.path,
+            skill_mapping=entry.skill_mapping,
+            target=entry.target,
+            skills=installed_skills,
+            fetched_at=datetime.now(tz=UTC),
+        )
+        update_lock_file(lock_path, new_entry)
+
+        updated.append(label)
+        print(f"  Updated:  {label} ({resolved_commit[:12] if resolved_commit else 'unknown'})")
+
+    # ------------------------------------------------------------------
+    # 4. Print summary.
+    # ------------------------------------------------------------------
+    print()
+    if updated:
+        print(f"Updated {len(updated)} package(s):")
+        for lbl in updated:
+            print(f"  - {lbl}")
+    else:
+        print("All packages are up to date.")
+
+    if skipped:
+        skip_word = "package" if len(skipped) == 1 else "packages"
+        print(f"Skipped {len(skipped)} {skip_word} (already up to date or local path).")
+
+    return exit_code
