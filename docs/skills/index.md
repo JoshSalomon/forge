@@ -14,7 +14,7 @@ Each workflow stage — generating a PRD, analyzing a CI failure, implementing c
 Skills are loaded at runtime per ticket, resolved by Jira project key:
 
 ```mermaid
-graph LR
+graph TD
     A[Ticket: AISOS-123] --> B{skills/aisos/ exists?}
     B -->|Yes| C[Load skills/aisos/analyze-ci/SKILL.md]
     B -->|No| D[Load skills/default/analyze-ci/SKILL.md]

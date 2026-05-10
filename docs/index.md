@@ -5,7 +5,7 @@ Forge automates the software development lifecycle from feature ideation through
 ## How It Works
 
 ```mermaid
-graph LR
+graph TD
     A[Create Feature] --> B[Generate PRD]
     B -->|Approval| C[Generate Spec]
     C -->|Approval| D[Decompose Epics]

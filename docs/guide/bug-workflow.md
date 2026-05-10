@@ -5,7 +5,7 @@ Bugs follow a simpler workflow than features: one approval gate instead of four,
 ## Overview
 
 ```mermaid
-flowchart LR
+flowchart TD
     A[Create Bug] --> B[Analyze - RCA]
     B -->|Approval + Q&A| C[Implement Fix]
     C --> D[Local Review]
