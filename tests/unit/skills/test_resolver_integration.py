@@ -1,4 +1,5 @@
 """Smoke test confirming resolver routes to real skills/ directory."""
+
 from pathlib import Path
 
 from forge.skills.resolver import resolve_skill_paths

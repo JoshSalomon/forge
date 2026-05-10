@@ -469,6 +469,27 @@ async def cmd_logs(args: argparse.Namespace) -> int:
         return 1
 
 
+async def cmd_skills_install(args: argparse.Namespace) -> int:
+    """Install a skill from a Git URL or local path."""
+    from forge.skills.cli_handlers import cmd_skills_install as _handler
+
+    return await _handler(args)
+
+
+async def cmd_skills_list(_args: argparse.Namespace) -> int:
+    """List installed skills."""
+    from forge.skills.cli_handlers import cmd_skills_list as _handler
+
+    return await _handler(_args)
+
+
+async def cmd_skills_update(_args: argparse.Namespace) -> int:
+    """Update installed skills."""
+    from forge.skills.cli_handlers import cmd_skills_update as _handler
+
+    return await _handler(_args)
+
+
 async def cmd_health(_args: argparse.Namespace) -> int:
     """Check system health."""
     from forge.orchestrator.checkpointer import get_redis_client
@@ -636,11 +657,98 @@ def main() -> int:
         help="Number of log entries to show (default: 50)",
     )
 
+    # skills subparser group
+    skills_parser = subparsers.add_parser(
+        "skills",
+        help="Manage Forge skills",
+    )
+    skills_subparsers = skills_parser.add_subparsers(
+        dest="skills_command",
+        help="Skills commands",
+    )
+
+    # skills install subcommand
+    skills_install_parser = skills_subparsers.add_parser(
+        "install",
+        help="Install a skill from a Git URL or local path",
+    )
+    skills_install_parser.add_argument(
+        "source",
+        help="Git URL or local path to the skill",
+    )
+    skills_install_parser.add_argument(
+        "--project",
+        metavar="PROJECT_KEY",
+        help=(
+            "Project key to install the skill under (e.g. MYPROJ). "
+            "Exactly one of --project or --default must be provided."
+        ),
+    )
+    skills_install_parser.add_argument(
+        "--default",
+        action="store_true",
+        help=(
+            "Install the skill to skills/default/ (shared across all projects). "
+            "Exactly one of --project or --default must be provided."
+        ),
+    )
+    skills_install_parser.add_argument(
+        "--ref",
+        metavar="REF",
+        help="Git ref (tag, branch, or SHA) to check out",
+    )
+
+    # skills list subcommand
+    skills_subparsers.add_parser(
+        "list",
+        help="List installed skills",
+    )
+
+    # skills update subcommand
+    skills_update_parser = skills_subparsers.add_parser(
+        "update",
+        help="Re-fetch skill packages listed in the local lock file",
+        description=(
+            "Re-fetch and reinstall skill packages recorded in skills/skills.lock. "
+            "For each Git-sourced package the current commit SHA is resolved; "
+            "packages whose SHA has not changed are skipped. "
+            "NOTE: this command reads the LOCAL lock file only – it does NOT "
+            "consult any Jira property (e.g. forge.skills). "
+            "Use 'forge skills install' to add new packages."
+        ),
+    )
+    skills_update_parser.add_argument(
+        "--project",
+        metavar="PROJECT_KEY",
+        help=(
+            "Only update packages installed under this project key "
+            "(i.e. entries with target == PROJECT_KEY in the lock file). "
+            "When omitted all entries in the lock file are processed."
+        ),
+    )
+
     args = parser.parse_args()
     setup_logging(args.verbose)
 
     if args.command is None:
         parser.print_help()
+        return 0
+
+    # Handle skills subcommands
+    if args.command == "skills":
+        skills_handlers = {
+            "install": cmd_skills_install,
+            "list": cmd_skills_list,
+            "update": cmd_skills_update,
+        }
+        skills_cmd = getattr(args, "skills_command", None)
+        if skills_cmd is None:
+            skills_parser.print_help()
+            return 0
+        skills_handler = skills_handlers.get(skills_cmd)
+        if skills_handler:
+            return asyncio.run(skills_handler(args))
+        skills_parser.print_help()
         return 0
 
     # Map commands to async handlers

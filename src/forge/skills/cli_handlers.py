@@ -1,0 +1,543 @@
+"""CLI handler implementations for the ``forge skills`` subcommands.
+
+Provides the async handler functions that are wired into ``forge.cli`` for the
+``forge skills install``, ``forge skills list``, and ``forge skills update``
+subcommands.
+"""
+
+import argparse
+import shutil
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+
+from forge.skills.fetcher import (
+    CloneError,
+    RefResolutionError,
+    clone_skill_package,
+    resolve_ref_sha,
+)
+from forge.skills.installer import install_path_mode
+from forge.skills.lock import read_lock_file, update_lock_file
+from forge.skills.models import LockEntry
+
+
+def _is_git_url(source: str) -> bool:
+    """Return True when *source* looks like a Git URL.
+
+    Detects:
+    - URLs with a scheme (e.g. ``https://``, ``ssh://``, ``git://``)
+    - SCP-style Git URLs (e.g. ``git@github.com:org/repo.git``)
+
+    Args:
+        source: The source string to test.
+
+    Returns:
+        ``True`` if *source* appears to be a Git URL, ``False`` otherwise.
+    """
+    return "://" in source or source.startswith("git@")
+
+
+async def cmd_skills_install(args: argparse.Namespace) -> int:
+    """Install a skill package from a Git URL.
+
+    Validates arguments, detects the source type, clones the repository,
+    copies skills to the target directory, updates the lock file, and cleans
+    up the temporary clone.
+
+    Args:
+        args: Parsed CLI arguments with attributes:
+            - ``source``: Git URL or local path of the skill package.
+            - ``project``: Optional project key (mutually exclusive with
+              ``--default``).
+            - ``default``: Boolean flag; install to ``skills/default/``.
+            - ``ref``: Optional git ref (branch, tag, or commit SHA).
+
+    Returns:
+        Exit code – ``0`` on success, ``1`` on clone/install failure,
+        ``2`` on invalid argument combinations.
+    """
+    # ------------------------------------------------------------------
+    # 1. Validate argument combinations.
+    # ------------------------------------------------------------------
+    if not args.project and not args.default:
+        print(
+            "Error: exactly one of --project or --default must be provided",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.project and args.default:
+        print(
+            "Error: --project and --default are mutually exclusive; provide exactly one",
+            file=sys.stderr,
+        )
+        return 2
+
+    source: str = args.source
+    ref: str | None = getattr(args, "ref", None)
+    project: str | None = args.project
+    use_default: bool = args.default
+
+    # ------------------------------------------------------------------
+    # 2. Determine the target directory name.
+    # ------------------------------------------------------------------
+    # project is guaranteed non-None here when use_default is False.
+    target_name = "default" if use_default else project  # type: ignore[assignment]
+
+    # ------------------------------------------------------------------
+    # 3. Detect source type and route accordingly.
+    # ------------------------------------------------------------------
+    if _is_git_url(source):
+        return await _install_git_url(source, ref, target_name)
+    else:
+        return _install_local_path(source, target_name)
+
+
+async def _install_git_url(
+    source: str,
+    ref: str | None,
+    target_name: str,
+) -> int:
+    """Clone *source* and install skills into ``skills/<target_name>/``.
+
+    Args:
+        source: Git URL to clone.
+        ref: Optional git ref (branch, tag, or SHA); ``None`` clones the
+            default branch.
+        target_name: Subdirectory name inside ``skills/`` where skills will
+            be installed (e.g. ``"myproj"`` or ``"default"``).
+
+    Returns:
+        ``0`` on success, ``1`` on failure.
+    """
+    # ------------------------------------------------------------------
+    # 4. Clone into a temporary directory.
+    # ------------------------------------------------------------------
+    print(f"Cloning {source!r} …", flush=True)
+
+    try:
+        clone_dir = await clone_skill_package(source, ref)
+    except CloneError as exc:
+        print(f"Error: clone failed – {exc}", file=sys.stderr)
+        return 1
+
+    # ------------------------------------------------------------------
+    # 5. Determine the skills source directory inside the clone.
+    #    Convention: if a ``skills/`` subdirectory exists, use it;
+    #    otherwise treat the repo root as the skills container.
+    # ------------------------------------------------------------------
+    skills_subdir = clone_dir / "skills"
+    source_dir = skills_subdir if skills_subdir.is_dir() else clone_dir
+
+    # ------------------------------------------------------------------
+    # 6. Resolve the installed-at commit SHA.
+    # ------------------------------------------------------------------
+    resolved_commit = await _resolve_head_sha(clone_dir)
+
+    # ------------------------------------------------------------------
+    # 7. Determine the target installation directory.
+    #    Use the current working directory as the skills root.
+    # ------------------------------------------------------------------
+    skills_root = Path.cwd() / "skills"
+    target_dir = skills_root / target_name
+
+    # ------------------------------------------------------------------
+    # 8. Copy skills from the clone into the target directory.
+    # ------------------------------------------------------------------
+    try:
+        installed_skills = install_path_mode(source_dir, target_dir)
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        print(f"Error: could not install skills – {exc}", file=sys.stderr)
+        shutil.rmtree(clone_dir, ignore_errors=True)
+        return 1
+    finally:
+        # ------------------------------------------------------------------
+        # 9. Clean up the temporary clone directory.
+        # ------------------------------------------------------------------
+        shutil.rmtree(clone_dir, ignore_errors=True)
+
+    # ------------------------------------------------------------------
+    # 10. Update the lock file.
+    # ------------------------------------------------------------------
+    lock_path = skills_root / "skills.lock"
+    lock_entry = LockEntry(
+        source=source,
+        ref=ref or "",
+        resolved_commit=resolved_commit,
+        mode="path",
+        path=None,
+        skill_mapping=None,
+        target=target_name,
+        skills=installed_skills,
+        fetched_at=datetime.now(tz=UTC),
+    )
+    update_lock_file(lock_path, lock_entry)
+
+    # ------------------------------------------------------------------
+    # 11. Report success.
+    # ------------------------------------------------------------------
+    skill_word = "skill" if len(installed_skills) == 1 else "skills"
+    print(
+        f"Successfully installed {len(installed_skills)} {skill_word} "
+        f"from {source!r} into skills/{target_name}/",
+        flush=True,
+    )
+    if installed_skills:
+        for name in installed_skills:
+            print(f"  - {name}", flush=True)
+
+    return 0
+
+
+def _install_local_path(source: str, target_name: str) -> int:
+    """Copy a local directory into ``skills/<target_name>/``.
+
+    The entire *source* directory is copied to the target using
+    :func:`shutil.copytree`, replacing any existing content.
+
+    Args:
+        source: Local path (absolute or relative) to the skills directory.
+        target_name: Subdirectory name inside ``skills/`` where skills will
+            be installed (e.g. ``"myproj"`` or ``"default"``).
+
+    Returns:
+        ``0`` on success, ``1`` on validation failure.
+    """
+    source_path = Path(source).resolve()
+
+    # ------------------------------------------------------------------
+    # Validate that the source path exists and is a directory.
+    # ------------------------------------------------------------------
+    if not source_path.exists():
+        print(
+            f"Error: local path {source!r} does not exist",
+            file=sys.stderr,
+        )
+        return 1
+
+    if not source_path.is_dir():
+        print(
+            f"Error: local path {source!r} is not a directory",
+            file=sys.stderr,
+        )
+        return 1
+
+    # ------------------------------------------------------------------
+    # Determine the target installation directory.
+    # ------------------------------------------------------------------
+    skills_root = Path.cwd() / "skills"
+    target_dir = skills_root / target_name
+
+    # ------------------------------------------------------------------
+    # Copy the source directory to the target, overwriting existing content.
+    # ------------------------------------------------------------------
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+
+    shutil.copytree(source_path, target_dir, symlinks=True)
+
+    # Count installed skills (immediate subdirectories).
+    installed_skills = [entry.name for entry in sorted(target_dir.iterdir()) if entry.is_dir()]
+
+    # ------------------------------------------------------------------
+    # Update the lock file.
+    # ------------------------------------------------------------------
+    lock_path = skills_root / "skills.lock"
+    lock_entry = LockEntry(
+        source=str(source_path),
+        ref="",
+        resolved_commit="",
+        mode="path",
+        path=None,
+        skill_mapping=None,
+        target=target_name,
+        skills=installed_skills,
+        fetched_at=datetime.now(tz=UTC),
+    )
+    update_lock_file(lock_path, lock_entry)
+
+    # ------------------------------------------------------------------
+    # Report success.
+    # ------------------------------------------------------------------
+    skill_word = "skill" if len(installed_skills) == 1 else "skills"
+    print(
+        f"Successfully installed {len(installed_skills)} {skill_word} "
+        f"from {source!r} into skills/{target_name}/",
+        flush=True,
+    )
+    if installed_skills:
+        for name in installed_skills:
+            print(f"  - {name}", flush=True)
+
+    return 0
+
+
+async def _resolve_head_sha(clone_dir: Path) -> str:
+    """Return the current HEAD commit SHA of the repository at *clone_dir*.
+
+    Falls back to the empty string when the SHA cannot be resolved (e.g.
+    when git is not available or the directory is not a git repository).
+
+    Args:
+        clone_dir: Path to the root of the cloned repository.
+
+    Returns:
+        40-character commit SHA, or ``""`` on failure.
+    """
+    import asyncio
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "git",
+            "-C",
+            str(clone_dir),
+            "rev-parse",
+            "HEAD",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_bytes, _ = await asyncio.wait_for(process.communicate(), timeout=10)
+        if process.returncode == 0:
+            return stdout_bytes.decode(errors="replace").strip()
+    except Exception:  # noqa: BLE001
+        pass
+
+    return ""
+
+
+async def cmd_skills_list(_args: argparse.Namespace) -> int:
+    """List all installed skills organised by project directory.
+
+    Scans the ``skills/`` directory under the current working directory for
+    project subdirectories (e.g. ``default``, ``myproj``).  Within each
+    project directory, skills are identified as subdirectories that contain a
+    ``SKILL.md`` file.  The lock file (``skills/skills.lock``) is consulted to
+    show the source URL for each skill; skills absent from the lock file are
+    labelled ``builtin``.
+
+    Output format::
+
+        skills/default/  (2 skills)
+          skill-a  [https://github.com/org/repo.git]
+          skill-b  [builtin]
+
+        skills/myproj/  (1 skill)
+          my-skill  [/abs/path/to/local/skills]
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+
+    Returns:
+        Always ``0``.
+    """
+    skills_root = Path.cwd() / "skills"
+
+    # ------------------------------------------------------------------
+    # 1. Check that the skills directory exists.
+    # ------------------------------------------------------------------
+    if not skills_root.is_dir():
+        print("No skills directory found. Run 'forge skills install' to install skills.")
+        return 0
+
+    # ------------------------------------------------------------------
+    # 2. Collect project subdirectories (sorted for deterministic output).
+    # ------------------------------------------------------------------
+    project_dirs = sorted(
+        entry for entry in skills_root.iterdir() if entry.is_dir() and entry.name != "__pycache__"
+    )
+
+    if not project_dirs:
+        print("No skills installed. Run 'forge skills install' to install skills.")
+        return 0
+
+    # ------------------------------------------------------------------
+    # 3. Read the lock file once to look up source information.
+    # ------------------------------------------------------------------
+    lock_path = skills_root / "skills.lock"
+    lock_file = read_lock_file(lock_path)
+
+    # Build a mapping: (target, skill_name) -> source string for fast lookup.
+    # A LockEntry records all skills installed from a single source into a
+    # single target directory, so we expand skills list here.
+    skill_source: dict[tuple[str, str], str] = {}
+    for entry in lock_file.packages:
+        for skill_name in entry.skills:
+            skill_source[(entry.target, skill_name)] = entry.source
+
+    # ------------------------------------------------------------------
+    # 4. Print the hierarchical listing.
+    # ------------------------------------------------------------------
+    any_printed = False
+    for project_dir in project_dirs:
+        # Identify skills: subdirectories containing a SKILL.md file.
+        skill_dirs = sorted(
+            entry
+            for entry in project_dir.iterdir()
+            if entry.is_dir() and (entry / "SKILL.md").is_file()
+        )
+
+        skill_word = "skill" if len(skill_dirs) == 1 else "skills"
+        print(f"skills/{project_dir.name}/  ({len(skill_dirs)} {skill_word})")
+
+        for skill_dir in skill_dirs:
+            source = skill_source.get((project_dir.name, skill_dir.name), "builtin")
+            print(f"  {skill_dir.name}  [{source}]")
+
+        any_printed = True
+
+    if not any_printed:
+        print("No skills installed. Run 'forge skills install' to install skills.")
+
+    return 0
+
+
+async def cmd_skills_update(args: argparse.Namespace) -> int:
+    """Re-fetch skill packages listed in the local lock file.
+
+    Reads ``skills/skills.lock`` from the current working directory and, for
+    each entry, resolves the current commit SHA of the recorded ref.  When the
+    resolved SHA differs from the stored ``resolved_commit`` the package is
+    re-cloned, reinstalled, and the lock file is updated.  Packages whose SHA
+    has not changed are skipped with an informative message.
+
+    .. note::
+        This command reads only the *local* ``skills/skills.lock`` file.  It
+        does **not** consult any Jira property (e.g. ``forge.skills``) to
+        discover new packages.  To add new packages use ``forge skills install``
+        instead.
+
+    Args:
+        args: Parsed CLI arguments with attributes:
+            - ``project``: Optional project key.  When provided only lock file
+              entries whose ``target`` matches this value are processed.
+
+    Returns:
+        Exit code – ``0`` when all updates succeed (including when nothing
+        needed updating), ``1`` when any clone or fetch error occurs.
+    """
+    skills_root = Path.cwd() / "skills"
+    lock_path = skills_root / "skills.lock"
+
+    # ------------------------------------------------------------------
+    # 1. Read the lock file.
+    # ------------------------------------------------------------------
+    lock_file = read_lock_file(lock_path)
+
+    if not lock_file.packages:
+        print("No packages in lock file. Run 'forge skills install' to install skills.")
+        return 0
+
+    # ------------------------------------------------------------------
+    # 2. Apply --project filter (if provided).
+    # ------------------------------------------------------------------
+    project_filter: str | None = getattr(args, "project", None)
+    entries = lock_file.packages
+    if project_filter is not None:
+        entries = [e for e in entries if e.target == project_filter]
+        if not entries:
+            print(f"No lock file entries found for project {project_filter!r}. Nothing to update.")
+            return 0
+
+    # ------------------------------------------------------------------
+    # 3. Process each entry.
+    # ------------------------------------------------------------------
+    updated: list[str] = []
+    skipped: list[str] = []
+    exit_code = 0
+
+    for entry in entries:
+        label = f"{entry.source!r} -> skills/{entry.target}/"
+
+        # Skip local-path entries (resolved_commit is "" for local paths).
+        if not _is_git_url(entry.source):
+            print(f"  Skipping {label} (local path – use 'forge skills install' to refresh)")
+            skipped.append(label)
+            continue
+
+        # ------------------------------------------------------------------
+        # 3a. Resolve the current SHA for the recorded ref.
+        # ------------------------------------------------------------------
+        ref = entry.ref or None
+        try:
+            current_sha: str | None = await resolve_ref_sha(entry.source, ref or "HEAD")
+        except RefResolutionError as exc:
+            print(f"  Error: could not resolve ref for {label}: {exc}", file=sys.stderr)
+            exit_code = 1
+            continue
+
+        # resolve_ref_sha returns None when the ref is already a commit SHA.
+        # In that case use the ref itself as the effective SHA.
+        effective_sha = current_sha if current_sha is not None else (ref or "")
+
+        if effective_sha and effective_sha == entry.resolved_commit:
+            print(f"  Up to date: {label} ({effective_sha[:12]})")
+            skipped.append(label)
+            continue
+
+        # ------------------------------------------------------------------
+        # 3b. Re-clone and reinstall.
+        # ------------------------------------------------------------------
+        print(f"  Updating {label} …", flush=True)
+
+        try:
+            clone_dir = await clone_skill_package(entry.source, ref)
+        except CloneError as exc:
+            print(f"  Error: clone failed for {label}: {exc}", file=sys.stderr)
+            exit_code = 1
+            continue
+
+        # Determine the skills source directory inside the clone.
+        skills_subdir = clone_dir / "skills"
+        source_dir = skills_subdir if skills_subdir.is_dir() else clone_dir
+
+        # Resolve the actual installed SHA.
+        resolved_commit = await _resolve_head_sha(clone_dir)
+
+        target_dir = skills_root / entry.target
+
+        try:
+            installed_skills = install_path_mode(source_dir, target_dir)
+        except (FileNotFoundError, NotADirectoryError) as exc:
+            print(f"  Error: could not install skills for {label}: {exc}", file=sys.stderr)
+            shutil.rmtree(clone_dir, ignore_errors=True)
+            exit_code = 1
+            continue
+        finally:
+            shutil.rmtree(clone_dir, ignore_errors=True)
+
+        # ------------------------------------------------------------------
+        # 3c. Update the lock file with the new resolved_commit.
+        # ------------------------------------------------------------------
+        new_entry = LockEntry(
+            source=entry.source,
+            ref=entry.ref,
+            resolved_commit=resolved_commit,
+            mode=entry.mode,
+            path=entry.path,
+            skill_mapping=entry.skill_mapping,
+            target=entry.target,
+            skills=installed_skills,
+            fetched_at=datetime.now(tz=UTC),
+        )
+        update_lock_file(lock_path, new_entry)
+
+        updated.append(label)
+        print(f"  Updated:  {label} ({resolved_commit[:12] if resolved_commit else 'unknown'})")
+
+    # ------------------------------------------------------------------
+    # 4. Print summary.
+    # ------------------------------------------------------------------
+    print()
+    if updated:
+        print(f"Updated {len(updated)} package(s):")
+        for lbl in updated:
+            print(f"  - {lbl}")
+    else:
+        print("All packages are up to date.")
+
+    if skipped:
+        skip_word = "package" if len(skipped) == 1 else "packages"
+        print(f"Skipped {len(skipped)} {skip_word} (already up to date or local path).")
+
+    return exit_code

@@ -7,6 +7,7 @@ import os
 import signal
 import sys
 import uuid
+from pathlib import Path
 from typing import Any
 
 from forge.api.routes.metrics import (
@@ -22,6 +23,8 @@ from forge.models.workflow import TicketType
 from forge.orchestrator.checkpointer import get_checkpointer
 from forge.queue.consumer import QueueConsumer
 from forge.queue.models import QueueMessage
+from forge.skills.orchestrator import ensure_skills
+from forge.skills.utils import extract_project_key
 from forge.workflow.registry import create_default_router
 from forge.workflow.router import WorkflowRouter
 from forge.workflow.utils.comment_classifier import CommentType, classify_comment
@@ -75,6 +78,20 @@ class OrchestratorWorker:
         """
         ticket_key = message.ticket_key
         logger.info(f"Processing {message.source.value} event for {ticket_key}")
+
+        # Synchronise skills before any workflow resolution so that both new
+        # and resumed workflows always start with up-to-date skill packages.
+        try:
+            project_key = extract_project_key(ticket_key)
+            jira_client = JiraClient()
+            skills_dir = Path(self.settings.skills_dir)
+            await ensure_skills(project_key, jira_client, skills_dir)
+        except Exception:
+            logger.warning(
+                "Skill synchronisation failed for %s; continuing with workflow.",
+                ticket_key,
+                exc_info=True,
+            )
 
         try:
             # Determine ticket type early to select workflow
