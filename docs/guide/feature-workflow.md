@@ -5,7 +5,7 @@ Forge orchestrates features through a multi-stage pipeline with human approval g
 ## Overview
 
 ```mermaid
-flowchart TB
+flowchart TD
     subgraph Planning
         A[Create Feature] --> B[Generate PRD]
         B -->|Approval| C[Generate Spec]
