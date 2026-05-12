@@ -18,6 +18,36 @@ logger = logging.getLogger(__name__)
 MAX_REVIEW_ATTEMPTS = 2
 
 
+def _validate_pass_number(raw_value: int | None) -> int | None:
+    """Validate and sanitize pass number value.
+
+    Args:
+        raw_value: Raw pass number from state (may be None, negative, or invalid).
+
+    Returns:
+        Valid pass number (positive integer) or None if invalid.
+    """
+    if raw_value is None:
+        return None
+
+    # Check if it's an integer type
+    if not isinstance(raw_value, int) or isinstance(raw_value, bool):
+        logger.warning(
+            f"Invalid pass_number type: {type(raw_value).__name__} (value: {raw_value}), "
+            "expected int"
+        )
+        return None
+
+    # Check if it's positive
+    if raw_value < 1:
+        logger.warning(
+            f"Invalid pass_number value: {raw_value}, expected positive integer >= 1"
+        )
+        return None
+
+    return raw_value
+
+
 async def local_review_changes(state: WorkflowState) -> WorkflowState:
     """Review implemented changes locally and fix breaking issues before PR creation.
 
@@ -34,14 +64,36 @@ async def local_review_changes(state: WorkflowState) -> WorkflowState:
     ticket_key = state["ticket_key"]
     workspace_path = state.get("workspace_path")
     review_attempts = state.get("local_review_attempts", 0)
-    pass_number = state.get("local_review_pass_number", 1)
 
     if not workspace_path:
         logger.info(f"No workspace for local review on {ticket_key}, skipping")
         return update_state_timestamp({**state, "current_node": "create_pr"})
 
-    # Post initial status comment only on first pass
-    if pass_number == 1:
+    # Safely retrieve and validate pass_number with defensive handling
+    raw_pass_number = state.get("local_review_pass_number", 1)
+    pass_number = _validate_pass_number(raw_pass_number)
+
+    # Handle pass tracking failures with generic fallback
+    if pass_number is None:
+        logger.warning(
+            f"Pass number tracking unavailable or corrupted for {ticket_key} "
+            f"(raw value: {raw_pass_number!r}), using generic status comment"
+        )
+        settings = get_settings()
+        jira = JiraClient(settings)
+        try:
+            await post_status_comment(
+                jira,
+                ticket_key,
+                "🔧 Local review found issues, applying fixes.",
+            )
+        finally:
+            await jira.close()
+        # Set pass_number to 1 for state updates to prevent further issues
+        pass_number = 1
+    elif pass_number == 1:
+        # Post initial status comment only on first pass
+        logger.info(f"Starting local review pass 1 for {ticket_key}")
         settings = get_settings()
         jira = JiraClient(settings)
         try:
@@ -52,9 +104,9 @@ async def local_review_changes(state: WorkflowState) -> WorkflowState:
             )
         finally:
             await jira.close()
-
-    # Post fix pass status comment on subsequent review iterations
-    if pass_number > 1:
+    else:
+        # Post fix pass status comment on subsequent review iterations
+        logger.info(f"Starting local review pass {pass_number} for {ticket_key}")
         settings = get_settings()
         jira = JiraClient(settings)
         try:
