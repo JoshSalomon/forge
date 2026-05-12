@@ -4,6 +4,11 @@ from datetime import datetime
 from typing import Any
 
 from forge.workflow.utils.comment_classifier import CommentType, classify_comment
+from forge.workflow.utils.jira_status import (
+    post_status_comment,
+    set_implementing_label,
+    transition_tasks_to_in_progress,
+)
 from forge.workflow.utils.qa_summary import post_qa_summary_if_needed
 
 
@@ -75,8 +80,11 @@ __all__ = [
     "CommentType",
     "classify_comment",
     "post_qa_summary_if_needed",
+    "post_status_comment",
     "resume_state",
     "set_error",
+    "set_implementing_label",
     "set_paused",
+    "transition_tasks_to_in_progress",
     "update_state_timestamp",
 ]
