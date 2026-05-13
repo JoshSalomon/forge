@@ -354,6 +354,10 @@ uv run mypy src/forge/         # type check
 
 For a full local setup walkthrough, payload-based testing, Prometheus metrics, Langfuse tracing, and debugging tools, see the **[Developer Guide](docs/developer-guide.md)**.
 
+## Documentation
+
+For how to preview, build, and deploy the documentation site, see [DOCS.md](DOCS.md).
+
 ## Contributing
 
 The primary way to contribute is to write a skill set for your team's stack — CI tooling, PRD format, implementation conventions — and share it under `skills/{your-project-key}/`. You only override the skills you change; everything else falls back to the defaults automatically.
