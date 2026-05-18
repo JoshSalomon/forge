@@ -28,6 +28,7 @@ from forge.workflow.nodes.human_review import (
     route_human_review,
 )
 from forge.workflow.nodes.implementation import implement_task
+from forge.workflow.nodes.docs_updater import update_documentation
 from forge.workflow.nodes.local_reviewer import local_review_changes
 from forge.workflow.nodes.pr_creation import (
     create_pull_request,
@@ -96,6 +97,8 @@ __all__ = [
     "escalate_to_blocked",
     "evaluate_ci_status",
     "wait_for_ci_gate",
+    # Documentation update
+    "update_documentation",
     # Local code review
     "local_review_changes",
     # Human review

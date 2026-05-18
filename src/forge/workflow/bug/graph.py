@@ -23,6 +23,7 @@ from forge.workflow.nodes import (
     route_rca_approval,
     setup_workspace,
     teardown_and_route,
+    update_documentation,
 )
 from forge.workflow.nodes.implement_review import (
     implement_review,
@@ -74,6 +75,8 @@ def route_entry(state: BugState) -> str:
         # Review stage — ai_review was removed; old checkpoints resume at human_review_gate
         elif current_node == "local_review":
             return "local_review"
+        elif current_node == "update_documentation":
+            return "update_documentation"
         elif current_node in ("ai_review", "human_review_gate"):
             return "human_review_gate"
         elif current_node == "implement_review":
@@ -221,6 +224,7 @@ def build_bug_graph() -> StateGraph:
     graph.add_node("setup_workspace", setup_workspace)
     graph.add_node("implement_bug_fix", implement_bug_fix)
     graph.add_node("local_review", local_review_changes)
+    graph.add_node("update_documentation", update_documentation)
     graph.add_node("create_pr", create_pull_request)
     graph.add_node("teardown_workspace", teardown_and_route)
 
@@ -250,6 +254,7 @@ def build_bug_graph() -> StateGraph:
             "setup_workspace": "setup_workspace",
             "implement_bug_fix": "implement_bug_fix",
             "local_review": "local_review",
+            "update_documentation": "update_documentation",
             "create_pr": "create_pr",
             "teardown_workspace": "teardown_workspace",
             "ci_evaluator": "ci_evaluator",
@@ -295,8 +300,9 @@ def build_bug_graph() -> StateGraph:
     graph.add_conditional_edges(
         "local_review",
         lambda s: s.get("current_node", "create_pr"),
-        {"local_review": "local_review", "create_pr": "create_pr"},
+        {"local_review": "local_review", "create_pr": "update_documentation"},
     )
+    graph.add_edge("update_documentation", "create_pr")
     graph.add_conditional_edges(
         "create_pr",
         _route_after_pr_creation,
