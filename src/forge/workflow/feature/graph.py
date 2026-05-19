@@ -42,6 +42,7 @@ from forge.workflow.nodes import (
     route_tasks_parallel,
     setup_workspace,
     teardown_and_route,
+    update_documentation,
     update_single_epic,
     wait_for_ci_gate,
 )
@@ -97,9 +98,11 @@ def route_by_ticket_type(state: FeatureState) -> str:
             return "generate_tasks"
         elif current_node == "task_approval_gate":
             return "task_approval_gate"
-        # Local review runs before PR creation
+        # Local review and doc update run before PR creation
         elif current_node == "local_review":
             return "local_review"
+        elif current_node == "update_documentation":
+            return "update_documentation"
         # CI gate pauses here waiting for GitHub webhook
         elif current_node == "wait_for_ci_gate":
             return "wait_for_ci_gate"
@@ -386,6 +389,9 @@ def build_feature_graph() -> StateGraph:
     # Local code review node (pre-PR, fixes breaking issues in-place)
     graph.add_node("local_review", local_review_changes)
 
+    # Documentation update node (pre-PR, updates stale docs)
+    graph.add_node("update_documentation", update_documentation)
+
     # CI/CD Validation nodes (US7)
     graph.add_node("wait_for_ci_gate", wait_for_ci_gate)
     graph.add_node("ci_evaluator", evaluate_ci_status)
@@ -425,6 +431,7 @@ def build_feature_graph() -> StateGraph:
             "task_router": "task_router",
             # Resume routing for pre-PR and CI/review stages
             "local_review": "local_review",
+            "update_documentation": "update_documentation",
             "wait_for_ci_gate": "wait_for_ci_gate",
             "ci_evaluator": "ci_evaluator",
             "human_review_gate": "human_review_gate",
@@ -549,8 +556,9 @@ def build_feature_graph() -> StateGraph:
     graph.add_conditional_edges(
         "local_review",
         lambda s: s.get("current_node", "create_pr"),
-        {"local_review": "local_review", "create_pr": "create_pr"},
+        {"local_review": "local_review", "create_pr": "update_documentation"},
     )
+    graph.add_edge("update_documentation", "create_pr")
     graph.add_conditional_edges(
         "create_pr",
         _route_after_pr_creation,

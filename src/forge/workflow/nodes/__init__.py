@@ -13,6 +13,7 @@ from forge.workflow.nodes.ci_evaluator import (
     evaluate_ci_status,
     wait_for_ci_gate,
 )
+from forge.workflow.nodes.docs_updater import update_documentation
 from forge.workflow.nodes.epic_decomposition import (
     check_all_epics_approved,
     decompose_epics,
@@ -96,6 +97,8 @@ __all__ = [
     "escalate_to_blocked",
     "evaluate_ci_status",
     "wait_for_ci_gate",
+    # Documentation update
+    "update_documentation",
     # Local code review
     "local_review_changes",
     # Human review
