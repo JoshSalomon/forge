@@ -34,7 +34,6 @@ from forge.workflow.nodes import (
     human_review_gate,
     implement_task,
     local_review_changes,
-    update_documentation,
     regenerate_all_epics,
     regenerate_prd_with_feedback,
     regenerate_spec_with_feedback,
@@ -43,6 +42,7 @@ from forge.workflow.nodes import (
     route_tasks_parallel,
     setup_workspace,
     teardown_and_route,
+    update_documentation,
     update_single_epic,
     wait_for_ci_gate,
 )
