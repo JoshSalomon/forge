@@ -13,6 +13,7 @@ from forge.workflow.nodes.ci_evaluator import (
     evaluate_ci_status,
     wait_for_ci_gate,
 )
+from forge.workflow.nodes.docs_updater import update_documentation
 from forge.workflow.nodes.epic_decomposition import (
     check_all_epics_approved,
     decompose_epics,
@@ -28,7 +29,6 @@ from forge.workflow.nodes.human_review import (
     route_human_review,
 )
 from forge.workflow.nodes.implementation import implement_task
-from forge.workflow.nodes.docs_updater import update_documentation
 from forge.workflow.nodes.local_reviewer import local_review_changes
 from forge.workflow.nodes.pr_creation import (
     create_pull_request,
