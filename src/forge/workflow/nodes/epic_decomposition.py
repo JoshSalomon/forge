@@ -114,6 +114,11 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
         # Build context for Epic generation
         context: dict[str, Any] = {
             "ticket_key": ticket_key,
+            "ticket_type": state.get("ticket_type", ""),
+            "current_node": state.get("current_node", ""),
+            "event_type": state.get("event_type", ""),
+            "event_source": state.get("context", {}).get("source", ""),
+            "retry_count": state.get("retry_count", 0),
             "project_key": project_key,
             "feature_summary": parent_issue.summary,
             "available_repos": available_repos,
@@ -319,6 +324,13 @@ async def update_single_epic(state: WorkflowState) -> WorkflowState:
             feedback=feedback,
             content_type="epic",
             ticket_key=ticket_key,
+            context={
+                "ticket_type": state.get("ticket_type", ""),
+                "current_node": state.get("current_node", ""),
+                "event_type": state.get("event_type", ""),
+                "event_source": state.get("context", {}).get("source", ""),
+                "retry_count": state.get("retry_count", 0),
+            },
         )
 
         # Update Epic description

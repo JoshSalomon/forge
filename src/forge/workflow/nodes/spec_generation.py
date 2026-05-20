@@ -69,6 +69,11 @@ async def generate_spec(state: WorkflowState) -> WorkflowState:
         # Build context
         context: dict[str, Any] = {
             "ticket_key": ticket_key,
+            "ticket_type": state.get("ticket_type", ""),
+            "current_node": state.get("current_node", ""),
+            "event_type": state.get("event_type", ""),
+            "event_source": state.get("context", {}).get("source", ""),
+            "retry_count": state.get("retry_count", 0),
         }
 
         # Generate specification using Claude - primary operation
@@ -174,6 +179,13 @@ async def regenerate_spec_with_feedback(state: WorkflowState) -> WorkflowState:
             feedback=feedback,
             content_type="spec",
             ticket_key=ticket_key,
+            context={
+                "ticket_type": state.get("ticket_type", ""),
+                "current_node": state.get("current_node", ""),
+                "event_type": state.get("event_type", ""),
+                "event_source": state.get("context", {}).get("source", ""),
+                "retry_count": state.get("retry_count", 0),
+            },
         )
 
         # Store updated spec in Jira (comment or custom field based on config)

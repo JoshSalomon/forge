@@ -17,6 +17,9 @@ class BaseState(TypedDict, total=False):
     thread_id: str
     ticket_key: str
 
+    # Event origin
+    event_type: str
+
     # Execution control
     current_node: str
     is_paused: bool

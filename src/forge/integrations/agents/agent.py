@@ -32,6 +32,7 @@ except ImportError:
 
 from forge.config import Settings, get_settings
 from forge.integrations.langfuse import get_langfuse_config, get_langfuse_context
+from forge.integrations.langfuse.fields import resolve_trace_fields
 from forge.prompts import load_prompt, set_default_version
 from forge.skills.resolver import resolve_skill_paths
 
@@ -56,6 +57,29 @@ MCP_CONFIG_PATHS = [
 ]
 
 logger = logging.getLogger(__name__)
+
+_TRACE_FIELD_KEYS = frozenset(
+    {
+        "ticket_key",
+        "ticket_type",
+        "current_node",
+        "current_repo",
+        "current_pr_number",
+        "ci_status",
+        "event_type",
+        "event_source",
+        "retry_count",
+        "repo",
+        "pr_number",
+    }
+)
+
+
+def _forward_trace_fields(context: dict[str, Any] | None) -> dict[str, Any]:
+    """Extract trace-relevant fields from an incoming context dict."""
+    if not context:
+        return {}
+    return {k: v for k, v in context.items() if k in _TRACE_FIELD_KEYS}
 
 
 def get_weather(city: str) -> str:
@@ -532,6 +556,8 @@ class ForgeAgent:
         session_id: str | None = None,
         trace_name: str | None = None,
         ticket_key: str | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """Run the agent with the given prompt.
 
@@ -544,6 +570,8 @@ class ForgeAgent:
             session_id: Optional session ID for Langfuse (e.g., ticket key).
             trace_name: Optional trace name for Langfuse.
             ticket_key: Optional ticket key for per-project skill resolution.
+            tags: Optional list of trace tags for Langfuse.
+            metadata: Optional metadata dict for Langfuse.
 
         Returns:
             Agent response text.
@@ -565,7 +593,8 @@ class ForgeAgent:
         langfuse_config = get_langfuse_config(
             trace_name=trace_name or "deep_agent_invocation",
             session_id=session_id,
-            metadata={"system_prompt_length": str(len(system_prompt))},
+            tags=tags,
+            metadata=metadata,
         )
         if langfuse_config:
             # Extract context params and remove from config
@@ -580,6 +609,7 @@ class ForgeAgent:
             session_id=langfuse_ctx_params.get("session_id"),
             user_id=langfuse_ctx_params.get("user_id"),
             tags=langfuse_ctx_params.get("tags"),
+            metadata=langfuse_ctx_params.get("metadata"),
         ):
             last_error: Exception | None = None
             for attempt in range(self.MAX_RETRIES):
@@ -704,6 +734,13 @@ class ForgeAgent:
         logger.info(f"Running task '{task}' using Deep Agents")
         record_agent_invocation(task_type=task)
         _start = time.monotonic()
+        trace_state: dict[str, Any] = {
+            **(context or {}),
+            "system_prompt_length": len(system_prompt),
+            "llm_model": self.settings.claude_model,
+        }
+        trace_tags, trace_metadata = resolve_trace_fields(trace_state)
+
         result = await self._run_agent(
             prompt=prompt,
             system_prompt=system_prompt,
@@ -711,6 +748,8 @@ class ForgeAgent:
             session_id=ticket_key,
             trace_name=f"task:{task}",
             ticket_key=ticket_key,
+            tags=trace_tags or None,
+            metadata=trace_metadata or None,
         )
         observe_agent_duration(task_type=task, duration=time.monotonic() - _start)
 
@@ -865,13 +904,12 @@ class ForgeAgent:
         )
 
         logger.info("Generating PRD using Deep Agents with skill")
+        task_context = _forward_trace_fields(context)
+        task_context["project_key"] = context.get("project_key", "") if context else ""
         result = await self.run_task(
             task="generate-prd",
             prompt=prompt,
-            context={
-                "ticket_key": context.get("ticket_key", "") if context else "",
-                "project_key": context.get("project_key", "") if context else "",
-            },
+            context=task_context,
         )
 
         result = self._strip_preamble(result)
@@ -901,13 +939,12 @@ class ForgeAgent:
         )
 
         logger.info("Generating Spec using Deep Agents with skill")
+        task_context = _forward_trace_fields(context)
+        task_context["project_key"] = context.get("project_key", "") if context else ""
         result = await self.run_task(
             task="generate-spec",
             prompt=prompt,
-            context={
-                "ticket_key": context.get("ticket_key", "") if context else "",
-                "project_key": context.get("project_key", "") if context else "",
-            },
+            context=task_context,
         )
 
         result = self._strip_preamble(result)
@@ -954,15 +991,14 @@ NOTE: No repositories configured. Use REPO: unknown for now."""
         )
 
         logger.info("Generating Epics using Deep Agents with skill")
+        task_context = _forward_trace_fields(context)
+        task_context["project_key"] = context.get("project_key", "") if context else ""
+        task_context["feature_summary"] = context.get("feature_summary", "") if context else ""
+        task_context["available_repos"] = available_repos
         result = await self.run_task(
             task="decompose-epics",
             prompt=prompt,
-            context={
-                "ticket_key": context.get("ticket_key", "") if context else "",
-                "project_key": context.get("project_key", "") if context else "",
-                "feature_summary": context.get("feature_summary", "") if context else "",
-                "available_repos": available_repos,
-            },
+            context=task_context,
         )
 
         epics = self._parse_epics_response(result)
@@ -975,6 +1011,7 @@ NOTE: No repositories configured. Use REPO: unknown for now."""
         feedback: str,
         content_type: str,
         ticket_key: str | None = None,
+        context: dict[str, Any] | None = None,
     ) -> str:
         """Regenerate content incorporating feedback.
 
@@ -982,6 +1019,8 @@ NOTE: No repositories configured. Use REPO: unknown for now."""
             original_content: The original generated content.
             feedback: User feedback/revision request.
             content_type: Type of content (prd, spec, epic).
+            ticket_key: Optional ticket key for session tracking.
+            context: Optional context with trace fields from workflow state.
 
         Returns:
             Regenerated content.
@@ -1002,10 +1041,13 @@ NOTE: No repositories configured. Use REPO: unknown for now."""
         )
 
         logger.info(f"Regenerating {content_type} with feedback using Deep Agents")
+        task_context = _forward_trace_fields(context)
+        task_context["is_revision"] = True
+        task_context["ticket_key"] = ticket_key or ""
         result = await self.run_task(
             task=skill_name,
             prompt=prompt,
-            context={"is_revision": True, "ticket_key": ticket_key or ""},
+            context=task_context,
         )
 
         result = self._strip_preamble(result)
@@ -1090,13 +1132,12 @@ NOTE: No repositories configured. Use REPO: unknown for now."""
         )
 
         logger.info(f"Answering question about {artifact_type}")
+        task_context = _forward_trace_fields(context)
+        task_context["artifact_type"] = artifact_type
         result = await self.run_task(
             task="answer-question",
             prompt=prompt,
-            context={
-                "artifact_type": artifact_type,
-                "ticket_key": context.get("ticket_key", ""),
-            },
+            context=task_context,
             # Q&A gets read-only MCP tools for lookups (filtered by agent_mcp_read_only)
         )
 

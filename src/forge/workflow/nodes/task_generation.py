@@ -106,6 +106,12 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
 
             # Build context
             context: dict[str, Any] = {
+                "ticket_key": ticket_key,
+                "ticket_type": state.get("ticket_type", ""),
+                "current_node": state.get("current_node", ""),
+                "event_type": state.get("event_type", ""),
+                "event_source": state.get("context", {}).get("source", ""),
+                "retry_count": state.get("retry_count", 0),
                 "epic_key": epic_key,
                 "epic_summary": epic_summary,
                 "feature_key": ticket_key,
@@ -519,6 +525,13 @@ async def update_single_task(state: WorkflowState) -> WorkflowState:
             feedback=feedback,
             content_type="task",
             ticket_key=ticket_key,
+            context={
+                "ticket_type": state.get("ticket_type", ""),
+                "current_node": state.get("current_node", ""),
+                "event_type": state.get("event_type", ""),
+                "event_source": state.get("context", {}).get("source", ""),
+                "retry_count": state.get("retry_count", 0),
+            },
         )
 
         # Update Task in Jira

@@ -145,7 +145,18 @@ async def sync_pr_description(
                 updated_body = await agent.run_task(
                     task="sync-pr-description",
                     prompt=prompt,
-                    context={"owner": owner, "repo": repo, "pr_number": pr_number},
+                    context={
+                        "ticket_key": state.get("ticket_key", ""),
+                        "ticket_type": state.get("ticket_type", ""),
+                        "current_node": state.get("current_node", ""),
+                        "repo": repo,
+                        "pr_number": pr_number,
+                        "ci_status": state.get("ci_status", ""),
+                        "event_type": state.get("event_type", ""),
+                        "event_source": state.get("context", {}).get("source", ""),
+                        "retry_count": state.get("retry_count", 0),
+                        "owner": owner,
+                    },
                     include_tools=False,
                 )
             finally:

@@ -75,9 +75,14 @@ async def answer_question(state: WorkflowState) -> WorkflowState:
             question=question,
             artifact_content=artifact_content,
             context={
+                "ticket_key": ticket_key,
+                "ticket_type": state.get("ticket_type", ""),
+                "current_node": state.get("current_node", ""),
+                "event_type": state.get("event_type", ""),
+                "event_source": state.get("context", {}).get("source", ""),
+                "retry_count": state.get("retry_count", 0),
                 "artifact_type": artifact_type,
                 "generation_context": generation_context,
-                "ticket_key": ticket_key,
             },
         )
 

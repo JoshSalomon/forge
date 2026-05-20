@@ -194,6 +194,11 @@ async def generate_prd(state: WorkflowState) -> WorkflowState:
         # Build context from issue metadata
         context: dict[str, Any] = {
             "ticket_key": ticket_key,
+            "ticket_type": state.get("ticket_type", ""),
+            "current_node": state.get("current_node", ""),
+            "event_type": state.get("event_type", ""),
+            "event_source": state.get("context", {}).get("source", ""),
+            "retry_count": state.get("retry_count", 0),
             "summary": issue.summary,
             "project_key": issue.project_key,
         }
@@ -306,6 +311,13 @@ async def regenerate_prd_with_feedback(state: WorkflowState) -> WorkflowState:
             feedback=feedback,
             content_type="prd",
             ticket_key=ticket_key,
+            context={
+                "ticket_type": state.get("ticket_type", ""),
+                "current_node": state.get("current_node", ""),
+                "event_type": state.get("event_type", ""),
+                "event_source": state.get("context", {}).get("source", ""),
+                "retry_count": state.get("retry_count", 0),
+            },
         )
 
         # Publish revised PRD
