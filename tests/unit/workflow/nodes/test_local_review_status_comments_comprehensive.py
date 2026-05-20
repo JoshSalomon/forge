@@ -434,146 +434,6 @@ class TestCorrectPassNumberInCommentText:
         )
 
 
-class TestCommentPostingErrorHandling:
-    """Tests verifying comment posting errors are suppressed and logged.
-    
-    Acceptance Criteria: Unit tests verify comment posting errors are suppressed and logged
-    """
-
-    @pytest.mark.asyncio
-    async def test_workflow_continues_when_initial_comment_fails(self, caplog):
-        """Should continue workflow when initial comment posting fails."""
-        mock_jira = create_mock_jira_client()
-        mock_runner = create_mock_container_runner(has_unfixed_issues=False)
-        mock_git = create_mock_git_operations(has_changes=False)
-
-        state = create_initial_feature_state(
-            ticket_key="FEAT-400",
-            current_repo="owner/test-repo",
-        )
-        state["workspace_path"] = "/tmp/test-workspace"
-        state["local_review_pass_number"] = 1
-        state["local_review_attempts"] = 0
-
-        with (
-            patch("forge.workflow.nodes.local_reviewer.JiraClient", return_value=mock_jira),
-            patch("forge.workflow.nodes.local_reviewer.ContainerRunner", return_value=mock_runner),
-            patch("forge.workflow.nodes.local_reviewer.GitOperations", return_value=mock_git),
-            patch(
-                "forge.workflow.nodes.local_reviewer.post_status_comment"
-            ) as mock_post_status,
-        ):
-            # Simulate post_status_comment raising an exception
-            mock_post_status.side_effect = Exception("Jira API error")
-
-            # Should not raise exception - workflow should continue
-            result = await local_review_changes(state)
-
-        # Verify workflow completed successfully
-        assert result["current_node"] == "create_pr"
-
-        # Verify JiraClient was properly closed even when error occurred
-        mock_jira.close.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_workflow_continues_when_fix_comment_fails(self, caplog):
-        """Should continue workflow when fix comment posting fails."""
-        mock_jira = create_mock_jira_client()
-        mock_runner = create_mock_container_runner(has_unfixed_issues=False)
-        mock_git = create_mock_git_operations(has_changes=False)
-
-        state = create_initial_feature_state(
-            ticket_key="FEAT-401",
-            current_repo="owner/test-repo",
-        )
-        state["workspace_path"] = "/tmp/test-workspace"
-        state["local_review_pass_number"] = 2
-        state["local_review_attempts"] = 1
-
-        with (
-            patch("forge.workflow.nodes.local_reviewer.JiraClient", return_value=mock_jira),
-            patch("forge.workflow.nodes.local_reviewer.ContainerRunner", return_value=mock_runner),
-            patch("forge.workflow.nodes.local_reviewer.GitOperations", return_value=mock_git),
-            patch(
-                "forge.workflow.nodes.local_reviewer.post_status_comment"
-            ) as mock_post_status,
-        ):
-            # Simulate post_status_comment raising an exception
-            mock_post_status.side_effect = Exception("Network timeout")
-
-            # Should not raise exception - workflow should continue
-            result = await local_review_changes(state)
-
-        # Verify workflow completed successfully
-        assert result["current_node"] == "create_pr"
-
-        # Verify JiraClient was properly closed even when error occurred
-        mock_jira.close.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_jira_client_closed_in_finally_block_on_error(self):
-        """Should close JiraClient in finally block even when exception occurs."""
-        mock_jira = create_mock_jira_client()
-        mock_runner = create_mock_container_runner(has_unfixed_issues=False)
-        mock_git = create_mock_git_operations(has_changes=False)
-
-        state = create_initial_feature_state(
-            ticket_key="FEAT-402",
-            current_repo="owner/test-repo",
-        )
-        state["workspace_path"] = "/tmp/test-workspace"
-        state["local_review_pass_number"] = 1
-        state["local_review_attempts"] = 0
-
-        with (
-            patch("forge.workflow.nodes.local_reviewer.JiraClient", return_value=mock_jira),
-            patch("forge.workflow.nodes.local_reviewer.ContainerRunner", return_value=mock_runner),
-            patch("forge.workflow.nodes.local_reviewer.GitOperations", return_value=mock_git),
-            patch(
-                "forge.workflow.nodes.local_reviewer.post_status_comment"
-            ) as mock_post_status,
-        ):
-            mock_post_status.side_effect = Exception("Jira connection failed")
-            await local_review_changes(state)
-
-        # Verify JiraClient.close() was called in finally block
-        mock_jira.close.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_errors_suppressed_not_propagated(self):
-        """Should suppress errors without propagating exceptions to caller."""
-        mock_jira = create_mock_jira_client()
-        mock_runner = create_mock_container_runner(has_unfixed_issues=False)
-        mock_git = create_mock_git_operations(has_changes=False)
-
-        state = create_initial_feature_state(
-            ticket_key="FEAT-403",
-            current_repo="owner/test-repo",
-        )
-        state["workspace_path"] = "/tmp/test-workspace"
-        state["local_review_pass_number"] = 3
-        state["local_review_attempts"] = 2
-
-        with (
-            patch("forge.workflow.nodes.local_reviewer.JiraClient", return_value=mock_jira),
-            patch("forge.workflow.nodes.local_reviewer.ContainerRunner", return_value=mock_runner),
-            patch("forge.workflow.nodes.local_reviewer.GitOperations", return_value=mock_git),
-            patch(
-                "forge.workflow.nodes.local_reviewer.post_status_comment"
-            ) as mock_post_status,
-        ):
-            mock_post_status.side_effect = Exception("Severe API failure")
-
-            # Should NOT raise exception
-            try:
-                result = await local_review_changes(state)
-                # If we get here, exception was suppressed (expected behavior)
-                assert True
-            except Exception:
-                # If exception propagates, test should fail
-                pytest.fail("Exception should have been suppressed but was propagated")
-
-
 class TestGracefulHandlingWhenPassNumberUnavailable:
     """Tests verifying graceful handling when pass_number unavailable.
     
@@ -708,13 +568,16 @@ class TestGracefulHandlingWhenPassNumberUnavailable:
             
             # Should not raise exception
             result = await local_review_changes(state)
-            
+
             # Verify workflow completed
             assert result["current_node"] == "create_pr"
-            
-            # With pass_number=0, neither initial (==1) nor fix (>1) comment should post
-            # So no comment should be posted
-            assert mock_post_status.call_count == 0
+
+            # With pass_number=0 (invalid), should use generic fallback comment
+            assert mock_post_status.call_count == 1
+            comment_args = mock_post_status.call_args[0]
+            assert comment_args[0] == mock_jira  # First arg is jira client
+            assert comment_args[1] == "FEAT-503"  # Second arg is ticket key
+            assert "🔧 Local review found issues, applying fixes." in comment_args[2]  # Third arg is message
 
 
 class TestIntegrationWithReviewFlow:

@@ -141,7 +141,11 @@ async def setup_workspace(state: WorkflowState) -> WorkflowState:
     logger.info(f"Setting up workspace for {current_repo} ({ticket_key})")
 
     # Extract repo name for display (handle "owner/repo" format)
-    repo_display = current_repo.split("/")[-1] if current_repo and "/" in current_repo else "unknown repository"
+    repo_display = (
+        current_repo.split("/")[-1]
+        if current_repo and "/" in current_repo
+        else "unknown repository"
+    )
 
     # Post initial status comment and update Jira labels/transitions
     jira_client = JiraClient()

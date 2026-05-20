@@ -12,11 +12,19 @@ from forge.integrations.github.client import GitHubClient
 from forge.integrations.jira.client import JiraClient
 from forge.models.workflow import ForgeLabel
 from forge.prompts import load_prompt
+from forge.sandbox import ContainerRunner
 from forge.workflow.feature.state import FeatureState as WorkflowState
 from forge.workflow.nodes.code_review import run_post_change_review, sync_pr_description
+from forge.workflow.nodes.error_handler import notify_error
 from forge.workflow.nodes.workspace_setup import prepare_workspace
 from forge.workflow.utils import update_state_timestamp
-from forge.workflow.utils.jira_status import post_status_comment
+from forge.workflow.utils.jira_status import (
+    post_status_comment,
+    remove_implementing_label,
+    set_ci_pending_label,
+)
+from forge.workspace.git_ops import GitOperations
+from forge.workspace.manager import Workspace
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +190,7 @@ async def evaluate_ci_status(state: WorkflowState) -> WorkflowState:
 
         # CI failed - check if we can retry
         max_retries = settings.ci_fix_max_retries
-        
+
         # Validate current_attempt doesn't exceed max_attempts
         if current_attempt >= max_attempts:
             logger.warning(f"CI fix attempt limit ({max_attempts}) reached for {ticket_key}")
@@ -196,7 +204,7 @@ async def evaluate_ci_status(state: WorkflowState) -> WorkflowState:
                     "last_error": "CI fix attempt limit reached",
                 }
             )
-        
+
         if ci_fix_attempts >= max_retries:
             logger.warning(f"CI fix retry limit ({max_retries}) reached for {ticket_key}")
             record_ci_fix_attempt(repo=state.get("current_repo", "unknown"), result="exhausted")
@@ -226,8 +234,6 @@ async def evaluate_ci_status(state: WorkflowState) -> WorkflowState:
 
     except Exception as e:
         logger.error(f"CI evaluation failed for {ticket_key}: {e}")
-        from forge.workflow.nodes.error_handler import notify_error
-
         await notify_error(state, str(e), "ci_evaluator")
         return {
             **state,
@@ -271,7 +277,7 @@ async def attempt_ci_fix(state: WorkflowState) -> WorkflowState:
     # Post status comment to feature ticket at start of CI fix attempt
     current_attempt = state.get("current_attempt")
     max_attempts = state.get("max_attempts")
-    
+
     if current_attempt is not None and max_attempts is not None:
         jira = JiraClient()
         try:
@@ -291,17 +297,11 @@ async def attempt_ci_fix(state: WorkflowState) -> WorkflowState:
     attempt = state.get("ci_fix_attempts", 1)
 
     try:
-        from forge.sandbox import ContainerRunner
-        from forge.workspace.git_ops import GitOperations
-        from forge.workspace.manager import Workspace
-
         workspace_path, _ = prepare_workspace(state)
         state = {**state, "workspace_path": workspace_path}
 
     except Exception as _setup_err:
         logger.error(f"Workspace setup failed for {ticket_key}: {_setup_err}")
-        from forge.workflow.nodes.error_handler import notify_error
-
         await notify_error(state, str(_setup_err), "attempt_ci_fix")
         return {
             **state,
@@ -444,8 +444,6 @@ async def attempt_ci_fix(state: WorkflowState) -> WorkflowState:
 
     except Exception as e:
         logger.error(f"CI fix failed for {ticket_key}: {e}")
-        from forge.workflow.nodes.error_handler import notify_error
-
         await notify_error(state, str(e), "attempt_ci_fix")
         return {
             **state,
@@ -471,13 +469,6 @@ async def wait_for_ci_gate(state: WorkflowState) -> WorkflowState:
     Returns:
         Updated state with is_paused=True.
     """
-    from forge.integrations.jira.client import JiraClient
-    from forge.workflow.utils.jira_status import (
-        post_status_comment,
-        remove_implementing_label,
-        set_ci_pending_label,
-    )
-
     ticket_key = state["ticket_key"]
     ci_fix_attempts = state.get("ci_fix_attempts", 0)
 
@@ -493,7 +484,9 @@ async def wait_for_ci_gate(state: WorkflowState) -> WorkflowState:
             if pr_number is not None:
                 message = f"🚀 Pull request #{pr_number} created and submitted. Waiting for CI checks to complete."
             else:
-                message = "🚀 Pull request created and submitted. Waiting for CI checks to complete."
+                message = (
+                    "🚀 Pull request created and submitted. Waiting for CI checks to complete."
+                )
 
             # Post status comment to feature ticket
             await post_status_comment(jira, ticket_key, message)
@@ -568,8 +561,6 @@ async def escalate_to_blocked(state: WorkflowState) -> WorkflowState:
             error_msg = f"{last_error}. Manual intervention required."
 
         # Post error with @mentions for reporter and assignee
-        from forge.workflow.nodes.error_handler import notify_error
-
         await notify_error(state, error_msg, f"escalate_blocked ({current_node})")
         # Set blocked label instead of transitioning to custom status
         await jira.set_workflow_label(ticket_key, ForgeLabel.BLOCKED)

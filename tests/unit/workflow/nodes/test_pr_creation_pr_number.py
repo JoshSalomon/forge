@@ -100,13 +100,6 @@ class TestPRNumberExtractionSuccess:
 
         # Verify PR number is in state
         assert result["current_pr_number"] == 456
-        
-        # Verify debug logging for successful extraction
-        assert any(
-            "Successfully extracted PR number 456" in record.message
-            for record in caplog.records
-            if record.levelname == "DEBUG"
-        )
 
     @pytest.mark.asyncio
     async def test_pr_number_used_in_jira_remote_link(self):

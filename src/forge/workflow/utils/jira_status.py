@@ -61,14 +61,10 @@ async def transition_tasks_to_in_progress(
             logger.info(f"Transitioned {task_key} to In Progress")
         except ValueError as e:
             # Transition not available for this task
-            logger.warning(
-                f"Cannot transition {task_key} to In Progress: {e}"
-            )
+            logger.warning(f"Cannot transition {task_key} to In Progress: {e}")
         except Exception as e:
             # Other API errors
-            logger.warning(
-                f"Failed to transition {task_key} to In Progress: {e}"
-            )
+            logger.warning(f"Failed to transition {task_key} to In Progress: {e}")
 
 
 async def set_implementing_label(
@@ -93,9 +89,7 @@ async def set_implementing_label(
             ForgeLabel.TASK_IMPLEMENTING,
         )
     except Exception as e:
-        logger.warning(
-            f"Failed to set implementing label on {feature_key}: {e}"
-        )
+        logger.warning(f"Failed to set implementing label on {feature_key}: {e}")
 
 
 async def remove_implementing_label(
@@ -118,9 +112,7 @@ async def remove_implementing_label(
         await jira_client.remove_labels(feature_key, [ForgeLabel.TASK_IMPLEMENTING.value])
         logger.info(f"Removed forge:implementing label from {feature_key}")
     except Exception as e:
-        logger.warning(
-            f"Failed to remove implementing label from {feature_key}: {e}"
-        )
+        logger.warning(f"Failed to remove implementing label from {feature_key}: {e}")
 
 
 async def set_ci_pending_label(
@@ -146,6 +138,4 @@ async def set_ci_pending_label(
         )
         logger.info(f"Set forge:ci-pending label on {feature_key}")
     except Exception as e:
-        logger.warning(
-            f"Failed to set ci-pending label on {feature_key}: {e}"
-        )
+        logger.warning(f"Failed to set ci-pending label on {feature_key}: {e}")

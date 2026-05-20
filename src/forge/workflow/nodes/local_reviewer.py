@@ -40,9 +40,7 @@ def _validate_pass_number(raw_value: int | None) -> int | None:
 
     # Check if it's positive
     if raw_value < 1:
-        logger.warning(
-            f"Invalid pass_number value: {raw_value}, expected positive integer >= 1"
-        )
+        logger.warning(f"Invalid pass_number value: {raw_value}, expected positive integer >= 1")
         return None
 
     return raw_value
