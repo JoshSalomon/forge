@@ -137,8 +137,11 @@ class RetryQueue:
         redis = await self._get_redis()
         message_id = f"{message.source}:{message.ticket_key}:{message.event_id}"
 
+        msg = message.to_dict()
+        # Preserve message_id so round-trip through requeue_dead_letter is lossless.
+        msg["message_id"] = message.message_id
         entry = {
-            "message": message.to_dict(),
+            "message": msg,
             "error": error,
             "attempts": attempt,
             "failed_at": datetime.utcnow().isoformat(),
