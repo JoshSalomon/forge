@@ -5,7 +5,6 @@ using a real Redis instance via testcontainers.
 """
 
 import asyncio
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -43,7 +42,7 @@ class TestQueueProducer:
         """Publish a GitHub event to the queue."""
         producer = QueueProducer(redis_client=redis_client)
 
-        message_id = await producer.publish(
+        await producer.publish(
             event_id="gh-event-456",
             source=EventSource.GITHUB,
             event_type="check_run:completed",
@@ -122,7 +121,7 @@ class TestQueueConsumer:
             block=1000,
         )
 
-        for stream_name, entries in messages:
+        for _stream_name, entries in messages:
             for message_id, data in entries:
                 message = QueueMessage.from_redis(message_id, data)
                 await consumer._process_message(message)
@@ -173,7 +172,7 @@ class TestQueueConsumer:
             block=1000,
         )
 
-        for stream_name, entries in messages:
+        for _stream_name, entries in messages:
             for message_id, data in entries:
                 message = QueueMessage.from_redis(message_id, data)
                 await consumer._process_message(message)
@@ -248,7 +247,7 @@ class TestQueueConsumer:
             block=1000,
         )
 
-        for stream_name, entries in messages:
+        for _stream_name, entries in messages:
             for message_id, data in entries:
                 message = QueueMessage.from_redis(message_id, data)
                 await consumer._process_message(message)

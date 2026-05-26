@@ -113,6 +113,14 @@ async def implement_task(state: WorkflowState) -> WorkflowState:
         task_description = task_issue.description or ""
         task_summary = task_issue.summary
 
+        try:
+            await jira.add_comment(
+                ticket_key,
+                f"Implementation started for [{current_task}]: {task_summary}",
+            )
+        except Exception:
+            logger.warning(f"Failed to post implementation-started comment for {current_task}")
+
         # Get guardrails context
         guardrails = state.get("context", {}).get("guardrails", "")
 

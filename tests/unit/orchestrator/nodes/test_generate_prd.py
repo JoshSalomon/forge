@@ -1,11 +1,12 @@
 """Unit tests for PRD generation node."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from forge.models.workflow import ForgeLabel, TicketType
-from forge.workflow.nodes import generate_prd, regenerate_prd_with_feedback
 from forge.workflow.feature.state import create_initial_feature_state as create_initial_state
+from forge.workflow.nodes import generate_prd, regenerate_prd_with_feedback
 
 
 class TestGeneratePrd:
@@ -170,7 +171,7 @@ class TestRegeneratePrdWithFeedback:
         """PRD is regenerated incorporating feedback."""
         with patch("forge.workflow.nodes.prd_generation.JiraClient", return_value=mock_jira):
             with patch("forge.workflow.nodes.prd_generation.ForgeAgent", return_value=mock_agent):
-                result = await regenerate_prd_with_feedback(state_with_feedback)
+                await regenerate_prd_with_feedback(state_with_feedback)
 
         mock_agent.regenerate_with_feedback.assert_called_once()
         call_args = mock_agent.regenerate_with_feedback.call_args
@@ -208,7 +209,7 @@ class TestRegeneratePrdWithFeedback:
 
         with patch("forge.workflow.nodes.prd_generation.JiraClient", return_value=mock_jira):
             with patch("forge.workflow.nodes.prd_generation.ForgeAgent", return_value=mock_agent):
-                result = await regenerate_prd_with_feedback(state)
+                await regenerate_prd_with_feedback(state)
 
         # Agent should not be called
         mock_agent.regenerate_with_feedback.assert_not_called()

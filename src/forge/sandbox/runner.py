@@ -242,9 +242,12 @@ class ContainerRunner:
         cmd = [
             "podman",
             "run",
-            "--rm",  # Remove container after exit
             "--name",
             container_name,
+        ]
+        if not self.settings.container_keep:
+            cmd.append("--rm")
+        cmd += [
             # Mount workspace
             "-v",
             f"{workspace_path}:/workspace:Z",
@@ -420,6 +423,14 @@ class ContainerRunner:
                     logger.info(f"Container stderr:\n{stderr_str}")
                 if stdout_str:
                     logger.debug(f"Container stdout:\n{stdout_str}")
+                if self.settings.container_keep:
+                    logger.warning(
+                        f"Container kept for debugging (FORGE_CONTAINER_KEEP=true): "
+                        f"{container_name}\n"
+                        f"  Inspect logs:      podman logs {container_name}\n"
+                        f"  Enter filesystem:  podman export {container_name} | tar -xC /tmp/{container_name}\n"
+                        f"  Remove when done:  podman rm {container_name}"
+                    )
             else:
                 # Success: stderr at DEBUG only
                 if stderr_str:

@@ -1,7 +1,8 @@
 """Unit tests for blocked-state and forge:retry worker behaviour."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from forge.models.events import EventSource
 from forge.orchestrator.worker import OrchestratorWorker
