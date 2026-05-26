@@ -134,23 +134,38 @@ class QueueConsumer:
         redis_client = await self._get_redis()
         await redis_client.xack(stream, CONSUMER_GROUP, message_id)
 
-    async def _process_message(self, message: QueueMessage, stream: str) -> None:
+    async def _process_message(
+        self,
+        message: QueueMessage,
+        stream: str,
+        *,
+        raise_on_error: bool = False,
+        skip_ack: bool = False,
+    ) -> None:
         """Process a single message with FIFO ordering per ticket.
 
         Acquires the concurrency semaphore before running the handler and
-        acknowledges the message in Redis only on success. Errors are logged
-        but not re-raised so the task does not crash the event loop; the
-        message remains un-acked in the PEL for redelivery.
+        acknowledges the message in Redis only on success. Errors are logged;
+        when ``raise_on_error`` is True the exception is also re-raised so the
+        caller can react (used by the retry path).  When ``skip_ack`` is True
+        the internal xack call is skipped; the caller is then responsible for
+        acknowledging the message (used by the retry path which issues its own
+        xack after removing the retry-queue entry).
 
         Args:
             message: The message to process.
             stream: Redis stream name (needed for xack).
+            raise_on_error: If True, re-raise exceptions after logging them.
+                Used by the retry path so callers can detect handler failures.
+            skip_ack: If True, do not call xack on success.  The caller
+                handles acknowledgement.
         """
         handler = self._handlers.get(message.source)
         if handler is None:
             logger.warning(f"No handler for {message.source.value} events")
             # Ack so the un-handleable message does not fill the PEL.
-            await self._ack(stream, message.message_id)
+            if not skip_ack:
+                await self._ack(stream, message.message_id)
             return
 
         # Semaphore caps peak concurrency; per-ticket lock ensures FIFO ordering.
@@ -159,16 +174,25 @@ class QueueConsumer:
             if not await self._check_freshness(message):
                 logger.info(f"Skipping stale event {message.event_id}")
                 # Ack stale messages so they don't linger in the PEL.
-                await self._ack(stream, message.message_id)
+                if not skip_ack:
+                    await self._ack(stream, message.message_id)
                 return
 
             try:
                 await handler(message)
                 logger.info(f"Processed event {message.event_id}")
-                await self._ack(stream, message.message_id)
+                if not skip_ack:
+                    await self._ack(stream, message.message_id)
             except Exception as e:
                 logger.error(f"Error processing {message.event_id}: {e}")
-                # Do NOT ack — leave in PEL for redelivery.
+                if raise_on_error:
+                    raise
+                # Stream consumer path: enqueue for retry so the message is
+                # not lost.  If enqueue_for_retry returns False the message was
+                # moved to the dead-letter queue; xack it to clear the PEL.
+                moved_to_dlq = not await self._retry_queue.enqueue_for_retry(message, str(e))
+                if moved_to_dlq:
+                    await self._ack(stream, message.message_id)
 
     async def _consume_stream(self, stream: str, _source: EventSource) -> None:
         """Consume messages from a single stream.
@@ -206,6 +230,10 @@ class QueueConsumer:
                 logger.error(f"Error consuming from {stream}: {e}")
                 await asyncio.sleep(1)  # Brief pause before retry
 
+        # Drain any in-flight processing tasks before returning
+        if self._active_tasks:
+            await asyncio.gather(*self._active_tasks, return_exceptions=True)
+
     async def _process_retry_queue(self) -> None:
         """Poll the retry queue and re-dispatch due messages.
 
@@ -221,7 +249,9 @@ class QueueConsumer:
                         JIRA_STREAM if entry.message.source == EventSource.JIRA else GITHUB_STREAM
                     )
                     try:
-                        await self._process_message(entry.message, retry_stream)
+                        await self._process_message(
+                            entry.message, retry_stream, raise_on_error=True, skip_ack=True
+                        )
                     except Exception as e:
                         logger.warning(
                             f"Retry attempt {entry.attempt} failed for "
