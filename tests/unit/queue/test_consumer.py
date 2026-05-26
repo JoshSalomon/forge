@@ -38,12 +38,23 @@ def _make_message(
 
 
 def _make_consumer(redis_mock: MagicMock, max_tasks: int = 20) -> QueueConsumer:
-    """Return a QueueConsumer wired to a mock Redis client."""
+    """Return a QueueConsumer wired to a mock Redis client and a mock RetryQueue."""
+    from forge.queue.retry import RetryQueue
+
     consumer = QueueConsumer(
         consumer_name="test-worker",
         redis_client=redis_mock,
         max_concurrent_tasks=max_tasks,
     )
+    # Replace the real RetryQueue with a mock so tests do not need a live Redis
+    # connection when the handler fails and the consumer attempts to enqueue
+    # the message for retry.
+    retry_mock = MagicMock(spec=RetryQueue)
+    retry_mock.enqueue_for_retry = AsyncMock(return_value=True)  # queued, not DLQ
+    retry_mock.get_due_messages = AsyncMock(return_value=[])
+    retry_mock.remove_from_retry = AsyncMock()
+    retry_mock.remove_from_retry_without_counter_reset = AsyncMock()
+    consumer._retry_queue = retry_mock
     return consumer
 
 
