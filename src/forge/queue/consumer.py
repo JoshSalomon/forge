@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 # Consumer group name
 CONSUMER_GROUP = "forge-workers"
 
+# Maximum number of in-flight message processing tasks at any time.
+# Prevents resource exhaustion during message bursts.
+MAX_CONCURRENT_TASKS = 20
+
 # Handler type for message processing
 MessageHandler = Callable[[QueueMessage], Coroutine[Any, Any, None]]
 
@@ -49,6 +53,8 @@ class QueueConsumer:
         self._handlers: dict[EventSource, MessageHandler] = {}
         self._running = False
         self._ticket_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+        self._active_tasks: set[asyncio.Task[None]] = set()
 
     async def _get_redis(self) -> redis.Redis:
         """Get or create Redis client."""
@@ -108,30 +114,51 @@ class QueueConsumer:
             logger.warning(f"Freshness check failed for {message.ticket_key}: {e}")
             return True  # Process anyway if check fails
 
-    async def _process_message(self, message: QueueMessage) -> None:
+    async def _ack(self, stream: str, message_id: str) -> None:
+        """Acknowledge a message in the Redis stream.
+
+        Args:
+            stream: Redis stream name.
+            message_id: Message ID to acknowledge.
+        """
+        redis_client = await self._get_redis()
+        await redis_client.xack(stream, CONSUMER_GROUP, message_id)
+
+    async def _process_message(self, message: QueueMessage, stream: str) -> None:
         """Process a single message with FIFO ordering per ticket.
+
+        Acquires the concurrency semaphore before running the handler and
+        acknowledges the message in Redis only on success. Errors are logged
+        but not re-raised so the task does not crash the event loop; the
+        message remains un-acked in the PEL for redelivery.
 
         Args:
             message: The message to process.
+            stream: Redis stream name (needed for xack).
         """
         handler = self._handlers.get(message.source)
         if handler is None:
             logger.warning(f"No handler for {message.source.value} events")
+            # Ack so the un-handleable message does not fill the PEL.
+            await self._ack(stream, message.message_id)
             return
 
-        # Acquire lock for this ticket to ensure FIFO ordering
-        async with self._ticket_locks[message.ticket_key]:
+        # Semaphore caps peak concurrency; per-ticket lock ensures FIFO ordering.
+        async with self._semaphore, self._ticket_locks[message.ticket_key]:
             # Check freshness before processing
             if not await self._check_freshness(message):
                 logger.info(f"Skipping stale event {message.event_id}")
+                # Ack stale messages so they don't linger in the PEL.
+                await self._ack(stream, message.message_id)
                 return
 
             try:
                 await handler(message)
                 logger.info(f"Processed event {message.event_id}")
+                await self._ack(stream, message.message_id)
             except Exception as e:
                 logger.error(f"Error processing {message.event_id}: {e}")
-                raise
+                # Do NOT ack — leave in PEL for redelivery.
 
     async def _consume_stream(self, stream: str, _source: EventSource) -> None:
         """Consume messages from a single stream.
@@ -156,14 +183,12 @@ class QueueConsumer:
                 for _stream_name, entries in messages:
                     for message_id, data in entries:
                         message = QueueMessage.from_redis(message_id, data)
-
-                        try:
-                            await self._process_message(message)
-                            # Acknowledge successful processing
-                            await redis_client.xack(stream, CONSUMER_GROUP, message_id)
-                        except Exception:
-                            # Message will be retried (not acknowledged)
-                            pass
+                        task = asyncio.create_task(
+                            self._process_message(message, stream),
+                            name=f"process-{message.event_id}",
+                        )
+                        self._active_tasks.add(task)
+                        task.add_done_callback(self._active_tasks.discard)
 
             except asyncio.CancelledError:
                 break
@@ -187,6 +212,14 @@ class QueueConsumer:
             await asyncio.gather(*tasks)
 
     async def stop(self) -> None:
-        """Stop consuming messages."""
+        """Stop consuming messages and drain all in-flight tasks.
+
+        Sets _running to False so the consume loop exits on the next poll
+        timeout, then waits for every dispatched task to finish before
+        returning. This ensures messages are not abandoned un-acked in the
+        Redis PEL on shutdown.
+        """
         self._running = False
+        if self._active_tasks:
+            await asyncio.gather(*self._active_tasks, return_exceptions=True)
         logger.info(f"Consumer {self.consumer_name} stopped")
