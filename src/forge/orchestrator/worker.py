@@ -555,7 +555,7 @@ class OrchestratorWorker:
                             try:
                                 await jira.add_comment(
                                     message.ticket_key,
-                                    f"Please reply with `` `>option N` `` where N is between 1 and {max_n}.",
+                                    f"Please reply with >option N where N is between 1 and {max_n}.",
                                 )
                             finally:
                                 await jira.close()

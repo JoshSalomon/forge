@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from forge.models.workflow import TicketType
-from forge.orchestrator.gates import route_prd_approval
-from forge.orchestrator.nodes import regenerate_prd_with_feedback
+from forge.workflow.gates import route_prd_approval
+from forge.workflow.nodes import regenerate_prd_with_feedback
 from forge.workflow.feature.state import create_initial_feature_state as create_initial_state
 
 

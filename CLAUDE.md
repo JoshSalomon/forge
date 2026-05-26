@@ -103,9 +103,11 @@ podman rm $(podman ps -a --filter name=forge- -q)
 | Label | Meaning |
 |-------|---------|
 | `forge:managed` | Ticket is managed by Forge |
+| `forge:triage-pending` | Bug awaiting triage completion |
+| `forge:rca-pending` | Bug awaiting RCA option selection |
 | `forge:prd-pending` | Awaiting PRD approval |
 | `forge:spec-pending` | Awaiting spec approval |
-| `forge:plan-pending` | Awaiting epic plan approval |
+| `forge:plan-pending` | Awaiting plan approval |
 | `forge:task-pending` | Awaiting task approval |
 | `forge:blocked` | Workflow blocked, needs intervention |
 | `forge:retry` | Trigger retry of failed step |
