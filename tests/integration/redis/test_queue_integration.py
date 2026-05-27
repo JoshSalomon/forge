@@ -124,8 +124,7 @@ class TestQueueConsumer:
         for _stream_name, entries in messages:
             for message_id, data in entries:
                 message = QueueMessage.from_redis(message_id, data)
-                await consumer._process_message(message)
-                await redis_client.xack(JIRA_STREAM, CONSUMER_GROUP, message_id)
+                await consumer._process_message(message, JIRA_STREAM)
 
         # Verify message was processed
         assert len(processed_messages) == 1
@@ -175,8 +174,7 @@ class TestQueueConsumer:
         for _stream_name, entries in messages:
             for message_id, data in entries:
                 message = QueueMessage.from_redis(message_id, data)
-                await consumer._process_message(message)
-                await redis_client.xack(JIRA_STREAM, CONSUMER_GROUP, message_id)
+                await consumer._process_message(message, JIRA_STREAM)
 
         # Verify FIFO order was maintained
         assert processing_order == [0, 1, 2, 3, 4]
@@ -250,8 +248,7 @@ class TestQueueConsumer:
         for _stream_name, entries in messages:
             for message_id, data in entries:
                 message = QueueMessage.from_redis(message_id, data)
-                await consumer._process_message(message)
-                await redis_client.xack(JIRA_STREAM, CONSUMER_GROUP, message_id)
+                await consumer._process_message(message, JIRA_STREAM)
 
         # Try to read again - should get no new messages
         messages = await redis_client.xreadgroup(
@@ -282,11 +279,7 @@ class TestQueueMessageSerialization:
                     "labels": ["forge:managed", "backend"],
                 },
             },
-            "changelog": {
-                "items": [
-                    {"field": "status", "toString": "In Progress"}
-                ]
-            },
+            "changelog": {"items": [{"field": "status", "toString": "In Progress"}]},
         }
 
         await producer.publish(

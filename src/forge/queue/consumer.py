@@ -190,9 +190,15 @@ class QueueConsumer:
                 # Stream consumer path: enqueue for retry so the message is
                 # not lost.  If enqueue_for_retry returns False the message was
                 # moved to the dead-letter queue; xack it to clear the PEL.
-                moved_to_dlq = not await self._retry_queue.enqueue_for_retry(message, str(e))
-                if moved_to_dlq:
-                    await self._ack(stream, message.message_id)
+                try:
+                    moved_to_dlq = not await self._retry_queue.enqueue_for_retry(message, str(e))
+                    if moved_to_dlq:
+                        await self._ack(stream, message.message_id)
+                except Exception as retry_err:
+                    logger.error(
+                        f"Failed to enqueue {message.event_id} for retry: {retry_err}. "
+                        "Message remains in PEL for reclaim."
+                    )
 
     async def _consume_stream(self, stream: str, _source: EventSource) -> None:
         """Consume messages from a single stream.
