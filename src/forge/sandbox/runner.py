@@ -169,6 +169,11 @@ class ContainerRunner:
 
     def _get_gcloud_credentials_path(self) -> Path | None:
         """Get path to gcloud application default credentials if they exist."""
+        env_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        if env_path:
+            p = Path(env_path)
+            if p.exists():
+                return p
         adc_path = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
         if adc_path.exists():
             return adc_path
