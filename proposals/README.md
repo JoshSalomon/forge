@@ -33,3 +33,4 @@ This directory contains proposals for new Forge features and enhancements.
 | [Skill Packages via Jira Project Metadata](skill-installer.md) | Implemented | eshulman2 |
 | [Repository Configuration via Jira Project Metadata](project-metadata-repos.md) | Implemented | eshulman2 |
 | [Bug Workflow Redesign — Triage, Container Analysis, Reflection, and Planning](bug-workflow-redesign.md) | Under Review | eshulman2 |
+| [Auto-Review Primitive for Skills](auto-review-primitive.md) | Draft | jsalomon |
