@@ -480,6 +480,7 @@ class ForgeAgent:
             "gateway timeout",
             "server error",
             "internal server error",
+            "internal_failure",
             "500",
             "overloaded",
             "try again",
