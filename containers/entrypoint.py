@@ -453,9 +453,9 @@ async def run_agent_task(
                 tags=["forge-container", "task-implementation"],
                 metadata={"task_summary": task_summary},
             ):
-                result = agent.invoke(initial_message, config=config)
+                result = await agent.ainvoke(initial_message, config=config)
         else:
-            result = agent.invoke(initial_message, config=config)
+            result = await agent.ainvoke(initial_message, config=config)
 
         # Flush Langfuse traces before exit
         if langfuse_enabled:
