@@ -66,14 +66,29 @@ fi
 
 FILE="${FILES[$((choice - 1))]}"
 
-# For revision/question payloads, fetch the latest comment from Jira
+# Fetch issue metadata (type, labels, summary) and latest comment from Jira
 COMMENT_FILE=$(mktemp /tmp/forge-wh-comment.XXXXXX)
+ISSUE_FILE=$(mktemp /tmp/forge-wh-issue.XXXXXX)
 PAYLOAD_FILE=$(mktemp /tmp/forge-wh-payload.XXXXXX)
-trap 'rm -f "$COMMENT_FILE"' EXIT
+trap 'rm -f "$COMMENT_FILE" "$ISSUE_FILE"' EXIT
 HAS_COMMENT=false
+HAS_ISSUE=false
 
-if echo "$FILE" | grep -qiE "revision|question|forge-ask"; then
-    if [ -n "$JIRA_BASE_URL" ] && [ -n "$JIRA_USER_EMAIL" ] && [ -n "$JIRA_API_TOKEN" ]; then
+if [ -n "$JIRA_BASE_URL" ] && [ -n "$JIRA_USER_EMAIL" ] && [ -n "$JIRA_API_TOKEN" ]; then
+    # Fetch issue type, labels, and summary
+    echo "Fetching issue metadata for $TICKET ..."
+    if curl -sf -u "$JIRA_USER_EMAIL:$JIRA_API_TOKEN" \
+        "$JIRA_BASE_URL/rest/api/3/issue/$TICKET?fields=issuetype,labels,summary,status" \
+        -H "Accept: application/json" > "$ISSUE_FILE" 2>/dev/null; then
+        HAS_ISSUE=true
+        ISSUE_TYPE=$(python3 -c "import sys,json; print(json.load(open('$ISSUE_FILE'))['fields']['issuetype']['name'])" 2>/dev/null || true)
+        echo "Issue type: $ISSUE_TYPE"
+    else
+        echo "Warning: Could not fetch issue from Jira, using payload defaults"
+    fi
+
+    # Fetch latest comment for revision/question payloads
+    if echo "$FILE" | grep -qiE "revision|question|forge-ask"; then
         echo "Fetching latest comment from $TICKET ..."
         if curl -sf -u "$JIRA_USER_EMAIL:$JIRA_API_TOKEN" \
             "$JIRA_BASE_URL/rest/api/3/issue/$TICKET/comment" \
@@ -107,30 +122,41 @@ print(body)
 " > "$COMMENT_FILE" 2>/dev/null; then
             HAS_COMMENT=true
             echo "Latest comment: $(head -c 100 "$COMMENT_FILE")..."
-            echo ""
         else
             echo "Warning: Could not fetch comment from Jira, using payload default"
-            echo ""
         fi
-    else
-        echo "Warning: Jira credentials not found in .env, using payload default comment"
-        echo ""
     fi
+    echo ""
+else
+    echo "Warning: Jira credentials not found in .env, using payload defaults"
+    echo ""
 fi
 
 echo "Sending $FILE with ticket $TICKET ..."
 echo ""
 
-# Build the final payload: substitute ticket ID and optionally replace comment
+# Build the final payload: substitute ticket ID, issue metadata, and comment
 sed "s/TEST-123/$TICKET/g" "$PAYLOADS_DIR/$FILE" | \
     python3 -c "
 import sys, json
 
 payload = json.load(sys.stdin)
 
+# Inject real issue metadata from Jira
+issue_file = '$ISSUE_FILE'
+has_issue = '$HAS_ISSUE' == 'true'
+if has_issue:
+    with open(issue_file) as f:
+        issue_data = json.load(f)
+    fields = issue_data.get('fields', {})
+    payload['issue']['fields']['issuetype'] = fields.get('issuetype', payload['issue']['fields']['issuetype'])
+    payload['issue']['fields']['status'] = fields.get('status', payload['issue']['fields']['status'])
+    payload['issue']['fields']['summary'] = fields.get('summary', payload['issue']['fields']['summary'])
+    payload['issue']['fields']['labels'] = fields.get('labels', payload['issue']['fields'].get('labels', []))
+
+# Inject latest comment from Jira
 comment_file = '$COMMENT_FILE'
 has_comment = '$HAS_COMMENT' == 'true'
-
 if has_comment and 'comment' in payload:
     with open(comment_file) as f:
         payload['comment']['body'] = f.read().strip()
