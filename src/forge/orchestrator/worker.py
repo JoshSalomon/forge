@@ -760,10 +760,7 @@ class OrchestratorWorker:
         is_terminal = current_node in terminal_states
 
         if is_retry:
-            # Explicit retry signal - but only if there's an error/blocked state to retry from
-            prev_error = current_state.get("last_error")
-            is_blocked = current_state.get("is_blocked", False)
-            if not prev_error and not was_errored and not is_blocked:
+            if is_terminal:
                 logger.info(
                     f"Ignoring forge:retry for {message.ticket_key} - workflow already complete"
                 )
@@ -773,6 +770,7 @@ class OrchestratorWorker:
                 )
                 return current_state
 
+            prev_error = current_state.get("last_error")
             logger.info(
                 f"Retry requested for {message.ticket_key} at {current_node} "
                 f"(clearing error: {prev_error[:100] if prev_error else 'none'})"

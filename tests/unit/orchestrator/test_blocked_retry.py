@@ -203,6 +203,34 @@ class TestRetryHandlerClearsBlockedState:
         assert result.get("current_node") == "ci_evaluator"
 
 
+class TestRetryOnStuckNonTerminalNode:
+    """forge:retry unblocks a workflow stuck at a non-terminal node without error markers."""
+
+    @pytest.mark.asyncio
+    async def test_retry_on_non_terminal_no_error_still_resumes(self, worker, base_message):
+        """forge:retry at a non-terminal node with no last_error/is_blocked must still resume."""
+        stuck_state = {
+            "ticket_key": "TEST-123",
+            "current_node": "reflect_rca",
+            "is_paused": False,
+            "is_blocked": False,
+            "last_error": None,
+            "ci_fix_attempts": 0,
+            "retry_count": 0,
+            "revision_requested": False,
+            "feedback_comment": None,
+            "context": {},
+        }
+
+        result = await worker._handle_resume_event(
+            _make_retry_message(base_message), stuck_state
+        )
+
+        assert result.get("is_paused") is False
+        assert result.get("last_error") is None
+        assert result.get("current_node") == "reflect_rca"
+
+
 class TestRetryOnHappyPathTerminalPostsComment:
     """forge:retry on a cleanly-completed workflow posts an explanatory comment."""
 
