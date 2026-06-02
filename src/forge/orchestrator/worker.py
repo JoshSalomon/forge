@@ -538,6 +538,27 @@ class OrchestratorWorker:
                         f"(expects {expected_stage})"
                     )
 
+        # Fallback: check current labels on the ticket when changelog-based
+        # detection missed the approval (e.g. user changed labels in two steps).
+        if not is_approved and not is_rejected and not is_retry:
+            current_labels = (
+                payload.get("issue", {}).get("fields", {}).get("labels", [])
+            )
+            current_labels_lower = [lbl.lower() for lbl in current_labels]
+            gate_to_approved_label = {
+                "prd_approval_gate": "forge:prd-approved",
+                "spec_approval_gate": "forge:spec-approved",
+                "plan_approval_gate": "forge:plan-approved",
+                "task_approval_gate": "forge:task-approved",
+            }
+            expected_label = gate_to_approved_label.get(current_node)
+            if expected_label and expected_label in current_labels_lower:
+                is_approved = True
+                stage = current_node.replace("_approval_gate", "")
+                logger.info(
+                    f"Detected {stage} approval via current label: {expected_label}"
+                )
+
         # Check for rejection comment (contains feedback)
         # Determine if comment is on Epic/Task (child) vs Feature (parent)
         # based on current workflow phase
@@ -842,13 +863,30 @@ class OrchestratorWorker:
                 updated_state["is_paused"] = False
                 updated_state["last_error"] = None
         else:
-            # No recognized signal — do not unpause or modify the workflow.
-            # This covers wrong-stage approvals, unrelated label changes, etc.
-            logger.info(
-                f"No valid signal detected for {message.ticket_key} "
-                f"at {current_node} — ignoring event, workflow state unchanged"
+            # Nodes that wait for specific external events should not auto-proceed.
+            _signal_required_nodes = (
+                "ci_evaluator", "attempt_ci_fix", "human_review_gate",
+                "wait_for_ci_gate",
             )
-            return current_state
+            if (
+                not current_state.get("is_paused", True)
+                and current_node not in _signal_required_nodes
+            ):
+                # Workflow is unpaused at an execution node — let it run.
+                # Covers checkpoint patches and nodes that don't need a signal.
+                logger.info(
+                    f"Workflow for {message.ticket_key} is unpaused at {current_node} "
+                    f"— proceeding without explicit signal"
+                )
+                updated_state["is_paused"] = False
+            else:
+                # Paused gate with no recognized signal — do not unpause.
+                # Covers wrong-stage approvals, unrelated label changes, etc.
+                logger.info(
+                    f"No valid signal detected for {message.ticket_key} "
+                    f"at {current_node} — ignoring event, workflow state unchanged"
+                )
+                return current_state
 
         return updated_state
 
