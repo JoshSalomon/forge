@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Patch specific fields in a workflow checkpoint state.
+"""Patch or clear a workflow checkpoint state.
 
 Usage:
     uv run python devtools/patch_checkpoint.py AISOS-358 fork_owner=eshulman2 fork_repo=installer
     uv run python devtools/patch_checkpoint.py AISOS-678 current_node=analyze_bug is_paused=false retry_count=0
+    uv run python devtools/patch_checkpoint.py RHWA-527 --clear
 
 The script detects the workflow type from the saved checkpoint (bug vs feature)
 and uses the correct compiled graph so BugState fields are not silently dropped.
+Use --clear to delete the checkpoint entirely so the next event starts a fresh workflow.
 """
 
 import asyncio
@@ -66,13 +68,29 @@ async def patch(ticket_key: str, patches: dict) -> None:
         print(f"  {k}: {updated.values.get(k)!r}")
 
 
+async def clear(ticket_key: str) -> None:
+    from forge.orchestrator.checkpointer import clear_checkpoint
+
+    cleared = await clear_checkpoint(ticket_key)
+    if cleared:
+        print(f"Checkpoint cleared for {ticket_key} — next event starts a fresh workflow")
+    else:
+        print(f"No checkpoint found for {ticket_key}")
+
+
 def main() -> None:
     if len(sys.argv) < 3:
         print("Usage: patch_checkpoint.py <ticket_key> <field=value> [field=value ...]")
+        print("       patch_checkpoint.py <ticket_key> --clear")
         print("Example: patch_checkpoint.py AISOS-358 fork_owner=eshulman2 fork_repo=installer")
         sys.exit(1)
 
     ticket_key = sys.argv[1]
+
+    if "--clear" in sys.argv[2:]:
+        asyncio.run(clear(ticket_key))
+        return
+
     patches: dict = {}
 
     for arg in sys.argv[2:]:
