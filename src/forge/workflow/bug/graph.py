@@ -51,6 +51,19 @@ logger = logging.getLogger(__name__)
 
 _MAX_REFLECTION_COUNT = 3
 
+# LangGraph filters state channels based on each node function's type annotation.
+# implement_task and local_review_changes are typed as FeatureState, which lacks
+# bug-specific fields like qualitative_retry_count. These wrappers are typed as
+# BugState so LangGraph passes and records the full bug state for these nodes.
+
+
+async def _implement_task_bug(state: BugState) -> BugState:
+    return await implement_task(state)  # type: ignore[return-value]
+
+
+async def _local_review_bug(state: BugState) -> BugState:
+    return await local_review_changes(state)  # type: ignore[return-value]
+
 
 def route_entry(state: BugState) -> str:
     """Route workflow based on current progress for resume/retry.
@@ -371,8 +384,8 @@ def build_bug_graph() -> StateGraph:
     # Use the container-based implement_task (same as feature workflow) so the
     # fix runs inside an isolated Podman container with full tool access.
     # implement_bug_fix (ForgeAgent-based) is kept only for route_entry backward compat.
-    graph.add_node("implement_bug_fix", implement_task)
-    graph.add_node("local_review", local_review_changes)
+    graph.add_node("implement_bug_fix", _implement_task_bug)
+    graph.add_node("local_review", _local_review_bug)
     graph.add_node("update_documentation", update_documentation)
     graph.add_node("create_pr", create_pull_request)
     graph.add_node("teardown_workspace", teardown_and_route)

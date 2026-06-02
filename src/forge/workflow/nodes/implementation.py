@@ -51,7 +51,7 @@ async def implement_task(state: WorkflowState) -> WorkflowState:
         return {
             **state,
             "last_error": "Workspace not set up",
-            "current_node": "implement_task",
+            "current_node": "implement_bug_fix",
         }
 
     # Get next task to implement if not set
@@ -159,9 +159,9 @@ async def implement_task(state: WorkflowState) -> WorkflowState:
                     **state,
                     "current_task_key": None,
                     "implemented_tasks": implemented,
-                    "current_node": "implement_task",  # Loop back for next task
+                    "current_node": "implement_bug_fix",
                     "last_error": None,
-                    "retry_count": 0,  # Reset retry count on success
+                    "retry_count": 0,
                 }
             )
         else:
@@ -180,7 +180,7 @@ async def implement_task(state: WorkflowState) -> WorkflowState:
         return {
             **state,
             "last_error": str(e),
-            "current_node": "implement_task",
+            "current_node": "implement_bug_fix",
             "retry_count": state.get("retry_count", 0) + 1,
         }
     finally:
