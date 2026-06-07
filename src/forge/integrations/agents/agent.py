@@ -636,12 +636,27 @@ class ForgeAgent:
 
     @staticmethod
     def _strip_preamble(text: str) -> str:
-        """Strip agent narration before the first markdown heading."""
-        idx = text.find("\n#")
-        if idx != -1:
-            return text[idx + 1 :]
-        if text.startswith("#"):
-            return text
+        """Strip agent narration before the first markdown heading.
+
+        Finds the first proper heading (# / ## / ### followed by a space)
+        and returns from there. This strips research narration that the
+        agent emits before writing the actual document.
+
+        The space requirement prevents false matches like "#1 item" or
+        "#2 finding" in numbered lists.
+        """
+        if not text or text.lstrip().startswith("#"):
+            return text.lstrip()
+
+        lines = text.split("\n")
+        for i, line in enumerate(lines):
+            stripped = line.lstrip()
+            if (
+                stripped.startswith("# ")
+                or stripped.startswith("## ")
+                or stripped.startswith("### ")
+            ):
+                return "\n".join(lines[i:])
         return text
 
     async def run_task(
