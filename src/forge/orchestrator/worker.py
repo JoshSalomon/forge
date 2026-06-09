@@ -792,19 +792,43 @@ class OrchestratorWorker:
                 )
                 return current_state
 
+            # At approval gates with no error, retry means "regenerate" not "advance".
+            # Route back to the generation node so the artifact is reproduced.
+            gate_to_generation_node = {
+                "prd_approval_gate": "generate_prd",
+                "spec_approval_gate": "generate_spec",
+                "plan_approval_gate": "decompose_epics",
+                "task_approval_gate": "generate_tasks",
+                "plan_approval_gate_bug": "plan_bug_fix",
+            }
             prev_error = current_state.get("last_error")
-            logger.info(
-                f"Retry requested for {message.ticket_key} at {current_node} "
-                f"(clearing error: {prev_error[:100] if prev_error else 'none'})"
-            )
-            updated_state["is_paused"] = False
-            updated_state["is_blocked"] = False
-            updated_state["last_error"] = None
-            updated_state["revision_requested"] = False
-            updated_state["feedback_comment"] = None
-            updated_state["retry_count"] = 0
-            updated_state["ci_fix_attempts"] = 0
-            # Keep current_node — workflow resumes from the node that failed
+            is_paused_at_gate = current_state.get("is_paused") and current_node in gate_to_generation_node
+            if is_paused_at_gate and not prev_error:
+                regen_node = gate_to_generation_node[current_node]
+                logger.info(
+                    f"Retry at approval gate {current_node} — routing back to {regen_node} "
+                    f"for regeneration"
+                )
+                updated_state["is_paused"] = False
+                updated_state["is_blocked"] = False
+                updated_state["last_error"] = None
+                updated_state["revision_requested"] = False
+                updated_state["feedback_comment"] = None
+                updated_state["retry_count"] = 0
+                updated_state["current_node"] = regen_node
+            else:
+                logger.info(
+                    f"Retry requested for {message.ticket_key} at {current_node} "
+                    f"(clearing error: {prev_error[:100] if prev_error else 'none'})"
+                )
+                updated_state["is_paused"] = False
+                updated_state["is_blocked"] = False
+                updated_state["last_error"] = None
+                updated_state["revision_requested"] = False
+                updated_state["feedback_comment"] = None
+                updated_state["retry_count"] = 0
+                updated_state["ci_fix_attempts"] = 0
+                # Keep current_node — workflow resumes from the node that failed
         elif is_ci_webhook:
             # GitHub CI event — unpause the gate and let ci_evaluator check the results
             updated_state["is_paused"] = False
