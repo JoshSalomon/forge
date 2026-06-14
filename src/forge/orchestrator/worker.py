@@ -150,6 +150,24 @@ class OrchestratorWorker:
 
         return message
 
+    def _is_prd_pr_event(self, message: QueueMessage, current_state: dict[str, Any]) -> bool:
+        """Check if a GitHub event targets the PRD proposals PR."""
+        if message.source != EventSource.GITHUB:
+            return False
+        prd_pr_number = current_state.get("prd_pr_number")
+        prd_pr_repo = current_state.get("prd_pr_repo")
+        if not prd_pr_number or not prd_pr_repo:
+            return False
+
+        payload = message.payload
+        repo_full = payload.get("repository", {}).get("full_name", "")
+        event_pr_number = (
+            payload.get("pull_request", {}).get("number")
+            or payload.get("issue", {}).get("number")
+        )
+
+        return repo_full == prd_pr_repo and event_pr_number == prd_pr_number
+
     async def _process_workflow(self, message: QueueMessage) -> None:
         """Process a message through the workflow.
 
@@ -689,6 +707,101 @@ class OrchestratorWorker:
                             )
                     else:
                         logger.info(f"Detected Feature-level comment: {feedback[:100]}...")
+
+        # GitHub events targeting the PRD proposals PR — handled at prd_approval_gate.
+        # Merge = approval. Review with feedback = revision. Comment = feedback/question.
+        _PRD_GATE_NODES = ("prd_approval_gate", "generate_prd", "regenerate_prd")
+        if self._is_prd_pr_event(message, current_state) and current_node in _PRD_GATE_NODES:
+            event = message.event_type
+
+            if "pull_request_review" in event:
+                review = payload.get("review", {})
+                review_state = review.get("state", "").lower()
+                review_body = review.get("body", "") or ""
+
+                # Merge-only approval: review approval is intentionally ignored
+                if review_state in ("changes_requested", "commented"):
+                    repo_full = payload.get("repository", {}).get("full_name", "")
+                    pr_number = payload.get("pull_request", {}).get("number")
+                    inline_comments = []
+                    if repo_full and pr_number:
+                        _owner, _repo = repo_full.split("/", 1)
+                        gh = GitHubClient()
+                        try:
+                            inline_comments = await gh.get_pull_request_review_comments(
+                                _owner, _repo, pr_number
+                            )
+                        finally:
+                            await gh.close()
+
+                    parts = []
+                    if review_body.strip():
+                        parts.append(review_body.strip())
+                    if inline_comments:
+                        inline_text = "\n\n".join(
+                            f"**{c['path']}** (line {c['position']}):\n{c['body']}"
+                            for c in inline_comments
+                        )
+                        parts.append(f"Inline comments:\n{inline_text}")
+
+                    if parts:
+                        feedback = "\n\n".join(parts)
+                        is_rejected = True
+                        logger.info(
+                            f"PRD PR review ({review_state}) for {message.ticket_key}: "
+                            f"body={'yes' if review_body.strip() else 'no'}, "
+                            f"inline={len(inline_comments)}"
+                        )
+                    else:
+                        logger.info(
+                            f"PRD PR review ({review_state}) for {message.ticket_key} "
+                            "with no content — ignoring"
+                        )
+                        return current_state
+
+            elif "pull_request" in event and payload.get("pull_request", {}).get("merged") is True:
+                is_approved = True
+                logger.info(f"PRD PR merged for {message.ticket_key}")
+                # Sync Jira label
+                from forge.models.workflow import ForgeLabel
+
+                jira = JiraClient()
+                try:
+                    await jira.set_workflow_label(message.ticket_key, ForgeLabel.PRD_APPROVED)
+                finally:
+                    await jira.close()
+
+            elif "issue_comment" in event:
+                gh_comment = payload.get("comment", {})
+                comment_body = gh_comment.get("body", "").strip()
+                sender_login = payload.get("sender", {}).get("login", "")
+
+                if comment_body and sender_login:
+                    # Skip self-comments
+                    gh = GitHubClient()
+                    try:
+                        forge_user = await gh.get_authenticated_user()
+                        forge_login = forge_user.get("login", "")
+                    finally:
+                        await gh.close()
+
+                    if sender_login == forge_login:
+                        logger.debug(f"Ignoring self-comment on PRD PR for {message.ticket_key}")
+                        return current_state
+
+                    comment_type = classify_comment(comment_body)
+                    if comment_type == CommentType.QUESTION:
+                        is_question = True
+                        feedback = comment_body
+                        logger.info(
+                            f"PRD PR question for {message.ticket_key}: {comment_body[:100]}..."
+                        )
+                    else:
+                        is_rejected = True
+                        feedback = comment_body
+                        logger.info(
+                            f"PRD PR feedback for {message.ticket_key}: {comment_body[:100]}..."
+                        )
 
         # GitHub pull_request_review events — handled when at human_review_gate.
         # A review submission is the primary signal for the human review stage.
