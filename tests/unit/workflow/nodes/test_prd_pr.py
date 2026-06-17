@@ -84,6 +84,10 @@ class TestCreatePrdProposalPr:
 
         mock_gh.create_branch.assert_called_once_with("org", "proposals", "forge/prd/test-123")
         mock_gh.create_pull_request.assert_called_once()
+        # PR body should be a placeholder, not the full PRD content
+        pr_call_kwargs = mock_gh.create_pull_request.call_args[1]
+        assert "# My PRD" not in pr_call_kwargs["body"]
+        assert "proposals/TEST-123-my-feature.md" in pr_call_kwargs["body"]
         mock_jira.add_comment.assert_called_once()
         mock_jira.set_workflow_label.assert_called_once()
         mock_index.assert_called_once()

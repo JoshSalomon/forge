@@ -74,11 +74,18 @@ async def _create_prd_proposal_pr(
             message=f"Add PRD for {ticket_key}",
             branch=branch,
         )
+        pr_body = (
+            f"**PRD for [{ticket_key}](https://redhat.atlassian.net/browse/{ticket_key})**\n\n"
+            f"The PRD document is in [`{file_path}`](/{file_path}) on this branch.\n\n"
+            "Review the file changes for the latest version. "
+            "Leave comments on this PR to provide feedback — "
+            "Forge will regenerate the PRD and push updated commits."
+        )
         pr_data = await gh.create_pull_request(
             owner=owner,
             repo=repo,
             title=f"[{ticket_key}] PRD: {summary}",
-            body=prd_content,
+            body=pr_body,
             head=branch,
         )
 
