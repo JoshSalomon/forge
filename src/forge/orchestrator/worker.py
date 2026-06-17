@@ -502,13 +502,16 @@ class OrchestratorWorker:
             from_labels = change.get("fromString", "")
 
             # Check for yolo label addition — activate yolo mode if at a gate
-            if "forge:yolo" in to_labels and "forge:yolo" not in from_labels:
-                if current_node in _YOLO_GATES:
-                    logger.info(
-                        f"forge:yolo label added for {message.ticket_key} at {current_node} "
-                        "— activating yolo mode"
-                    )
-                    is_yolo = True
+            if (
+                "forge:yolo" in to_labels
+                and "forge:yolo" not in from_labels
+                and current_node in _YOLO_GATES
+            ):
+                logger.info(
+                    f"forge:yolo label added for {message.ticket_key} at {current_node} "
+                    "— activating yolo mode"
+                )
+                is_yolo = True
 
             # Check for retry label - triggers retry of current stage
             if "forge:retry" in to_labels.lower() and "forge:retry" not in from_labels.lower():
