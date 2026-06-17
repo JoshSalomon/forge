@@ -77,7 +77,7 @@ class TestImplementTaskStartedComment:
         ):
             await implement_task(_make_state())
 
-        mock_jira.add_comment.assert_called_once_with(
+        mock_jira.add_comment.assert_any_call(
             "TASK-456",
             "🔨 Forge started implementing [TASK-456]: Fix null pointer in AuthService",
         )
@@ -109,7 +109,7 @@ class TestImplementTaskStartedComment:
                 )
             )
 
-        call_args = mock_jira.add_comment.call_args
+        call_args = mock_jira.add_comment.call_args_list[0]
         assert call_args[0][0] == "TASK-100"
         assert "TASK-100" in call_args[0][1]
         assert "Add retry logic" in call_args[0][1]

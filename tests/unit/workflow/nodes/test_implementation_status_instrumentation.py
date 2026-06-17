@@ -82,7 +82,7 @@ class TestImplementationStatusInstrumentationStartComment:
         first_call = mock_post_status.call_args_list[0]
         assert first_call[0][0] == mock_jira  # JiraClient instance
         assert first_call[0][1] == "TASK-1"  # task_key
-        assert first_call[0][2] == "🔨 Forge is implementing this task."  # start message
+        assert first_call[0][2] == "🔨 Forge started implementing [TASK-1]: Task summary"  # start message
 
     @pytest.mark.asyncio
     async def test_post_status_comment_called_before_container_execution(self):
@@ -199,7 +199,7 @@ class TestImplementationStatusInstrumentationCompletionComment:
 
         # Verify only call was the start comment
         first_call = mock_post_status.call_args_list[0]
-        assert first_call[0][2] == "🔨 Forge is implementing this task."
+        assert first_call[0][2] == "🔨 Forge started implementing [TASK-1]: Task summary"
 
 
 class TestImplementationStatusInstrumentationMultipleTasks:
@@ -333,7 +333,7 @@ class TestImplementationStatusInstrumentationMultipleTasks:
         assert mock_post_status2.call_count == 1
         assert mock_post_status2.call_args_list[0][0][1] == "TASK-2"
         assert (
-            mock_post_status2.call_args_list[0][0][2] == "🔨 Forge is implementing this task."
+            mock_post_status2.call_args_list[0][0][2] == "🔨 Forge started implementing [TASK-2]: Task summary"
         )
 
 

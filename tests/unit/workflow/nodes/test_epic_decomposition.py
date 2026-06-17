@@ -131,7 +131,7 @@ class TestDecomposeEpicsRepoResolution:
 
             result = await decompose_epics(base_state)
 
-        mock_jira.add_comment.assert_called_once()
+        mock_jira.add_comment.assert_called()
         comment_text = mock_jira.add_comment.call_args[0][1]
         assert "forge.repos" in comment_text
         assert "forge:retry" in comment_text

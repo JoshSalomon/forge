@@ -237,7 +237,6 @@ async def create_pull_request(state: WorkflowState) -> WorkflowState:
                 exc_info=True,
             )
 
-
         # Sync description to catch any inaccuracies from local_review commits
         await sync_pr_description(
             state,
