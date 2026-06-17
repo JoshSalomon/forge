@@ -854,6 +854,9 @@ class OrchestratorWorker:
         elif is_yolo:
             updated_state["yolo_mode"] = True
             updated_state["is_paused"] = False
+            updated_state["revision_requested"] = False
+            updated_state["feedback_comment"] = None
+            updated_state["last_error"] = None
         elif is_approved:
             updated_state["is_paused"] = False
             updated_state["revision_requested"] = False

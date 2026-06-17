@@ -159,8 +159,9 @@ class TestYoloLabelAddedMidWorkflow:
         )
         state = self._make_gate_state("generate_spec")
         result = await worker._handle_resume_event(message, state)
-        # Not at a gate — yolo should not activate; workflow stays paused
-        assert result.get("yolo_mode") is not True or result.get("is_paused") is True
+        # Not at a gate — is_yolo flag should not fire; workflow must stay paused
+        assert result.get("yolo_mode") is False
+        assert result.get("is_paused") is True
 
     @pytest.mark.asyncio
     async def test_yolo_label_already_present_does_not_re_trigger(self):
@@ -173,6 +174,6 @@ class TestYoloLabelAddedMidWorkflow:
         )
         state = self._make_gate_state("prd_approval_gate", yolo_mode=True)
         result = await worker._handle_resume_event(message, state)
-        # The prd-approved label change should set is_approved, not is_yolo
-        # Either way, yolo_mode should still be True (from state) and not cause issues
-        assert result is not None  # Worker didn't crash
+        # forge:yolo was already present — is_yolo should not re-trigger
+        # yolo_mode stays True (copied from state), is_paused is False (prd-approved fired)
+        assert result["yolo_mode"] is True  # preserved from input state
