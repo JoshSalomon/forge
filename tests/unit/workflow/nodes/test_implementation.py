@@ -1,226 +1,141 @@
-"""Unit tests for task implementation node - Jira status comments."""
+"""Unit tests for implement_task node."""
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from forge.workflow.feature.state import create_initial_feature_state
-from forge.workflow.nodes.implementation import implement_task
+from forge.models.workflow import TicketType
 
 
-def create_mock_jira_client():
-    """Create a mock JiraClient with required methods."""
-    mock = MagicMock()
-    mock.close = AsyncMock()
-    mock.add_comment = AsyncMock()
-    mock.get_issue = AsyncMock()
-    
-    # Mock issue with description and summary
-    mock_issue = MagicMock()
-    mock_issue.description = "Task description"
-    mock_issue.summary = "Task summary"
-    mock.get_issue.return_value = mock_issue
-    
-    return mock
+def _make_state(
+    ticket_key="BUG-123",
+    current_task_key="TASK-456",
+    workspace_path="/tmp/ws",
+    current_repo="acme/backend",
+    tasks_by_repo=None,
+    implemented_tasks=None,
+):
+    return {
+        "ticket_key": ticket_key,
+        "ticket_type": TicketType.BUG,
+        "current_node": "implement_task",
+        "is_paused": False,
+        "retry_count": 0,
+        "last_error": None,
+        "workspace_path": workspace_path,
+        "current_task_key": current_task_key,
+        "current_repo": current_repo,
+        "task_keys": [current_task_key] if current_task_key else [],
+        "tasks_by_repo": tasks_by_repo or {current_repo: [current_task_key]},
+        "implemented_tasks": implemented_tasks or [],
+        "context": {"branch_name": "forge/BUG-123", "guardrails": ""},
+        "fork_owner": "forge-bot",
+        "fork_repo": "backend",
+    }
 
 
-def create_mock_container_runner():
-    """Create a mock ContainerRunner."""
-    mock = MagicMock()
-    
-    # Mock successful result by default
-    mock_result = MagicMock()
-    mock_result.success = True
-    mock_result.error_message = None
-    
-    mock.run = AsyncMock(return_value=mock_result)
-    return mock, mock_result
+def _make_mock_jira(summary="Fix null pointer in AuthService", description="Details"):
+    jira = AsyncMock()
+    issue = MagicMock()
+    issue.summary = summary
+    issue.description = description
+    jira.get_issue = AsyncMock(return_value=issue)
+    jira.add_comment = AsyncMock()
+    jira.close = AsyncMock()
+    return jira
 
 
-class TestImplementTaskStatusComments:
-    """Test cases for task implementation status comments."""
+def _make_successful_runner():
+    runner = MagicMock()
+    result = MagicMock()
+    result.success = True
+    result.error_message = None
+    runner.run = AsyncMock(return_value=result)
+    return runner
 
-    @pytest.mark.asyncio
-    async def test_implement_task_posts_start_comment(self):
-        """Should post start comment when task implementation begins."""
-        mock_jira = create_mock_jira_client()
-        mock_runner, mock_result = create_mock_container_runner()
 
-        state = create_initial_feature_state(
-            ticket_key="FEAT-123",
-            current_repo="owner/test-repo",
-            task_keys=["TASK-1"],
-        )
-        state["workspace_path"] = "/tmp/test-workspace"
-        state["current_task_key"] = "TASK-1"
-        state["tasks_by_repo"] = {"owner/test-repo": ["TASK-1"]}
-
-        with (
-            patch("forge.workflow.nodes.implementation.JiraClient", return_value=mock_jira),
-            patch("forge.workflow.nodes.implementation.ContainerRunner", return_value=mock_runner),
-        ):
-            result = await implement_task(state)
-
-        # Verify start comment was posted
-        assert mock_jira.add_comment.call_count >= 1
-        start_comment_call = mock_jira.add_comment.call_args_list[0]
-        assert start_comment_call[0][0] == "TASK-1"
-        assert start_comment_call[0][1] == "🔨 Forge is implementing this task."
+class TestImplementTaskStartedComment:
 
     @pytest.mark.asyncio
-    async def test_implement_task_posts_completion_comment_on_success(self):
-        """Should post completion comment when task implementation succeeds."""
-        mock_jira = create_mock_jira_client()
-        mock_runner, mock_result = create_mock_container_runner()
-        mock_result.success = True
+    async def test_posts_comment_on_task_ticket_before_container(self):
+        """A comment is posted on the task ticket (not parent) when implementation starts."""
+        from forge.workflow.nodes.implementation import implement_task
 
-        state = create_initial_feature_state(
-            ticket_key="FEAT-123",
-            current_repo="owner/test-repo",
-            task_keys=["TASK-1"],
-        )
-        state["workspace_path"] = "/tmp/test-workspace"
-        state["current_task_key"] = "TASK-1"
-        state["tasks_by_repo"] = {"owner/test-repo": ["TASK-1"]}
+        mock_jira = _make_mock_jira(summary="Fix null pointer in AuthService")
+        runner = _make_successful_runner()
 
         with (
-            patch("forge.workflow.nodes.implementation.JiraClient", return_value=mock_jira),
-            patch("forge.workflow.nodes.implementation.ContainerRunner", return_value=mock_runner),
+            patch(
+                "forge.workflow.nodes.implementation.JiraClient",
+                return_value=mock_jira,
+            ),
+            patch(
+                "forge.workflow.nodes.implementation.ContainerRunner",
+                return_value=runner,
+            ),
+            patch("forge.workflow.nodes.implementation.get_settings"),
         ):
-            result = await implement_task(state)
+            await implement_task(_make_state())
 
-        # Verify both start and completion comments were posted
-        assert mock_jira.add_comment.call_count == 2
-        
-        # Verify start comment
-        start_comment_call = mock_jira.add_comment.call_args_list[0]
-        assert start_comment_call[0][0] == "TASK-1"
-        assert start_comment_call[0][1] == "🔨 Forge is implementing this task."
-        
-        # Verify completion comment
-        completion_comment_call = mock_jira.add_comment.call_args_list[1]
-        assert completion_comment_call[0][0] == "TASK-1"
-        assert completion_comment_call[0][1] == "✅ Implementation complete. Running local code review before PR."
+        mock_jira.add_comment.assert_called_once_with(
+            "TASK-456",
+            "🔨 Forge started implementing [TASK-456]: Fix null pointer in AuthService",
+        )
 
     @pytest.mark.asyncio
-    async def test_implement_task_no_completion_comment_on_failure(self):
-        """Should NOT post completion comment when task implementation fails."""
-        mock_jira = create_mock_jira_client()
-        mock_runner, mock_result = create_mock_container_runner()
-        mock_result.success = False
-        mock_result.error_message = "Container failed"
+    async def test_comment_mentions_correct_task_key(self):
+        """The comment body contains the child task key and summary."""
+        from forge.workflow.nodes.implementation import implement_task
 
-        state = create_initial_feature_state(
-            ticket_key="FEAT-123",
-            current_repo="owner/test-repo",
-            task_keys=["TASK-1"],
-        )
-        state["workspace_path"] = "/tmp/test-workspace"
-        state["current_task_key"] = "TASK-1"
-        state["tasks_by_repo"] = {"owner/test-repo": ["TASK-1"]}
+        mock_jira = _make_mock_jira(summary="Add retry logic")
+        runner = _make_successful_runner()
 
         with (
-            patch("forge.workflow.nodes.implementation.JiraClient", return_value=mock_jira),
-            patch("forge.workflow.nodes.implementation.ContainerRunner", return_value=mock_runner),
-            patch("forge.workflow.nodes.implementation.notify_error", new=AsyncMock()),
+            patch(
+                "forge.workflow.nodes.implementation.JiraClient",
+                return_value=mock_jira,
+            ),
+            patch(
+                "forge.workflow.nodes.implementation.ContainerRunner",
+                return_value=runner,
+            ),
+            patch("forge.workflow.nodes.implementation.get_settings"),
         ):
-            result = await implement_task(state)
+            await implement_task(
+                _make_state(
+                    ticket_key="FEAT-99",
+                    current_task_key="TASK-100",
+                    tasks_by_repo={"acme/backend": ["TASK-100"]},
+                )
+            )
 
-        # Verify only start comment was posted, NOT completion comment
-        assert mock_jira.add_comment.call_count == 1
-        start_comment_call = mock_jira.add_comment.call_args_list[0]
-        assert start_comment_call[0][0] == "TASK-1"
-        assert start_comment_call[0][1] == "🔨 Forge is implementing this task."
-        
-        # Verify error state
-        assert result["last_error"] == "Container failed"
+        call_args = mock_jira.add_comment.call_args
+        assert call_args[0][0] == "TASK-100"
+        assert "TASK-100" in call_args[0][1]
+        assert "Add retry logic" in call_args[0][1]
 
     @pytest.mark.asyncio
-    async def test_implement_task_multiple_tasks_independent_comments(self):
-        """Should post independent start/completion comments for each task."""
-        mock_jira = create_mock_jira_client()
-        mock_runner, mock_result = create_mock_container_runner()
-        mock_result.success = True
+    async def test_comment_failure_does_not_block_implementation(self):
+        """If posting the comment raises, implementation still proceeds."""
+        from forge.workflow.nodes.implementation import implement_task
 
-        state = create_initial_feature_state(
-            ticket_key="FEAT-123",
-            current_repo="owner/test-repo",
-            task_keys=["TASK-1", "TASK-2"],
-        )
-        state["workspace_path"] = "/tmp/test-workspace"
-        state["tasks_by_repo"] = {"owner/test-repo": ["TASK-1", "TASK-2"]}
-        state["implemented_tasks"] = []
-
-        # Implement first task
-        with (
-            patch("forge.workflow.nodes.implementation.JiraClient", return_value=mock_jira),
-            patch("forge.workflow.nodes.implementation.ContainerRunner", return_value=mock_runner),
-        ):
-            result1 = await implement_task(state)
-
-        # Verify first task got start and completion comments
-        assert mock_jira.add_comment.call_count == 2
-        assert mock_jira.add_comment.call_args_list[0][0][0] == "TASK-1"
-        assert mock_jira.add_comment.call_args_list[1][0][0] == "TASK-1"
-
-        # Reset mock for second task
-        mock_jira.add_comment.reset_mock()
-        mock_jira2 = create_mock_jira_client()
-        mock_runner2, mock_result2 = create_mock_container_runner()
-        mock_result2.success = True
-
-        # Update state for second task
-        state2 = result1.copy()
-        state2["current_task_key"] = None  # Let the node find the next task
-
-        # Implement second task
-        with (
-            patch("forge.workflow.nodes.implementation.JiraClient", return_value=mock_jira2),
-            patch("forge.workflow.nodes.implementation.ContainerRunner", return_value=mock_runner2),
-        ):
-            result2 = await implement_task(state2)
-
-        # Verify second task got its own start and completion comments
-        assert mock_jira2.add_comment.call_count == 2
-        assert mock_jira2.add_comment.call_args_list[0][0][0] == "TASK-2"
-        assert mock_jira2.add_comment.call_args_list[1][0][0] == "TASK-2"
-
-
-class TestImplementTaskErrorHandling:
-    """Test cases for error handling in task implementation."""
-
-    @pytest.mark.asyncio
-    async def test_implement_task_continues_on_comment_failure(self, caplog):
-        """Should continue workflow execution if status comment fails."""
-        mock_jira = create_mock_jira_client()
-        # Make add_comment fail but workflow should continue
-        mock_jira.add_comment = AsyncMock(side_effect=Exception("Jira API error"))
-        
-        mock_runner, mock_result = create_mock_container_runner()
-        mock_result.success = True
-
-        state = create_initial_feature_state(
-            ticket_key="FEAT-123",
-            current_repo="owner/test-repo",
-            task_keys=["TASK-1"],
-        )
-        state["workspace_path"] = "/tmp/test-workspace"
-        state["current_task_key"] = "TASK-1"
-        state["tasks_by_repo"] = {"owner/test-repo": ["TASK-1"]}
+        mock_jira = _make_mock_jira()
+        mock_jira.add_comment = AsyncMock(side_effect=Exception("Jira unreachable"))
+        runner = _make_successful_runner()
 
         with (
-            patch("forge.workflow.nodes.implementation.JiraClient", return_value=mock_jira),
-            patch("forge.workflow.nodes.implementation.ContainerRunner", return_value=mock_runner),
+            patch(
+                "forge.workflow.nodes.implementation.JiraClient",
+                return_value=mock_jira,
+            ),
+            patch(
+                "forge.workflow.nodes.implementation.ContainerRunner",
+                return_value=runner,
+            ),
+            patch("forge.workflow.nodes.implementation.get_settings"),
         ):
-            result = await implement_task(state)
+            result = await implement_task(_make_state())
 
-        # Verify workflow continued despite comment failure
-        assert "TASK-1" in result["implemented_tasks"]
+        # Implementation succeeded despite comment failure
         assert result["last_error"] is None
-        
-        # Verify error was logged
-        assert any(
-            "Failed to post status comment to TASK-1" in record.message
-            for record in caplog.records
-        )
+        assert "TASK-456" in result["implemented_tasks"]

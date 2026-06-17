@@ -115,6 +115,21 @@ class Settings(BaseSettings):
         ),
     )
 
+    # PRD Approval Configuration (global fallbacks — per-project config via
+    # Jira project property forge.prd_proposals_repo takes precedence)
+    prd_proposals_repo: str = Field(
+        default="",
+        description=(
+            "Global fallback GitHub repo (owner/repo) for enhancement proposals. "
+            "Per-project config via Jira project property forge.prd_proposals_repo "
+            "takes precedence. Only used when forge_require_project_config is False."
+        ),
+    )
+    prd_proposals_path: str = Field(
+        default="proposals",
+        description="Directory in the proposals repo where PRD files are stored.",
+    )
+
     @property
     def known_repos(self) -> list[str]:
         """Get list of known repositories."""
@@ -226,6 +241,16 @@ class Settings(BaseSettings):
         default=False,
         description="Enable LangChain verbose/debug logging in container",
     )
+    container_keep: bool = Field(
+        default=False,
+        alias="forge_container_keep",
+        description=(
+            "Keep all containers after exit instead of removing them with --rm. "
+            "Useful for debugging: inspect logs with `podman logs <name>` and "
+            "filesystem with `podman export <name> | tar -x`. "
+            "Set FORGE_CONTAINER_KEEP=true in .env."
+        ),
+    )
     agent_backend: str = Field(
         default="filesystem",
         description="Deep Agents backend type: filesystem, state, or store",
@@ -285,6 +310,12 @@ class Settings(BaseSettings):
     container_cpus: str = Field(
         default="2",
         description="Container CPU limit",
+    )
+
+    # Queue Consumer Configuration
+    queue_max_concurrent_tasks: int = Field(
+        default=20,
+        description="Maximum number of in-flight message processing tasks in the queue consumer. Prevents resource exhaustion during message bursts.",
     )
 
     # Worker Metrics Configuration

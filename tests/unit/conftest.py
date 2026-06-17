@@ -1,10 +1,8 @@
 """Unit test fixtures - fast, isolated tests with full mocking."""
 
-from typing import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 
 from forge.config import Settings
 from forge.models.workflow import TicketType
@@ -30,7 +28,7 @@ def mock_settings() -> Settings:
 @pytest.fixture
 def mock_jira_client() -> MagicMock:
     """Create a mock Jira client with all methods mocked."""
-    from forge.integrations.jira.models import JiraIssue, JiraComment
+    from forge.integrations.jira.models import JiraComment, JiraIssue
 
     mock = MagicMock()
     mock.get_issue = AsyncMock(
@@ -66,6 +64,7 @@ def mock_jira_client() -> MagicMock:
     mock.set_workflow_label = AsyncMock()
     mock.add_structured_comment = AsyncMock()
     mock.get_structured_comment = AsyncMock(return_value=None)
+    mock.get_prd_proposals_repo = AsyncMock(return_value=None)
     mock.add_attachment = AsyncMock(return_value={"id": "12345"})
     mock.close = AsyncMock()
     return mock

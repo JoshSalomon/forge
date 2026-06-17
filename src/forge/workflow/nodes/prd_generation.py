@@ -1,17 +1,151 @@
 """PRD generation node for LangGraph workflow."""
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 
 from forge.config import get_settings
 from forge.integrations.agents import ForgeAgent
+from forge.integrations.github.client import GitHubClient
 from forge.integrations.jira.client import JiraClient
 from forge.models.workflow import ForgeLabel
+from forge.orchestrator.checkpointer import set_pr_ticket_index
 from forge.workflow.feature.state import FeatureState as WorkflowState
 from forge.workflow.utils import update_state_timestamp
 
 logger = logging.getLogger(__name__)
+
+
+def _slugify(text: str, max_length: int = 60) -> str:
+    """Convert text to URL-safe slug."""
+    slug = text.lower().strip()
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    slug = re.sub(r"[\s_]+", "-", slug)
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug[:max_length]
+
+
+async def _resolve_prd_proposals_repo(project_key: str, jira: JiraClient) -> str | None:
+    """Resolve the PRD proposals repo for a project.
+
+    Checks the Jira project property first (forge.prd_proposals_repo),
+    then falls back to the global env var when project config is not required.
+
+    Returns:
+        Repo string in "owner/repo" format, or None if not configured.
+    """
+    proposals_repo = await jira.get_prd_proposals_repo(project_key)
+    if proposals_repo:
+        return proposals_repo
+
+    settings = get_settings()
+    if not settings.forge_require_project_config and settings.prd_proposals_repo:
+        logger.info(
+            f"Project {project_key}: using global fallback PRD proposals repo: "
+            f"{settings.prd_proposals_repo}"
+        )
+        return settings.prd_proposals_repo
+
+    return None
+
+
+async def _create_prd_proposal_pr(
+    ticket_key: str,
+    prd_content: str,
+    summary: str,
+    proposals_repo: str,
+) -> dict[str, Any]:
+    """Create a PR with the PRD in the enhancement proposals repo."""
+    settings = get_settings()
+    owner, repo = proposals_repo.split("/", 1)
+    branch = f"forge/prd/{ticket_key.lower()}"
+    file_path = f"{settings.prd_proposals_path}/{ticket_key}-{_slugify(summary)}.md"
+
+    gh = GitHubClient()
+    jira = JiraClient()
+    try:
+        await gh.create_branch(owner, repo, branch)
+        await gh.create_or_update_file(
+            owner=owner,
+            repo=repo,
+            path=file_path,
+            content=prd_content,
+            message=f"Add PRD for {ticket_key}",
+            branch=branch,
+        )
+        pr_body = (
+            f"**PRD for [{ticket_key}](https://redhat.atlassian.net/browse/{ticket_key})**\n\n"
+            f"The PRD document is in [`{file_path}`](/{file_path}) on this branch.\n\n"
+            "Review the file changes for the latest version. "
+            "Leave comments on this PR to provide feedback — "
+            "Forge will regenerate the PRD and push updated commits."
+        )
+        pr_data = await gh.create_pull_request(
+            owner=owner,
+            repo=repo,
+            title=f"[{ticket_key}] PRD: {summary}",
+            body=pr_body,
+            head=branch,
+        )
+
+        pr_url = pr_data["html_url"]
+        pr_number = pr_data["number"]
+
+        await set_pr_ticket_index(pr_url, ticket_key)
+        await jira.set_workflow_label(ticket_key, ForgeLabel.PRD_PENDING)
+        await jira.add_comment(
+            ticket_key,
+            f"PRD published for review: [GitHub PR]({pr_url})",
+        )
+
+        return {
+            "prd_pr_url": pr_url,
+            "prd_pr_number": pr_number,
+            "prd_pr_repo": proposals_repo,
+            "prd_pr_branch": branch,
+            "prd_pr_file_path": file_path,
+        }
+    finally:
+        await gh.close()
+        await jira.close()
+
+
+async def _update_prd_proposal_pr(
+    ticket_key: str,
+    prd_content: str,
+    state: dict[str, Any],
+) -> None:
+    """Push updated PRD content to the existing proposal PR branch."""
+    owner, repo = state["prd_pr_repo"].split("/", 1)
+    branch = state["prd_pr_branch"]
+    pr_number = state["prd_pr_number"]
+    file_path = state["prd_pr_file_path"]
+
+    gh = GitHubClient()
+    try:
+        file_meta = await gh.get_file_contents(owner, repo, file_path, branch)
+        if not file_meta:
+            logger.warning(f"Could not find PRD file {file_path} on branch {branch}")
+            return
+
+        await gh.create_or_update_file(
+            owner=owner,
+            repo=repo,
+            path=file_path,
+            content=prd_content,
+            message=f"Revise PRD for {ticket_key} based on feedback",
+            branch=branch,
+            sha=file_meta["sha"],
+        )
+        await gh.create_issue_comment(
+            owner,
+            repo,
+            pr_number,
+            "PRD has been revised based on feedback. Please review the updated version.",
+        )
+    finally:
+        await gh.close()
 
 
 async def generate_prd(state: WorkflowState) -> WorkflowState:
@@ -60,27 +194,33 @@ async def generate_prd(state: WorkflowState) -> WorkflowState:
         # Generate PRD using Claude - primary operation
         prd_content = await agent.generate_prd(raw_requirements, context)
 
-        # Update Jira with generated PRD - secondary operation
+        # Publish PRD - either as GitHub PR or Jira update
+        # Per-project opt-in: check forge.prd_proposals_repo project property
+        proposals_repo = await _resolve_prd_proposals_repo(issue.project_key, jira)
+        settings = get_settings()
+        prd_pr_result = None
         try:
-            settings = get_settings()
-            if settings.jira_store_in_comments:
-                # Store PRD in a structured comment
-                await jira.add_structured_comment(
-                    ticket_key,
-                    "Product Requirements Document (PRD)",
-                    prd_content,
-                    comment_type="prd",
+            if proposals_repo:
+                prd_pr_result = await _create_prd_proposal_pr(
+                    ticket_key=ticket_key,
+                    prd_content=prd_content,
+                    summary=issue.summary,
+                    proposals_repo=proposals_repo,
                 )
             else:
-                # Update description directly
-                await jira.update_description(ticket_key, prd_content)
-
-            # Set workflow label (instead of custom status transition)
-            await jira.set_workflow_label(ticket_key, ForgeLabel.PRD_PENDING)
+                if settings.jira_store_in_comments:
+                    await jira.add_structured_comment(
+                        ticket_key,
+                        "Product Requirements Document (PRD)",
+                        prd_content,
+                        comment_type="prd",
+                    )
+                else:
+                    await jira.update_description(ticket_key, prd_content)
+                await jira.set_workflow_label(ticket_key, ForgeLabel.PRD_PENDING)
         except Exception as e:
-            # Jira update failed but we have content - log and continue
             jira_error = str(e)
-            logger.warning(f"Jira update failed for {ticket_key}, but PRD was generated: {e}")
+            logger.warning(f"PRD publish failed for {ticket_key}: {e}")
 
         logger.info(f"PRD generated for {ticket_key} ({len(prd_content)} chars)")
 
@@ -92,16 +232,19 @@ async def generate_prd(state: WorkflowState) -> WorkflowState:
             "generated_at": datetime.now(UTC).isoformat(),
         }
 
-        # If Jira failed, set a warning but still advance (content exists)
-        return update_state_timestamp(
+        # If publish failed, set a warning but still advance (content exists)
+        result = update_state_timestamp(
             {
                 **state,
                 "prd_content": prd_content,
                 "generation_context": generation_context,
                 "current_node": "prd_approval_gate",
-                "last_error": f"Jira update pending: {jira_error}" if jira_error else None,
+                "last_error": f"PRD publish pending: {jira_error}" if jira_error else None,
             }
         )
+        if prd_pr_result:
+            result.update(prd_pr_result)
+        return result
 
     except Exception as e:
         logger.error(f"PRD generation failed for {ticket_key}: {e}")
@@ -158,14 +301,24 @@ async def regenerate_prd_with_feedback(state: WorkflowState) -> WorkflowState:
             ticket_key=ticket_key,
         )
 
-        # Update Jira with regenerated PRD
-        await jira.update_description(ticket_key, new_prd)
-
-        # Add comment acknowledging the revision
-        await jira.add_comment(
-            ticket_key,
-            "PRD has been revised based on feedback. Please review.",
-        )
+        # Publish revised PRD
+        if state.get("prd_pr_number"):
+            await _update_prd_proposal_pr(ticket_key, new_prd, state)
+        else:
+            settings = get_settings()
+            if settings.jira_store_in_comments:
+                await jira.add_structured_comment(
+                    ticket_key,
+                    "Product Requirements Document (PRD)",
+                    new_prd,
+                    comment_type="prd",
+                )
+            else:
+                await jira.update_description(ticket_key, new_prd)
+            await jira.add_comment(
+                ticket_key,
+                "PRD has been revised based on feedback. Please review.",
+            )
 
         logger.info(f"PRD regenerated for {ticket_key} ({len(new_prd)} chars)")
 

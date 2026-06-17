@@ -41,9 +41,17 @@ class FeatureState(
     parallel_total_branches: int | None
 
     # Q&A mode
-    qa_history: list[dict[str, str]]  # List of {question, answer, artifact_type, timestamp}
+    # List of {question, answer, artifact_type, timestamp}
+    qa_history: list[dict[str, str]]
     generation_context: dict[str, Any]  # Stored context from generation
     is_question: bool  # Current comment is a question (not feedback)
+
+    # PRD PR tracking (enhancement proposal flow)
+    prd_pr_url: str | None
+    prd_pr_number: int | None
+    prd_pr_repo: str | None
+    prd_pr_branch: str | None
+    prd_pr_file_path: str | None
 
 
 def create_initial_feature_state(ticket_key: str, **kwargs: Any) -> FeatureState:
@@ -108,6 +116,12 @@ def create_initial_feature_state(ticket_key: str, **kwargs: Any) -> FeatureState
         "qa_history": [],
         "generation_context": {},
         "is_question": False,
+        "prd_pr_url": None,
+        "prd_pr_number": None,
+        "prd_pr_repo": None,
+        "prd_pr_branch": None,
+        "prd_pr_file_path": None,
+        "yolo_mode": False,
     }
 
     # Merge with kwargs, letting kwargs override defaults

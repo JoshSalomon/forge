@@ -36,9 +36,10 @@ Task Workflow:
     forge:review-approved - Review approved, ready to merge
 
 Bug Workflow:
-    forge:rca-drafting - Root cause analysis in progress
-    forge:rca-pending  - RCA awaiting approval
-    forge:rca-approved - RCA approved, ready for fix implementation
+    forge:rca-drafting    - Root cause analysis in progress
+    forge:rca-pending     - RCA awaiting approval
+    forge:rca-approved    - RCA approved, ready for fix implementation
+    forge:triage-pending  - Ticket awaiting reporter update with required fields
 
 Error States:
     forge:blocked - Workflow blocked, requires manual intervention
@@ -121,11 +122,13 @@ class ForgeLabel(StrEnum):
     RCA_DRAFTING = "forge:rca-drafting"
     RCA_PENDING = "forge:rca-pending"
     RCA_APPROVED = "forge:rca-approved"
+    TRIAGE_PENDING = "forge:triage-pending"
 
     # General
     FORGE_MANAGED = "forge:managed"
     BLOCKED = "forge:blocked"
     RETRY = "forge:retry"  # Add to trigger retry of current stage
+    YOLO = "forge:yolo"  # Skip human approval gates — auto-approve all artifact reviews
 
 
 class TicketType(StrEnum):
@@ -185,6 +188,7 @@ def get_workflow_phase(labels: list[str]) -> str | None:
         (ForgeLabel.TASK_CI_FAILED.value, "ci_fix"),
         (ForgeLabel.TASK_REVIEW_PENDING.value, "human_review"),
         (ForgeLabel.TASK_REVIEW_APPROVED.value, "complete"),
+        (ForgeLabel.TRIAGE_PENDING.value, "triage_gate"),
         (ForgeLabel.RCA_DRAFTING.value, "rca_generation"),
         (ForgeLabel.RCA_PENDING.value, "rca_approval"),
         (ForgeLabel.RCA_APPROVED.value, "bug_fix"),

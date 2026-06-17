@@ -1,6 +1,6 @@
 """Tests for Q&A handler node."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -157,7 +157,7 @@ class TestAnswerQuestion:
                 return_value=mock_agent,
             ),
         ):
-            result = await answer_question(state)
+            await answer_question(state)
 
         # Verify Jira comment was posted
         mock_jira.add_comment.assert_called_once()
@@ -431,3 +431,192 @@ class TestAnswerQuestion:
 
         mock_jira.close.assert_called_once()
         mock_agent.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_posts_answer_to_github_pr_in_pr_mode(self):
+        """When prd_pr_number exists, Q&A answer goes to GitHub PR."""
+        mock_jira = create_mock_jira_client()
+        mock_agent = create_mock_forge_agent()
+        mock_gh = MagicMock()
+        mock_gh.create_issue_comment = AsyncMock()
+        mock_gh.close = AsyncMock()
+
+        state = create_initial_feature_state(
+            ticket_key="TEST-123",
+            ticket_type=TicketType.FEATURE,
+        )
+        state["feedback_comment"] = "?What does this feature do?"
+        state["current_node"] = "prd_approval_gate"
+        state["prd_content"] = "# PRD Content"
+        state["is_question"] = True
+        state["prd_pr_number"] = 7
+        state["prd_pr_repo"] = "org/proposals"
+
+        with (
+            patch("forge.workflow.nodes.qa_handler.JiraClient", return_value=mock_jira),
+            patch("forge.workflow.nodes.qa_handler.ForgeAgent", return_value=mock_agent),
+            patch("forge.workflow.nodes.qa_handler.GitHubClient", return_value=mock_gh),
+        ):
+            await answer_question(state)
+
+        mock_gh.create_issue_comment.assert_called_once()
+        call_args = mock_gh.create_issue_comment.call_args[0]
+        assert call_args[0] == "org"
+        assert call_args[1] == "proposals"
+        assert call_args[2] == 7
+        mock_jira.add_comment.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_posts_answer_to_jira_when_no_prd_pr(self):
+        """Without prd_pr_number, Q&A answer goes to Jira as before."""
+        mock_jira = create_mock_jira_client()
+        mock_agent = create_mock_forge_agent()
+
+        state = create_initial_feature_state(
+            ticket_key="TEST-123",
+            ticket_type=TicketType.FEATURE,
+        )
+        state["feedback_comment"] = "?What does this feature do?"
+        state["current_node"] = "prd_approval_gate"
+        state["prd_content"] = "# PRD Content"
+        state["is_question"] = True
+
+        with (
+            patch("forge.workflow.nodes.qa_handler.JiraClient", return_value=mock_jira),
+            patch("forge.workflow.nodes.qa_handler.ForgeAgent", return_value=mock_agent),
+        ):
+            await answer_question(state)
+
+        mock_jira.add_comment.assert_called_once()
+
+
+class TestDetermineArtifactTypeBugGates:
+    """Bug workflow gate artifact type detection."""
+
+    def test_triage_gate_returns_triage(self):
+        assert _determine_artifact_type("triage_gate") == "triage"
+
+    def test_triage_check_returns_triage(self):
+        assert _determine_artifact_type("triage_check") == "triage"
+
+    def test_rca_option_gate_returns_rca(self):
+        assert _determine_artifact_type("rca_option_gate") == "rca"
+
+    def test_plan_approval_gate_returns_plan(self):
+        assert _determine_artifact_type("plan_approval_gate") == "plan"
+
+
+class TestGetArtifactContentBugGates:
+    """Artifact content retrieval for bug workflow state fields."""
+
+    def test_triage_returns_summary_and_description(self):
+        state = {
+            "ticket_key": "BUG-1",
+            "summary": "Login fails with special chars",
+            "description": "Users cant log in when password has dollar sign.",
+        }
+        result = _get_artifact_content(state, "triage")
+        assert "Login fails" in result
+        assert "Users cant" in result
+
+    def test_triage_handles_missing_fields(self):
+        state = {"ticket_key": "BUG-1"}
+        result = _get_artifact_content(state, "triage")
+        assert isinstance(result, str)
+
+    def test_plan_returns_plan_content_for_bug_workflow(self):
+        state = {
+            "ticket_key": "BUG-1",
+            "plan_content": "## Fix Plan",
+            "generation_context": {},
+        }
+        assert _get_artifact_content(state, "plan") == "## Fix Plan"
+
+    def test_plan_falls_back_to_generation_context(self):
+        state = {"ticket_key": "FEAT-1", "generation_context": {"plan": "Feature plan"}}
+        assert _get_artifact_content(state, "plan") == "Feature plan"
+
+    def test_rca_returns_rca_content(self):
+        state = {"ticket_key": "BUG-1", "rca_content": "## Root Cause"}
+        assert _get_artifact_content(state, "rca") == "## Root Cause"
+
+
+
+class TestAnswerQuestionBugGates:
+    """answer_question stays paused at all three new bug workflow gates."""
+
+    def _make_bug_state(self, node: str) -> dict:
+        return {
+            "ticket_key": "BUG-42",
+            "current_node": node,
+            "is_paused": True,
+            "is_question": True,
+            "feedback_comment": "?Why was this root cause identified?",
+            "rca_content": "## Root Cause",
+            "plan_content": "## Plan",
+            "qa_history": [],
+            "generation_context": {},
+            "revision_requested": False,
+        }
+
+    @pytest.mark.asyncio
+    async def test_answer_question_at_triage_gate_stays_paused(self):
+        """answer_question at triage_gate returns is_paused=True, node unchanged."""
+        state = self._make_bug_state("triage_gate")
+        state["summary"] = "Login breaks with special chars"
+        state["description"] = "Password containing $ fails login."
+        state["feedback_comment"] = "?Can you clarify what fields are missing?"
+
+        mock_jira = create_mock_jira_client()
+        mock_agent = create_mock_forge_agent()
+
+        with (
+            patch("forge.workflow.nodes.qa_handler.JiraClient", return_value=mock_jira),
+            patch("forge.workflow.nodes.qa_handler.ForgeAgent", return_value=mock_agent),
+        ):
+            result = await answer_question(state)
+
+        assert result["is_paused"] is True
+        assert result["current_node"] == "triage_gate"
+        assert result["is_question"] is False
+        assert result["feedback_comment"] is None
+
+    @pytest.mark.asyncio
+    async def test_answer_question_at_rca_option_gate_stays_paused(self):
+        """answer_question at rca_option_gate returns is_paused=True, node unchanged."""
+        state = self._make_bug_state("rca_option_gate")
+        state["feedback_comment"] = "?Why is Option 1 lower risk than Option 2?"
+
+        mock_jira = create_mock_jira_client()
+        mock_agent = create_mock_forge_agent()
+
+        with (
+            patch("forge.workflow.nodes.qa_handler.JiraClient", return_value=mock_jira),
+            patch("forge.workflow.nodes.qa_handler.ForgeAgent", return_value=mock_agent),
+        ):
+            result = await answer_question(state)
+
+        assert result["is_paused"] is True
+        assert result["current_node"] == "rca_option_gate"
+        assert result["is_question"] is False
+        assert result["feedback_comment"] is None
+
+    @pytest.mark.asyncio
+    async def test_answer_question_at_plan_approval_gate_stays_paused(self):
+        """answer_question at plan_approval_gate returns is_paused=True, node unchanged."""
+        state = self._make_bug_state("plan_approval_gate")
+        state["feedback_comment"] = "?Will this plan handle the edge case with empty passwords?"
+
+        mock_jira = create_mock_jira_client()
+        mock_agent = create_mock_forge_agent()
+
+        with (
+            patch("forge.workflow.nodes.qa_handler.JiraClient", return_value=mock_jira),
+            patch("forge.workflow.nodes.qa_handler.ForgeAgent", return_value=mock_agent),
+        ):
+            result = await answer_question(state)
+
+        assert result["is_paused"] is True
+        assert result["current_node"] == "plan_approval_gate"
+        assert result["is_question"] is False
+        assert result["feedback_comment"] is None

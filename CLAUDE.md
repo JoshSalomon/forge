@@ -59,6 +59,37 @@ uv run forge worker
 podman build -t forge-dev:latest containers/
 ```
 
+## Debugging Container Failures
+
+When a container exits with a non-zero code and the logs are unhelpful (e.g. only showing MCP server startup messages), enable container preservation to inspect the full state:
+
+**1. Set in `.env`:**
+```bash
+FORGE_CONTAINER_KEEP=true
+```
+
+**2. Trigger the failing workflow.** When a container fails, the worker logs will print the container name and ready-to-run commands:
+```
+Container kept for debugging (FORGE_CONTAINER_KEEP=true): forge-AISOS-678-12345
+  Inspect logs:      podman logs forge-AISOS-678-12345
+  Enter filesystem:  podman export forge-AISOS-678-12345 | tar -xC /tmp/forge-AISOS-678-12345
+  Remove when done:  podman rm forge-AISOS-678-12345
+```
+
+**3. Common things to check:**
+- `podman logs <name>` — full stdout/stderr from the agent inside the container
+- `podman export <name> | tar -xC /tmp/<name>` then inspect `/tmp/<name>/workspace/` and `/tmp/<name>/workspace/.forge/` for any partial outputs
+- Check if the container image needs to be rebuilt: `podman build -t forge-dev:latest containers/`
+
+**4. Clean up when done:**
+```bash
+podman rm forge-AISOS-678-12345
+# or remove all stopped forge containers:
+podman rm $(podman ps -a --filter name=forge- -q)
+```
+
+**Remember:** Set `FORGE_CONTAINER_KEEP=false` (or remove it) before running in production — accumulated stopped containers consume disk space.
+
 ## Code Style
 
 - Use `X | None` instead of `Optional[X]` (PEP 604)
@@ -72,12 +103,26 @@ podman build -t forge-dev:latest containers/
 | Label | Meaning |
 |-------|---------|
 | `forge:managed` | Ticket is managed by Forge |
+| `forge:triage-pending` | Bug awaiting triage completion |
+| `forge:rca-pending` | Bug awaiting RCA option selection |
 | `forge:prd-pending` | Awaiting PRD approval |
 | `forge:spec-pending` | Awaiting spec approval |
-| `forge:plan-pending` | Awaiting epic plan approval |
+| `forge:plan-pending` | Awaiting plan approval |
 | `forge:task-pending` | Awaiting task approval |
 | `forge:blocked` | Workflow blocked, needs intervention |
 | `forge:retry` | Trigger retry of failed step |
+| `forge:yolo` | Autonomous mode — skip all artifact approval gates (see warning below) |
+
+> **⚠️ Warning — `forge:yolo`:** This label removes all human checkpoints for PRD, spec, plan, and task approval. Forge will proceed autonomously from ticket creation to implementation without pausing for review. Only use this on tickets where you are confident in the requirements and comfortable with Forge making all planning decisions. It does not bypass code review (the human review gate on the implementation PR is always required).
+
+## Jira Comment Syntax
+
+| Prefix | Effect |
+|--------|--------|
+| `!` | Revision request — triggers regeneration with feedback |
+| `?` or `@forge ask` | Question — triggers Q&A answer |
+| `>option N` | RCA option selection (RCA Option Gate only) |
+| _(no prefix)_ | Informational — workflow ignores it |
 
 ## GitHub PR Comment Commands
 
@@ -85,8 +130,30 @@ podman build -t forge-dev:latest containers/
 |---------|-------|--------|
 | `/forge skip-gate <name>` | PR comment | Skip a named CI check (substring match); persists across pushes |
 | `/forge unskip-gate <name>` | PR comment | Remove a previously set skip |
+| `/forge rebase` | PR comment | Merge main into PR branch, resolving conflicts with AI |
 
-Commands are only active when the workflow is at a CI stage (`wait_for_ci_gate`, `ci_evaluator`, `attempt_ci_fix`).
+Skip-gate commands are only active at CI stages (`wait_for_ci_gate`, `ci_evaluator`, `attempt_ci_fix`). Rebase works from any workflow stage.
+
+## PRD Approval via GitHub PR
+
+Opt-in per project via Jira project property. When configured, Forge opens a PR in the proposals repo instead of posting the PRD to Jira. Reviewer feedback triggers regeneration; merging the PR signals approval.
+
+**Per-project config (Jira project property):**
+
+| Property | Example | Description |
+|----------|---------|-------------|
+| `forge.prd_proposals_repo` | `org/enhancement-proposals` | Enables PR-based PRD approval for this project |
+
+Set via: `jira project-property set <PROJECT> forge.prd_proposals_repo "owner/repo"`
+
+**Global fallbacks (`.env`, used when `FORGE_REQUIRE_PROJECT_CONFIG=false`):**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `PRD_PROPOSALS_REPO` | (empty) | Fallback `owner/repo` for projects without the property |
+| `PRD_PROPOSALS_PATH` | `proposals` | Directory in the repo for PRD files |
+
+Branch naming convention: `forge/prd/{ticket-key}` (e.g., `forge/prd/proj-123`).
 
 ## Container Execution
 

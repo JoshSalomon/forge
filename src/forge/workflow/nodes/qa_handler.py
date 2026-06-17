@@ -5,6 +5,7 @@ import logging
 from datetime import UTC, datetime
 
 from forge.integrations.agents import ForgeAgent
+from forge.integrations.github.client import GitHubClient
 from forge.integrations.jira.client import JiraClient
 from forge.workflow.feature.state import FeatureState as WorkflowState
 from forge.workflow.utils import update_state_timestamp
@@ -80,9 +81,19 @@ async def answer_question(state: WorkflowState) -> WorkflowState:
             },
         )
 
-        # Post to Jira
+        # Post answer to the right channel
         formatted_answer = f"*Q: {question}*\n\n{answer}"
-        await jira.add_comment(ticket_key, formatted_answer)
+        if state.get("prd_pr_number") and artifact_type == "prd":
+            owner, repo_name = state["prd_pr_repo"].split("/", 1)
+            gh = GitHubClient()
+            try:
+                await gh.create_issue_comment(
+                    owner, repo_name, state["prd_pr_number"], formatted_answer
+                )
+            finally:
+                await gh.close()
+        else:
+            await jira.add_comment(ticket_key, formatted_answer)
 
         # Record in Q&A history
         qa_history = list(state.get("qa_history", []))
@@ -113,11 +124,21 @@ async def answer_question(state: WorkflowState) -> WorkflowState:
     except Exception as e:
         logger.error(f"Failed to answer question for {ticket_key}: {e}")
         with contextlib.suppress(Exception):
-            await jira.add_comment(
-                ticket_key,
+            error_msg = (
                 f"I wasn't able to answer that question. Error: {e}\n\n"
-                "Please try rephrasing or ask a different question.",
+                "Please try rephrasing or ask a different question."
             )
+            if state.get("prd_pr_number") and artifact_type == "prd":
+                owner, repo_name = state["prd_pr_repo"].split("/", 1)
+                gh = GitHubClient()
+                try:
+                    await gh.create_issue_comment(
+                        owner, repo_name, state["prd_pr_number"], error_msg
+                    )
+                finally:
+                    await gh.close()
+            else:
+                await jira.add_comment(ticket_key, error_msg)
 
         return update_state_timestamp(
             {
@@ -148,6 +169,8 @@ def _determine_artifact_type(current_node: str) -> str:
         return "prd"
     elif "spec" in node_lower:
         return "spec"
+    elif "triage" in node_lower:
+        return "triage"
     elif "rca" in node_lower:
         return "rca"
     elif "plan" in node_lower:
@@ -165,6 +188,23 @@ def _get_artifact_content(state: WorkflowState, artifact_type: str) -> str:
     Returns:
         The artifact content string, or empty string if not found.
     """
+    # Triage: assemble ticket context from summary, description, comments
+    if artifact_type == "triage":
+        summary = state.get("summary", "")
+        description = state.get("description", "")
+        comments = state.get("comments", [])
+        parts = [
+            p
+            for p in [
+                f"Summary: {summary}" if summary else "",
+                f"Description: {description}" if description else "",
+            ]
+            if p
+        ]
+        if comments:
+            parts.append("Comments:\n" + "\n---\n".join(str(c) for c in comments))
+        return "\n\n".join(parts)
+
     mapping = {
         "prd": "prd_content",
         "spec": "spec_content",
@@ -174,8 +214,11 @@ def _get_artifact_content(state: WorkflowState, artifact_type: str) -> str:
     if field:
         return state.get(field, "")
 
-    # Plan content is stored in generation_context (built during epic decomposition)
+    # Plan: check plan_content first (bug workflow), fall back to generation_context (feature workflow)
     if artifact_type == "plan":
+        plan_content = state.get("plan_content")
+        if plan_content is not None:
+            return plan_content
         return state.get("generation_context", {}).get("plan", "")
 
     return ""

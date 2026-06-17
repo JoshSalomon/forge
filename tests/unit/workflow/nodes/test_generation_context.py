@@ -1,6 +1,6 @@
 """Tests for generation context storage in PRD and Spec generation nodes."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +16,7 @@ def create_mock_jira_client():
     mock.update_description = AsyncMock()
     mock.add_structured_comment = AsyncMock()
     mock.set_workflow_label = AsyncMock()
+    mock.get_prd_proposals_repo = AsyncMock(return_value=None)
     return mock
 
 

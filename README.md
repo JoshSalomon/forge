@@ -39,7 +39,7 @@ Forge listens for Jira and github webhooks and orchestrates a multi-stage workfl
 │                                                               └──────────┘  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-Q&A: At any approval gate, ask questions with "?" or "@forge ask" prefix
+Comments: ? = question, ! = revision, no prefix = ignored
 ```
 
 ## Quick Start
@@ -116,18 +116,46 @@ Use these labels in Jira to control the workflow:
 | Plan | `forge:plan-pending` | `forge:plan-approved` |
 | Tasks | `forge:task-pending` | `forge:task-approved` |
 
+### Autonomous Mode (`forge:yolo`)
+
+> **⚠️ Warning:** Adding `forge:yolo` to a ticket removes all human approval checkpoints for planning artifacts. Forge will proceed from ticket creation straight through to implementation without pausing at the PRD, spec, plan, or task gates. Use this only when you trust the requirements and are comfortable with Forge making all planning decisions autonomously.
+
+Add `forge:yolo` to a ticket to enable autonomous mode:
+- Forge skips the PRD, spec, plan, and task approval gates
+- In the bug workflow, Forge auto-selects RCA option 1
+- **The code review gate is never skipped** — a human reviewer is always required on the implementation PR
+- `forge:yolo` can be added at ticket creation or while the workflow is already paused at a gate — Forge will immediately advance
+
+### Jira Comment Syntax
+
+Forge classifies Jira comments by their prefix:
+
+| Prefix | Type | What happens |
+|--------|------|--------------|
+| `!` | Revision request | Forge regenerates the current artifact with your feedback |
+| `?` or `@forge ask` | Question | Forge answers without advancing or regenerating |
+| `>option N` | RCA option selection | Selects a fix option (RCA Option Gate only) |
+| _(no prefix)_ | Informational | Ignored by the workflow |
+
 ### Requesting Revisions
 
-Add a comment to the Jira ticket with your feedback. Forge will regenerate the current artifact incorporating your feedback.
+Start your comment with `!` followed by your feedback. Forge will regenerate the current artifact incorporating your feedback.
+
+```
+! The PRD is missing non-functional requirements for latency
+```
 
 ### Asking Questions (Q&A Mode)
 
 While reviewing a PRD or Spec, you can ask clarifying questions without triggering regeneration:
 
-- Start your comment with `?` — e.g., `?Why did you choose REST over GraphQL?`
+- Start your comment with `?` — e.g., `? Why did you choose REST over GraphQL?`
 - Or use `@forge ask` — e.g., `@forge ask explain the auth approach`
 
 Forge will answer based on the artifact content and generation context, then keep the workflow paused for your approval decision. When you approve, a summary of Q&A exchanges is posted to the ticket for future reference.
+
+!!! note
+    Comments without a recognized prefix (`!`, `?`, `@forge ask`, `>option`) are treated as informational and do not trigger any workflow action.
 
 ### Handling Failures
 
@@ -166,13 +194,27 @@ Skips persist across pushes — if the infra check fails again on the next commi
 
 > **Note:** Certain checks (e.g. `tide`, Prow's merge-queue) are always pending and are permanently ignored. Configure with `CI_IGNORED_CHECKS` in `.env`.
 
+### Resolving Merge Conflicts
+
+When a PR falls behind `main` and develops merge conflicts, post a comment:
+
+```
+/forge rebase
+```
+
+Forge merges `main` into the PR branch, resolving any conflicts using AI. If the merge is clean, it pushes immediately. If there are conflicts, a container with Claude resolves them using the PR description as context, then force-pushes to the fork. This works from any workflow stage.
+
+See [PR Commands](docs/guide/pr-commands.md) for the full reference.
+
 ### Bug Workflow
 
-Bugs follow a simpler workflow:
+Bugs follow a five-stage pipeline:
 
 ```
-Create Bug → Analyze (RCA) → [Approval + Q&A] → Implement Fix → PR → CI → Review → Done
+Create Bug → Triage → RCA Analysis + Reflection → [RCA Option Gate] → Plan → [Plan Approval] → Decompose → Implement → PR → CI → Review → Post-merge Summary
 ```
+
+See [Bug Workflow Guide](docs/guide/bug-workflow.md) for the full stage reference.
 
 ## Workflow Details
 
@@ -180,10 +222,10 @@ Create Bug → Analyze (RCA) → [Approval + Q&A] → Implement Fix → PR → C
 
 | Stage | What Happens | Human Action |
 |-------|--------------|--------------|
-| **PRD Generation** | AI transforms ticket description into structured PRD | Review, ask questions (?), approve or request changes |
-| **Spec Generation** | AI creates behavioral spec with Given/When/Then criteria | Review, ask questions (?), approve or request changes |
-| **Epic Decomposition** | AI breaks feature into logical Epics with plans | Review, ask questions (?), approve or request changes |
-| **Task Generation** | AI creates implementation Tasks per repository | Review, ask questions (?), approve or request changes |
+| **PRD Generation** | AI transforms ticket description into structured PRD | Review, ask questions (`?`), approve or revise (`!`) |
+| **Spec Generation** | AI creates behavioral spec with Given/When/Then criteria | Review, ask questions (`?`), approve or revise (`!`) |
+| **Epic Decomposition** | AI breaks feature into logical Epics with plans | Review, ask questions (`?`), approve or revise (`!`) |
+| **Task Generation** | AI creates implementation Tasks per repository | Review, ask questions (`?`), approve or revise (`!`) |
 | **Implementation** | Code executed in ephemeral Podman containers | (Automatic) |
 | **Local Code Review** | Reviews the diff against main, fixes breaking issues in-place (up to 2 passes) before PR creation | (Automatic) |
 | **PR Creation** | Fork-based pull request created with AI-generated description; PR body synced against commits | (Automatic) |
@@ -195,9 +237,14 @@ Create Bug → Analyze (RCA) → [Approval + Q&A] → Implement Fix → PR → C
 
 | Stage | What Happens | Human Action |
 |-------|--------------|--------------|
-| **RCA Analysis** | AI analyzes bug and generates root cause analysis | Review, ask questions (?), approve or request changes |
-| **Implementation** | Fix implemented in ephemeral container | (Automatic) |
-| **PR → CI → Review** | Same as Feature workflow | Merge or request changes |
+| **Triage** | Evaluates ticket against 7-field completeness checklist | Provide missing fields if prompted |
+| **RCA Analysis** | Container performs hypothesis-driven codebase exploration; reflection loop validates the output (up to 3 passes) | (Automatic) |
+| **RCA Option Gate** | Structured RCA + fix options posted; `forge:rca-pending` set | Reply `>option N` to select approach; or revise with `!` |
+| **Planning** | Container produces concrete implementation plan with per-repo `repo:` tags | Approve with `forge:plan-approved`; or revise with `!` |
+| **Decompose** | One Jira Task created per repository; tasks linked to bug | (Automatic) |
+| **Implementation** | Fix implemented in ephemeral container with TDD + bidirectional test validation; qualitative review (7-item checklist, up to 2 retries) | (Automatic) |
+| **PR → CI → Review** | Same as Feature workflow; PR includes release note section | Merge or request changes |
+| **Post-merge Summary** | Fix summary + release note posted to Jira ticket | (Automatic) |
 
 ## Architecture
 
