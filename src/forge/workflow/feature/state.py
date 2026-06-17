@@ -103,6 +103,7 @@ def create_initial_feature_state(ticket_key: str, **kwargs: Any) -> FeatureState
         "qa_history": [],
         "generation_context": {},
         "is_question": False,
+        "yolo_mode": False,
     }
 
     # Merge with kwargs, letting kwargs override defaults

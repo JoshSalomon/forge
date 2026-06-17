@@ -129,6 +129,7 @@ def create_initial_bug_state(ticket_key: str, **kwargs: Any) -> BugState:
         "qualitative_retry_count": 0,
         "qualitative_review_failed": False,
         "reflect_rca_retry_count": 0,
+        "yolo_mode": False,
     }
 
     # Merge with kwargs, letting kwargs override defaults
