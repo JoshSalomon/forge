@@ -80,3 +80,17 @@ class TestBuildInitialStateYoloMode:
         msg = self._make_message([])
         state = worker._build_initial_state(msg)
         assert state["yolo_mode"] is False
+
+    def test_yolo_mode_false_for_github_source(self):
+        from unittest.mock import MagicMock
+        from forge.models.events import EventSource
+        msg = MagicMock()
+        msg.ticket_key = "TEST-1"
+        msg.source = EventSource.GITHUB
+        msg.event_type = "pull_request"
+        msg.event_id = "evt-1"
+        msg.retry_count = 0
+        msg.payload = {"pull_request": {"number": 1}}
+        worker = self._make_worker()
+        state = worker._build_initial_state(msg)
+        assert state["yolo_mode"] is False

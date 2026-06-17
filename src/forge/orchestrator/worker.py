@@ -1300,6 +1300,7 @@ async def run_single_ticket(ticket_key: str) -> dict[str, Any]:
         "current_node": "entry",
         "is_paused": False,
         "retry_count": 0,
+        "yolo_mode": False,
     }
 
     # Use ticket_key as thread_id for checkpointing
