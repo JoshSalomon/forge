@@ -279,7 +279,7 @@ class TestJiraCommentIgnoredInPrMode:
 
     @pytest.mark.asyncio
     async def test_jira_comment_processed_when_no_prd_pr(self, worker):
-        """Jira comments should still work in normal Jira-only mode."""
+        """Jira comments with ! prefix should still work in normal Jira-only mode."""
         msg = QueueMessage(
             message_id="msg-jira-2",
             event_id="evt-jira-2",
@@ -288,7 +288,7 @@ class TestJiraCommentIgnoredInPrMode:
             ticket_key="TEST-123",
             payload={
                 "comment": {
-                    "body": "Please expand the scope section",
+                    "body": "!Please expand the scope section",
                 },
                 "changelog": {"items": []},
                 "issue": {"fields": {"labels": ["forge:managed", "forge:prd-pending"]}},
