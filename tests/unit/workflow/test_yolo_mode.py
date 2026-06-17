@@ -228,3 +228,83 @@ class TestYoloGateRouting:
         state["is_question"] = True
         state["feedback_comment"] = "?Why REST?"
         assert route_prd_approval(state) == "answer_question"
+
+
+class TestYoloRcaOptionGate:
+    """rca_option_gate auto-selects option 1 when yolo_mode=True."""
+
+    def _rca_state(self, **extra) -> dict:
+        base = {
+            "ticket_key": "BUG-1",
+            "ticket_type": "Bug",
+            "current_node": "rca_option_gate",
+            "is_paused": False,
+            "yolo_mode": True,
+            "rca_content": "Something broke.",
+            "rca_comment_posted": False,
+            "rca_options": [
+                {"title": "Fix A", "description": "Patch the null check", "tradeoffs": "Low risk"},
+                {"title": "Fix B", "description": "Refactor module", "tradeoffs": "Higher risk"},
+            ],
+            "revision_requested": False,
+            "feedback_comment": None,
+            "is_question": False,
+            "selected_fix_option": None,
+            "selected_fix_approach": None,
+            "retry_count": 0,
+            "last_error": None,
+        }
+        return {**base, **extra}
+
+    @pytest.mark.asyncio
+    async def test_yolo_selects_option_1_without_pausing(self):
+        from unittest.mock import AsyncMock, patch
+        from forge.workflow.nodes.rca_option_gate import rca_option_gate
+
+        state = self._rca_state()
+        mock_jira = AsyncMock()
+        mock_jira.add_comment = AsyncMock()
+        mock_jira.set_workflow_label = AsyncMock()
+        mock_jira.close = AsyncMock()
+
+        with patch("forge.workflow.nodes.rca_option_gate.JiraClient", return_value=mock_jira):
+            result = await rca_option_gate(state)
+
+        assert result["selected_fix_option"] == 1
+        assert result["selected_fix_approach"] == state["rca_options"][0]
+        assert result["is_paused"] is False
+
+    @pytest.mark.asyncio
+    async def test_yolo_still_posts_rca_comment(self):
+        """RCA comment is posted even in yolo mode (audit trail preserved)."""
+        from unittest.mock import AsyncMock, patch
+        from forge.workflow.nodes.rca_option_gate import rca_option_gate
+
+        state = self._rca_state()
+        mock_jira = AsyncMock()
+        mock_jira.add_comment = AsyncMock()
+        mock_jira.set_workflow_label = AsyncMock()
+        mock_jira.close = AsyncMock()
+
+        with patch("forge.workflow.nodes.rca_option_gate.JiraClient", return_value=mock_jira):
+            await rca_option_gate(state)
+
+        mock_jira.add_comment.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_non_yolo_still_pauses(self):
+        """With yolo_mode=False, gate pauses normally."""
+        from unittest.mock import AsyncMock, patch
+        from forge.workflow.nodes.rca_option_gate import rca_option_gate
+
+        state = self._rca_state(yolo_mode=False)
+        mock_jira = AsyncMock()
+        mock_jira.add_comment = AsyncMock()
+        mock_jira.set_workflow_label = AsyncMock()
+        mock_jira.close = AsyncMock()
+
+        with patch("forge.workflow.nodes.rca_option_gate.JiraClient", return_value=mock_jira):
+            result = await rca_option_gate(state)
+
+        assert result["is_paused"] is True
+        assert result["selected_fix_option"] is None
