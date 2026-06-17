@@ -802,6 +802,7 @@ curl -X POST http://localhost:8000/api/v1/webhooks/github \
 | `forge:task-approved` | Tasks approved, implementation starts |
 | `forge:blocked` | Workflow blocked, needs intervention |
 | `forge:retry` | Resume a blocked workflow |
+| `forge:yolo` | Autonomous mode — skip all artifact approval gates (⚠️ use with care, see README) |
 
 ### Useful `.env` knobs for development
 

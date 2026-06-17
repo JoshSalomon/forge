@@ -115,6 +115,7 @@ def create_initial_feature_state(ticket_key: str, **kwargs: Any) -> FeatureState
         "prd_pr_repo": None,
         "prd_pr_branch": None,
         "prd_pr_file_path": None,
+        "yolo_mode": False,
     }
 
     # Merge with kwargs, letting kwargs override defaults

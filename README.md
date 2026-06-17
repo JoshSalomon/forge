@@ -116,6 +116,16 @@ Use these labels in Jira to control the workflow:
 | Plan | `forge:plan-pending` | `forge:plan-approved` |
 | Tasks | `forge:task-pending` | `forge:task-approved` |
 
+### Autonomous Mode (`forge:yolo`)
+
+> **⚠️ Warning:** Adding `forge:yolo` to a ticket removes all human approval checkpoints for planning artifacts. Forge will proceed from ticket creation straight through to implementation without pausing at the PRD, spec, plan, or task gates. Use this only when you trust the requirements and are comfortable with Forge making all planning decisions autonomously.
+
+Add `forge:yolo` to a ticket to enable autonomous mode:
+- Forge skips the PRD, spec, plan, and task approval gates
+- In the bug workflow, Forge auto-selects RCA option 1
+- **The code review gate is never skipped** — a human reviewer is always required on the implementation PR
+- `forge:yolo` can be added at ticket creation or while the workflow is already paused at a gate — Forge will immediately advance
+
 ### Jira Comment Syntax
 
 Forge classifies Jira comments by their prefix:

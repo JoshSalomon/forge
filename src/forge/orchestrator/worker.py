@@ -45,6 +45,15 @@ _PRD_GATE_NODES = ("prd_approval_gate", "generate_prd", "regenerate_prd")
 # Supports both start-of-line usage (>option 2) and in-prose usage (let's go with >option 2)
 _OPTION_PATTERN = re.compile(r"(?mi)>option\s+(\d+)")
 
+# Gates where forge:yolo label addition triggers auto-approval and workflow resumption
+_YOLO_GATES = {
+    "prd_approval_gate",
+    "spec_approval_gate",
+    "plan_approval_gate",
+    "task_approval_gate",
+    "rca_option_gate",
+}
+
 
 class OrchestratorWorker:
     """Worker that processes workflow events from Redis queue."""
@@ -388,6 +397,7 @@ class OrchestratorWorker:
         is_retry = False
         is_question = False
         is_ci_webhook = False
+        is_yolo = False
         pr_merged = False
         feedback = None
 
@@ -509,6 +519,18 @@ class OrchestratorWorker:
         for change in label_changes:
             to_labels = change.get("toString", "")
             from_labels = change.get("fromString", "")
+
+            # Check for yolo label addition — activate yolo mode if at a gate
+            if (
+                "forge:yolo" in to_labels
+                and "forge:yolo" not in from_labels
+                and current_node in _YOLO_GATES
+            ):
+                logger.info(
+                    f"forge:yolo label added for {message.ticket_key} at {current_node} "
+                    "— activating yolo mode"
+                )
+                is_yolo = True
 
             # Check for retry label - triggers retry of current stage
             if "forge:retry" in to_labels.lower() and "forge:retry" not in from_labels.lower():
@@ -952,6 +974,12 @@ class OrchestratorWorker:
         elif is_ci_webhook:
             # GitHub CI event — unpause the gate and let ci_evaluator check the results
             updated_state["is_paused"] = False
+        elif is_yolo:
+            updated_state["yolo_mode"] = True
+            updated_state["is_paused"] = False
+            updated_state["revision_requested"] = False
+            updated_state["feedback_comment"] = None
+            updated_state["last_error"] = None
         elif is_approved:
             updated_state["is_paused"] = False
             updated_state["revision_requested"] = False
@@ -1295,13 +1323,15 @@ class OrchestratorWorker:
         Returns:
             Initial state dictionary.
         """
-        # Extract ticket type from payload
+        # Extract ticket type and labels from payload
         ticket_type = "Unknown"  # Require explicit type, don't default to Feature
+        labels: list[str] = []
         if message.source == EventSource.JIRA:
             issue_data = message.payload.get("issue", {})
             fields = issue_data.get("fields", {})
             issue_type = fields.get("issuetype", {})
             ticket_type = issue_type.get("name", "Unknown")
+            labels = fields.get("labels", [])
 
         # Validate ticket type - only Features and Bugs can start workflows directly
         valid_top_level_types = ("Feature", "Bug", "Story")
@@ -1310,6 +1340,8 @@ class OrchestratorWorker:
                 f"Ticket {message.ticket_key} has type '{ticket_type}' which cannot "
                 f"start a workflow directly. Valid types: {valid_top_level_types}"
             )
+
+        yolo_mode = ForgeLabel.YOLO in labels
 
         return {
             "ticket_key": message.ticket_key,
@@ -1323,6 +1355,7 @@ class OrchestratorWorker:
             "current_node": "entry",
             "is_paused": False,
             "retry_count": message.retry_count,
+            "yolo_mode": yolo_mode,
         }
 
     async def start(self) -> None:
@@ -1415,6 +1448,7 @@ async def run_single_ticket(ticket_key: str) -> dict[str, Any]:
         "current_node": "entry",
         "is_paused": False,
         "retry_count": 0,
+        "yolo_mode": False,
     }
 
     # Use ticket_key as thread_id for checkpointing
