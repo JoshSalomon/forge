@@ -175,7 +175,7 @@ REDIS_URL=redis://localhost:6380/0   # matches docker-compose port mapping
 
 ```bash
 CONTAINER_IMAGE=localhost/forge-dev:latest   # built with podman above
-CONTAINER_TIMEOUT=7200                        # 2 hours max
+CONTAINER_TIMEOUT=1800                        # 30 minutes max
 CONTAINER_MEMORY=4g
 CONTAINER_CPUS=2
 ```

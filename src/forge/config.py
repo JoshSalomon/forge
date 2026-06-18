@@ -300,8 +300,8 @@ class Settings(BaseSettings):
         description="Container image for task execution (local or registry URL)",
     )
     container_timeout: int = Field(
-        default=7200,
-        description="Container execution timeout in seconds (default: 2 hours)",
+        default=1800,
+        description="Container execution timeout in seconds (default: 30 minutes)",
     )
     container_memory: str = Field(
         default="4g",
