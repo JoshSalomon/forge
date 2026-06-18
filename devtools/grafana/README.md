@@ -178,6 +178,22 @@ Dashboard JSON files live in `devtools/grafana/dashboards/` and are version cont
 
 Sub-folders under `dashboards/` become Grafana folders.
 
+### Dashboard Inventory
+
+| Dashboard | Primary use | Datasources |
+|-----------|-------------|-------------|
+| Forge Operations Dashboard | Runtime health, webhooks, queues, retry/dead-letter depth | Prometheus, Redis |
+| Forge Ticket Execution Dashboard | Single-ticket trace timeline, step cost, tokens, latency, agent calls | ClickHouse |
+| Forge Cost Dashboard | Cost by project, ticket type, model, day, and expensive tickets | ClickHouse |
+| Forge Agent Performance Dashboard | Agent invocation rate, duration, latency, prompt size, slow calls | Prometheus, ClickHouse |
+| Forge Workflow Funnel Dashboard | Workflow starts/completions/failures, step coverage, rework loops | Prometheus, ClickHouse |
+| Forge CI and Review Dashboard | CI fix attempts, approvals, revisions, PR/CI trace signals | Prometheus, ClickHouse |
+| Forge Model Usage Dashboard | Calls, cost, tokens, and workflow-step usage by model | ClickHouse |
+| Forge Observability Health Dashboard | Prometheus target health and trace metadata coverage | Prometheus, ClickHouse |
+| Forge Business Dashboard | Business-level cost and throughput summaries | ClickHouse |
+| Forge Engineering Dashboard | Mixed engineering views across runtime, alerts, cost, and latency | ClickHouse, Prometheus, Redis |
+| Forge Issue Detail | Detailed per-issue trace and cost drill-down | ClickHouse, Prometheus |
+
 ### Workflow
 
 Edited dashboards in the Grafana UI need to be synced back to the repo. Grafana holds live edits in its internal database; however, the local JSON files are the source of truth for version control. On a fresh stack (`down -v && up`), Grafana re-provisions the dashboards from the files.
