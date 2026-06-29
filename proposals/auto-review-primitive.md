@@ -2,7 +2,7 @@
 
 **Author:** jsalomon
 **Date:** 2026-05-04
-**Status:** Draft — pending maintainer input on architecture decision
+**Status:** Accepted — Approach A (container-internal loop) selected for implementation
 
 ## Summary
 
@@ -99,13 +99,13 @@ The worker agent runs first, completes its task, and commits. Then a **separate*
 
 Configurable per-skill via `max_retries` in review.md frontmatter. Falls back to a global default (`AUTO_REVIEW_MAX_RETRIES`, default: 5). When exhausted, the skill is treated as completed (the last attempt's output is used).
 
-## Open Decision: Where Does the Loop Live?
+## Architecture Decision: Container-Internal Loop (Approach A)
 
-This is the key architectural decision that needs maintainer input. There are two viable approaches:
+**Decision: Approach A — container-internal loop with file-based observability — has been selected for implementation.** Approach B (orchestrator-managed loop) is documented below for reference but will not be implemented in this phase.
 
 ---
 
-### Approach A: Container-Internal Loop
+### Approach A: Container-Internal Loop (Selected)
 
 The review loop runs entirely inside the container, managed by the entrypoint. The orchestrator is unaware of it.
 
@@ -234,9 +234,9 @@ async def run_container_with_review_polling(self, ...):
 
 ---
 
-### Approach B: Orchestrator-Managed Loop
+### Approach B: Orchestrator-Managed Loop (Not Selected — Reference Only)
 
-The orchestrator manages the review loop as new workflow nodes. The container runs once per invocation (worker or reviewer), and the orchestrator decides whether to re-invoke.
+The orchestrator manages the review loop as new workflow nodes. The container runs once per invocation (worker or reviewer), and the orchestrator decides whether to re-invoke. This approach was considered but not selected for the PoC due to higher implementation complexity. It remains a viable migration path if human intervention mid-loop becomes a requirement.
 
 **How it works:**
 
@@ -297,19 +297,19 @@ implement_task → skill_review → (approved) → local_review
 | **Consistency with codebase** | New pattern (entrypoint loop + file polling) | Follows existing patterns (node→container→result) |
 | **PoC speed** | Fast to implement | Slower to implement |
 
-### Recommendation for Discussion
+### Decision Rationale
 
-**Approach A with file-based observability is the recommended path.** The original concern about Approach A was poor observability — the orchestrator couldn't see what was happening inside the container. File-based polling closes this gap almost entirely:
+**Approach A with file-based observability was selected.** The original concern about Approach A was poor observability — the orchestrator couldn't see what was happening inside the container. File-based polling closes this gap:
 
 - **Metrics**: orchestrator records Prometheus counters/histograms from cycle files in near-real-time
 - **Jira**: orchestrator posts per-cycle comments as they happen ("Review cycle 1/3: rejected — missing test coverage")
 - **Debugging**: cycle files persist in workspace for post-hoc analysis
 
-The only remaining gap vs Approach B is **human intervention mid-loop** (no way to inject guidance while the container is running) and **checkpoint persistence** (if the orchestrator crashes, the review cycle count isn't in checkpoint state — though the cycle files in the workspace survive for recovery). Neither is critical for a PoC.
-
-The timeout concern is real but manageable — container timeout can be increased for skills with review.md, and `max_retries` per-skill lets authors limit the loop for expensive skills.
+The remaining gaps vs Approach B — human intervention mid-loop and checkpoint persistence — are acceptable for the PoC. The timeout concern is manageable via container timeout increases and per-skill `max_retries`.
 
 **Migration path to Approach B remains open** if human intervention mid-loop becomes a requirement. The review.md format, cycle file format, and review protocol are compatible with both approaches — the migration would move the loop from entrypoint to orchestrator, not redesign the review mechanism.
+
+**Important implementation note:** The orchestrator must perform a final sweep of all `review_cycle_*.json` files after the container exits, before proceeding to the next workflow step. Without this, the final approval cycle file may be missed if the container exits between poll intervals. Additionally, cycle files must be copied to a persistent location before `teardown_workspace` destroys the workspace.
 
 ## Future Directions
 
