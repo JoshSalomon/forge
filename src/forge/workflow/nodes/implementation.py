@@ -202,6 +202,7 @@ async def implement_task(state: WorkflowState) -> WorkflowState:
             ticket_key=ticket_key,
             task_key=current_task,
             repo_name=current_repo,
+            step_name="implement_task",
             previous_task_keys=implemented_tasks,
             trace_context=_build_implementation_trace_context(
                 state,

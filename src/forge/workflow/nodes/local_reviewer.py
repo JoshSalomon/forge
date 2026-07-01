@@ -175,6 +175,7 @@ async def _run_bug_review(state: WorkflowState, git: GitOperations) -> WorkflowS
             runner,
             workspace_path=Path(workspace_path),
             task_summary="Qualitative bug review — root cause and test coverage",
+            step_name="local_review",
             task_description=task_description,
             ticket_key=ticket_key,
             task_key=f"{ticket_key}-qualreview",
@@ -335,6 +336,7 @@ async def _run_feature_review(state: WorkflowState, git: GitOperations) -> Workf
             ticket_key=ticket_key,
             task_key=f"{ticket_key}-review",
             repo_name=current_repo,
+            step_name="local_review",
         )
 
         if git.has_uncommitted_changes():
