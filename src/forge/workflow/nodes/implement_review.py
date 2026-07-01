@@ -263,6 +263,7 @@ async def implement_review(state: WorkflowState) -> WorkflowState:
             ticket_key=ticket_key,
             task_key=f"{ticket_key}-review-analyze",
             repo_name=current_repo,
+            step_name="implement_review_analyze",
         )
 
         # ── Process per-thread dispositions ──────────────────────────────────
@@ -314,6 +315,7 @@ async def implement_review(state: WorkflowState) -> WorkflowState:
                 ticket_key=ticket_key,
                 task_key=f"{ticket_key}-review-fix",
                 repo_name=current_repo,
+                step_name="implement_review_fix",
             )
 
             # Commit any uncommitted changes the container left
