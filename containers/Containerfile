@@ -35,8 +35,9 @@ RUN pip install --no-cache-dir \
 # Create workspace directory (will be mounted at runtime)
 RUN mkdir -p /workspace && chmod 777 /workspace
 
-# Copy entrypoint script
+# Copy entrypoint and review module
 COPY entrypoint.py /usr/local/bin/forge-entrypoint.py
+COPY review.py /usr/local/bin/review.py
 RUN chmod +x /usr/local/bin/forge-entrypoint.py
 
 # Set working directory
