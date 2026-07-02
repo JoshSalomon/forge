@@ -252,7 +252,7 @@ class TestBackgroundPollingTask:
             nonlocal poller_created
             poller_created = True
             mock_poller = MagicMock()
-            mock_poller.poll = AsyncMock(return_value=AsyncIteratorMock([]))
+            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
             mock_poller.poll_once = AsyncMock(return_value=[])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = "implement_task"
@@ -301,7 +301,7 @@ class TestBackgroundPollingTask:
 
         def create_poller(*_args, **_kwargs):
             mock_poller = MagicMock()
-            mock_poller.poll = AsyncMock(return_value=AsyncIteratorMock([]))
+            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
             mock_poller.poll_once = AsyncMock(return_value=[])
 
             def stop():
@@ -373,7 +373,7 @@ class TestReviewCycleCollection:
 
         def create_poller(*_args, **_kwargs):
             mock_poller = MagicMock()
-            mock_poller.poll = AsyncMock(return_value=AsyncIteratorMock([]))
+            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
             mock_poller.poll_once = AsyncMock(return_value=[detected_cycle])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = "implement_task"
@@ -520,7 +520,7 @@ class TestMetricsRecording:
 
         def create_poller(*_args, **_kwargs):
             mock_poller = MagicMock()
-            mock_poller.poll = AsyncMock(return_value=AsyncIteratorMock([]))
+            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
             mock_poller.poll_once = AsyncMock(return_value=[detected_cycle])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = "implement_task"
@@ -586,7 +586,7 @@ class TestStepNamePathOrganization:
             nonlocal captured_step_name
             captured_step_name = step_name
             mock_poller = MagicMock()
-            mock_poller.poll = AsyncMock(return_value=AsyncIteratorMock([]))
+            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
             mock_poller.poll_once = AsyncMock(return_value=[])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = step_name
@@ -637,7 +637,7 @@ class TestStepNamePathOrganization:
 
         def create_poller(**kwargs):
             mock_poller = MagicMock()
-            mock_poller.poll = AsyncMock(return_value=AsyncIteratorMock([]))
+            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
             mock_poller.poll_once = AsyncMock(return_value=[])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = kwargs.get("step_name", "")
@@ -1102,7 +1102,7 @@ class TestSweepIntegrationWithRun:
             mock_poller = MagicMock()
             # Poller returns no files during polling and poll_once
             # (simulating fast exit where files are written after polling stops)
-            mock_poller.poll = AsyncMock(return_value=AsyncIteratorMock([]))
+            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
             mock_poller.poll_once = AsyncMock(return_value=[])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = kwargs.get("step_name", "")
@@ -1172,7 +1172,7 @@ class TestSweepIntegrationWithRun:
 
         def create_poller(**kwargs):
             mock_poller = MagicMock()
-            mock_poller.poll = AsyncMock(return_value=AsyncIteratorMock([]))
+            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
             mock_poller.poll_once = AsyncMock(return_value=[])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = kwargs.get("step_name", "")

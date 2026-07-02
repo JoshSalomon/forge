@@ -509,7 +509,7 @@ class ContainerRunner:
             collected_cycles: List to aggregate detected cycles into.
         """
         try:
-            async for new_cycles in await poller.poll():
+            async for new_cycles in poller.poll():
                 for cycle in new_cycles:
                     collected_cycles.append(cycle)
 

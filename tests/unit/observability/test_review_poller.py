@@ -495,7 +495,7 @@ class TestAsyncIteration:
             settings=mock_settings,
         )
 
-        iterator = await poller.poll()
+        iterator = poller.poll()
         assert iterator is poller
         assert poller._running is True
 
@@ -509,7 +509,7 @@ class TestAsyncIteration:
             settings=mock_settings,
         )
 
-        await poller.poll()
+        poller.poll()
         poller.stop()
         assert poller._running is False
 
@@ -526,7 +526,7 @@ class TestAsyncIteration:
             settings=mock_settings,
         )
 
-        await poller.poll()
+        poller.poll()
 
         with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             result = await poller.__anext__()
@@ -555,7 +555,7 @@ class TestAsyncIteration:
         results = []
         iteration_count = 0
 
-        async for new_cycles in await poller.poll():
+        async for new_cycles in poller.poll():
             iteration_count += 1
             results.extend(new_cycles)
             if iteration_count >= 2:  # Stop after 2 iterations
@@ -642,7 +642,7 @@ class TestPollerIntegration:
         )
 
         # Start polling
-        await poller.poll()
+        poller.poll()
 
         # Create file after starting poll
         cycle_data = {
