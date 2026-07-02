@@ -238,7 +238,7 @@ class ReviewCyclePoller:
 
         return new_cycles
 
-    async def poll(self) -> "ReviewCyclePoller":
+    def poll(self) -> "ReviewCyclePoller":
         """Start the polling loop as an async iterator.
 
         Yields:
