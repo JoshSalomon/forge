@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from containers.review import (
+from review import (
     DEFAULT_MAX_RETRIES,
     ENV_MAX_RETRIES,
     ReviewConfig,
