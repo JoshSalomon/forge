@@ -238,14 +238,14 @@ class ReviewCyclePoller:
 
         return new_cycles
 
-    def poll(self) -> "ReviewCyclePoller":
+    async def poll(self) -> "ReviewCyclePoller":
         """Start the polling loop as an async iterator.
 
         Yields:
             List of newly detected ReviewCycleData objects on each poll.
 
         Usage:
-            async for new_cycles in poller.poll():
+            async for new_cycles in await poller.poll():
                 for cycle in new_cycles:
                     process(cycle)
         """
