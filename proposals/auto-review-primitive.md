@@ -333,6 +333,154 @@ The orchestrator could warn when a skill runs on an untested model. This is a se
 
 A review.md could reference criteria from other skills or shared review libraries. For example, a "security review" skill could be applied as a reviewer to any implementation skill.
 
+## Addendum: Review Exhaustion Reporting in PR Body
+
+**Date:** 2026-07-06
+**Decision:** Review exhaustion does NOT block the workflow. Instead, unresolved review failures are collected across all tasks and surfaced in the PR body.
+
+### Motivation
+
+When a review loop exhausts `max_retries` without approval, the container exits with success (code 0) and the workflow proceeds. The reviewer's feedback is valuable context for human PR reviewers — they should see what the auto-reviewer flagged but the agent couldn't fix.
+
+### Design
+
+#### Data flow
+
+1. **Container** writes review cycle JSON files to `.forge/{step-name}/review_cycle_N.json` (existing)
+2. **Orchestrator** polls and collects cycles into `ContainerResult.review_cycles` (existing)
+3. **`ContainerResult`** includes an `exhausted` flag — `True` when the final cycle's verdict is `rejected` (set by `ContainerRunner` automatically)
+4. **Any workflow node** that runs a container calls a shared utility function `collect_review_exhaustion()` to append exhaustion data to the state
+5. **PR creation node** reads `review_exhaustion_report` from state and injects a section into the PR body
+
+#### State field
+
+```python
+class PRIntegrationState(TypedDict, total=False):
+    # ... existing fields ...
+    review_exhaustion_report: Annotated[list[dict[str, Any]], operator.add]
+```
+
+Using `Annotated[list, operator.add]` so each task's exhaustion data appends to the list across multiple sequential task implementations (LangGraph's standard accumulation pattern).
+
+Each entry:
+
+```python
+{
+    "task_key": "AISOS-2053",
+    "step_name": "implement_task",
+    "skill": "implement-task",
+    "max_retries": 3,
+    "final_feedback": "Missing test coverage for parse_verdict()",
+    "cycles": [
+        {"cycle": 1, "verdict": "rejected", "feedback": "No tests for parse_verdict()"},
+        {"cycle": 2, "verdict": "rejected", "feedback": "Test added but doesn't cover edge cases"},
+        {"cycle": 3, "verdict": "rejected", "feedback": "Missing test coverage for parse_verdict()"},
+    ]
+}
+```
+
+#### ContainerResult — exhaustion detection
+
+`ContainerRunner.run()` already collects `review_cycles`. After polling/sweep, it checks if the review exhausted:
+
+```python
+@dataclass
+class ContainerResult:
+    # ... existing fields ...
+    review_cycles: list[ReviewCycleData] = field(default_factory=list)
+    review_exhausted: bool = False  # NEW: True when final cycle is rejected
+```
+
+Set automatically in `ContainerRunner.run()` after collecting cycles — no caller changes needed.
+
+#### Shared utility — `collect_review_exhaustion()`
+
+A utility function in `workflow/utils/` that any workflow node calls after a container run:
+
+```python
+# workflow/utils/review_report.py
+
+def collect_review_exhaustion(
+    container_result: ContainerResult,
+    task_key: str,
+    step_name: str,
+) -> dict[str, Any] | None:
+    """Build exhaustion report entry if review cycles exhausted.
+
+    Returns a dict to append to state['review_exhaustion_report'],
+    or None if review passed or no review ran.
+    """
+    if not container_result.review_exhausted:
+        return None
+
+    cycles = container_result.review_cycles
+    last_cycle = cycles[-1]
+    return {
+        "task_key": task_key,
+        "step_name": step_name,
+        "skill": last_cycle.skill,
+        "max_retries": last_cycle.max_cycles,
+        "final_feedback": last_cycle.feedback,
+        "cycles": [
+            {"cycle": c.cycle, "verdict": c.verdict, "feedback": c.feedback}
+            for c in cycles
+        ],
+    }
+```
+
+#### Usage in workflow nodes
+
+Any node that runs a container adds one call after getting the result. This applies to all current container-based nodes and any future nodes:
+
+```python
+# In any workflow node (implement_task, local_review, ci_fix, etc.)
+result = await container_runner.run(...)
+
+exhaustion = collect_review_exhaustion(result, task_key, step_name)
+if exhaustion:
+    state["review_exhaustion_report"].append(exhaustion)
+```
+
+This is generic — it doesn't matter which node produces the data. New nodes added in the future (custom workflow steps, user-defined tasks) follow the same one-liner pattern.
+
+#### PR body section
+
+When `review_exhaustion_report` is non-empty, `pr_creation.py` appends:
+
+```markdown
+## ⚠️ Auto-Review Notes
+
+The following review criteria could not be resolved after all retry attempts.
+Human reviewers should pay particular attention to these areas.
+
+### implement_task — AISOS-2053
+**Skill:** implement-task | **Retries:** 3/3 exhausted
+
+Final reviewer feedback:
+> Missing test coverage for parse_verdict()
+
+### implement_task — AISOS-2055
+**Skill:** implement-task | **Retries:** 2/2 exhausted
+
+Final reviewer feedback:
+> No docstring on public function detect_review_md()
+```
+
+When `review_exhaustion_report` is empty (all reviews passed or no review.md configured), no section is added.
+
+### Scope
+
+- **No graph changes** — no new nodes, no new edges
+- **No blocking** — workflow always proceeds regardless of review outcome
+- **Generic** — any container-based workflow node (current or future) can report exhaustion via the shared utility. Not limited to `implement_task` / `implement_bug_fix`
+- **Accumulates across all nodes** — multiple container invocations in a single PR (implementation, local review, CI fix, etc.) each contribute their exhaustion data
+- **Only exhaustions reported** — cycles that eventually passed are not included (they succeeded)
+- **One-liner adoption** — adding review exhaustion reporting to a new workflow node is a single function call after `container_runner.run()`
+
+### Future: `block_on_failure` option
+
+A `block_on_failure: true` frontmatter option in review.md could be added later to let specific skill authors make review exhaustion a hard gate (container exits with code 1, workflow escalates to blocked). This is deferred — the default non-blocking behavior with PR annotations covers the PoC needs.
+
 ## References
 
 - `src/forge/skills/resolver.py` — skill resolution with per-project overrides
