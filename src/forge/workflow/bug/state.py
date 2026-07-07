@@ -99,6 +99,7 @@ def create_initial_bug_state(ticket_key: str, **kwargs: Any) -> BugState:
         "repos_to_process": [],
         "repos_completed": [],
         "implemented_tasks": [],
+        "review_exhaustion_report": [],
         "current_task_key": None,
         "ci_failed_checks": [],
         "ci_skipped_checks": [],

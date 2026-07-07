@@ -1,5 +1,6 @@
 """Base workflow classes and state definitions."""
 
+import operator
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Annotated, Any, TypedDict
@@ -63,6 +64,7 @@ class PRIntegrationState(TypedDict, total=False):
     persistence_retry_count: int
     review_push_pending: bool
     review_push_pending_updates: dict[str, Any]
+    review_exhaustion_report: Annotated[list[dict[str, Any]], operator.add]
 
 
 class CIIntegrationState(TypedDict, total=False):
