@@ -12,6 +12,8 @@ from forge.workspace.git_ops import GitOperations
 from forge.workspace.manager import Workspace
 
 logger = logging.getLogger(__name__)
+
+
 async def update_documentation(state: WorkflowState) -> WorkflowState:
     """Find and update documentation files that became stale due to code changes.
 

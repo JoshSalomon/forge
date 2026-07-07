@@ -31,6 +31,8 @@ _OPTION_REQUIRED_KEYS = {"title", "description", "tradeoffs"}
 
 MAX_ANALYSIS_RETRIES = 3
 MAX_REFLECTION_ITERATIONS = 3
+
+
 async def analyze_bug(state: BugState) -> BugState:
     """Run hypothesis-driven codebase analysis and write rca.json.
 
@@ -140,6 +142,8 @@ async def analyze_bug(state: BugState) -> BugState:
 
     finally:
         await jira.close()
+
+
 def _harvest_rca_json(workspace_path: Path) -> dict:
     """Read and parse .forge/rca.json from the container workspace.
 
@@ -170,6 +174,8 @@ def _harvest_rca_json(workspace_path: Path) -> dict:
             raise ValueError(f"option[{i}] missing required keys: {missing_opt_keys}")
 
     return data
+
+
 def _format_rca_content(data: dict) -> str:
     """Build the human-readable rca_content string from the parsed rca.json."""
     loc = data.get("code_location", {})
@@ -196,6 +202,8 @@ def _format_rca_content(data: dict) -> str:
         f"## Introduced In\n{intro_str}\n\n"
         f"## Confidence\n{conf_str}"
     )
+
+
 def _format_reproducibility(data: dict) -> str:
     """Build the reproducibility_assessment string."""
     repro = data.get("reproducibility", {})
@@ -206,6 +214,8 @@ def _format_reproducibility(data: dict) -> str:
     if repro.get("test_source"):
         lines.append(f"\n```python\n{repro['test_source']}\n```")
     return "\n".join(lines)
+
+
 async def reflect_rca(state: BugState) -> BugState:
     """Validate the RCA from analyze_bug for completeness and evidence quality.
 
@@ -310,6 +320,8 @@ async def reflect_rca(state: BugState) -> BugState:
 
     finally:
         await jira.close()
+
+
 def _extract_reflection_verdict(workspace_path: Path, task_key: str, stdout: str) -> str:
     """Read the reflector's final assistant message, falling back to stdout.
 
@@ -333,6 +345,8 @@ def _extract_reflection_verdict(workspace_path: Path, task_key: str, stdout: str
             logger.warning(f"Could not read reflection history {history_file}: {e}")
 
     return (stdout or "").strip()
+
+
 def _stringify_message_content(content: object) -> str:
     """Convert LangChain message content variants into plain text."""
     if isinstance(content, str):

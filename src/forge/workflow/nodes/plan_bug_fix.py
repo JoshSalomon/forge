@@ -31,6 +31,8 @@ __all__ = [
     "regenerate_plan",
     "decompose_plan",
 ]
+
+
 async def plan_bug_fix(state: BugState) -> BugState:
     """Run container to produce a concrete bug fix plan.
 
@@ -44,6 +46,8 @@ async def plan_bug_fix(state: BugState) -> BugState:
         Updated state with plan_content set and current_node=plan_approval_gate.
     """
     return await _run_plan_container(state, "plan-bug-fix", retry_node="plan_bug_fix")
+
+
 async def regenerate_plan(state: BugState) -> BugState:
     """Regenerate bug fix plan based on user feedback.
 
@@ -64,6 +68,8 @@ async def regenerate_plan(state: BugState) -> BugState:
             "revision_requested": False,
         }
     return result
+
+
 async def _run_plan_container(
     state: BugState,
     prompt_name: str,
@@ -176,6 +182,8 @@ async def _run_plan_container(
 
     finally:
         await jira.close()
+
+
 def _harvest_plan(workspace_path: Path) -> str:
     """Read .forge/plan.md from the container workspace.
 
@@ -190,6 +198,8 @@ def _harvest_plan(workspace_path: Path) -> str:
     if not content.strip():
         raise ValueError("plan.md is empty")
     return content
+
+
 def _truncate_plan_comment(plan_content: str, max_chars: int = _MAX_COMMENT_CHARS) -> str:
     """Truncate plan comment at last paragraph boundary before the character limit."""
     if len(plan_content) <= max_chars:
@@ -202,6 +212,8 @@ def _truncate_plan_comment(plan_content: str, max_chars: int = _MAX_COMMENT_CHAR
         truncated = truncated[:last_para]
 
     return truncated + "\n\n" + _TRUNCATION_NOTE
+
+
 def plan_approval_gate(state: BugState) -> BugState:
     """Pause and wait for plan approval.
 
@@ -212,6 +224,8 @@ def plan_approval_gate(state: BugState) -> BugState:
         State with is_paused=True and current_node=plan_approval_gate.
     """
     return set_paused(state, "plan_approval_gate")
+
+
 def route_plan_approval(state: BugState) -> str:
     """Route after plan approval gate resumes.
 
@@ -237,6 +251,8 @@ def route_plan_approval(state: BugState) -> str:
         return "regenerate_plan"
 
     return "decompose_plan"
+
+
 async def decompose_plan(state: BugState) -> BugState:
     """Decompose approved plan into per-repo Jira tasks.
 
