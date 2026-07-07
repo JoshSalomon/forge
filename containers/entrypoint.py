@@ -222,13 +222,13 @@ def git_commit(workspace: Path, message: str) -> bool:
             capture_output=True,
         )
         if ls_result.returncode != 0:
-            logger.warning(f"git ls-files failed: {ls_result.stderr}")
-            new_files = []
-        else:
-            new_files = [
-                f for f in ls_result.stdout.split(b"\0")
-                if f and not f.startswith(b".forge/") and f != b".forge"
-            ]
+            logger.error(f"git ls-files failed: {ls_result.stderr}")
+            return False
+
+        new_files = [
+            f for f in ls_result.stdout.split(b"\0")
+            if f and not f.startswith(b".forge/") and f != b".forge"
+        ]
         if new_files:
             result = subprocess.run(
                 ["git", "add", "--"] + [f.decode("utf-8", errors="surrogateescape") for f in new_files],
