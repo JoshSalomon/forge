@@ -215,19 +215,23 @@ def git_commit(workspace: Path, message: str) -> bool:
             return False
 
         # Stage new untracked files (respects .gitignore, explicitly skips .forge/)
+        # Use -z for null-byte separators — safe for non-ASCII and special characters
         ls_result = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
+            ["git", "ls-files", "-z", "--others", "--exclude-standard"],
             cwd=workspace,
             capture_output=True,
-            text=True,
         )
-        new_files = [
-            f for f in ls_result.stdout.strip().split("\n")
-            if f and not f.startswith(".forge/") and f != ".forge"
-        ]
+        if ls_result.returncode != 0:
+            logger.warning(f"git ls-files failed: {ls_result.stderr}")
+            new_files = []
+        else:
+            new_files = [
+                f for f in ls_result.stdout.split(b"\0")
+                if f and not f.startswith(b".forge/") and f != b".forge"
+            ]
         if new_files:
             result = subprocess.run(
-                ["git", "add", "--"] + new_files,
+                ["git", "add", "--"] + [f.decode("utf-8", errors="surrogateescape") for f in new_files],
                 cwd=workspace,
                 capture_output=True,
                 text=True,

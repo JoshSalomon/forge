@@ -41,3 +41,53 @@ def test_git_commit_excludes_forge_directory(tmp_path):
     tracked = _git(tmp_path, "ls-files").stdout.splitlines()
     assert "code.txt" in tracked
     assert ".forge/handoff.md" not in tracked
+
+
+def test_git_commit_with_gitignore_and_forge_dir(tmp_path):
+    """git_commit succeeds when .forge/ is in .gitignore and exists on disk."""
+    entrypoint = _load_entrypoint_module()
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.name", "Forge Test")
+    _git(tmp_path, "config", "user.email", "forge-test@example.com")
+
+    (tmp_path / ".gitignore").write_text(".forge/\n")
+    (tmp_path / "initial.txt").write_text("initial\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "init")
+
+    # Simulate container: .forge/ exists with files, and agent left changes
+    forge_dir = tmp_path / ".forge"
+    forge_dir.mkdir()
+    (forge_dir / "history" / "TASK-1.json").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".forge" / "task.json").write_text('{"task_key": "TASK-1"}')
+    (tmp_path / "code.py").write_text("def hello(): pass\n")
+
+    assert entrypoint.git_commit(tmp_path, "test commit") is True
+
+    tracked = _git(tmp_path, "ls-files").stdout.splitlines()
+    assert "code.py" in tracked
+    assert ".forge/task.json" not in tracked
+
+
+def test_git_commit_handles_non_ascii_filenames(tmp_path):
+    """git_commit correctly stages files with non-ASCII names."""
+    entrypoint = _load_entrypoint_module()
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.name", "Forge Test")
+    _git(tmp_path, "config", "user.email", "forge-test@example.com")
+
+    (tmp_path / "initial.txt").write_text("initial\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "init")
+
+    # Create files with non-ASCII names
+    (tmp_path / "café.txt").write_text("coffee\n")
+    (tmp_path / "données.py").write_text("data = True\n")
+
+    assert entrypoint.git_commit(tmp_path, "non-ascii commit") is True
+
+    tracked = _git(tmp_path, "ls-files").stdout.splitlines()
+    # git ls-files may quote non-ASCII — check the files are committed
+    log = _git(tmp_path, "log", "--oneline", "--name-only", "-1").stdout
+    assert "café.txt" in log or "caf" in log
+    assert "données.py" in log or "donn" in log
