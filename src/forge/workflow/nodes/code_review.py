@@ -68,6 +68,7 @@ async def run_post_change_review(
             task_key=f"{ticket_key}-review-{label}",
             repo_name=current_repo,
             step_name="code_review",
+            skill_name="review-code",
         )
 
         git = GitOperations(

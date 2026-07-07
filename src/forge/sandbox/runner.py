@@ -561,6 +561,7 @@ class ContainerRunner:
         previous_task_keys: list[str] | None = None,
         trace_context: dict[str, Any] | None = None,
         step_name: str | None = None,
+        skill_name: str | None = None,
     ) -> ContainerResult:
         """Run a task in a container sandbox.
 
@@ -593,6 +594,7 @@ class ContainerRunner:
             "description": task_description,
             "previous_task_keys": previous_task_keys or [],
             "trace_context": trace_context or {},
+            "skill_name": skill_name or "",
         }
         task_file.write_text(json.dumps(task_data, indent=2))
 

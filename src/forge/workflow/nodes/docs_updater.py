@@ -60,6 +60,7 @@ async def update_documentation(state: WorkflowState) -> WorkflowState:
             task_key=f"{ticket_key}-docs",
             repo_name=current_repo,
             step_name="update_docs",
+            skill_name="update-docs",
         )
 
         exhaustion = collect_review_exhaustion(result, ticket_key, "update_docs")
