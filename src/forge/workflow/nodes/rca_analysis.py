@@ -105,6 +105,7 @@ async def analyze_bug(state: BugState) -> BugState:
                 ticket_key=ticket_key,
                 task_key=f"{ticket_key}-analysis",
                 step_name="analyze_bug",
+                skill_name="analyze-bug",
             )
 
             exhaustion = collect_review_exhaustion(result, ticket_key, "analyze_bug")
@@ -256,6 +257,7 @@ async def reflect_rca(state: BugState) -> BugState:
                 ticket_key=ticket_key,
                 task_key=task_key,
                 step_name="reflect_rca",
+                skill_name="reflect-rca",
             )
 
             exhaustion = collect_review_exhaustion(result, ticket_key, "reflect_rca")
