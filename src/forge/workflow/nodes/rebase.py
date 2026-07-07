@@ -21,6 +21,8 @@ from forge.workflow.utils.jira_status import post_status_comment
 from forge.workspace.git_ops import GitOperations
 
 logger = logging.getLogger(__name__)
+
+
 async def rebase_pr(state: WorkflowState) -> WorkflowState:
     """Merge main into the PR branch, resolving conflicts with AI if needed.
 

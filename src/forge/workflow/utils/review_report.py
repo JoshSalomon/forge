@@ -36,7 +36,6 @@ def collect_review_exhaustion(
         "max_retries": last_cycle.max_cycles,
         "final_feedback": last_cycle.feedback,
         "cycles": [
-            {"cycle": c.cycle, "verdict": c.verdict, "feedback": c.feedback}
-            for c in cycles
+            {"cycle": c.cycle, "verdict": c.verdict, "feedback": c.feedback} for c in cycles
         ],
     }

@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 MAX_REVIEW_ATTEMPTS = 2
 _QUALITATIVE_CAP = 2
 _VALID_VERDICTS = {"adequate", "tests_incomplete", "symptom_only"}
+
+
 def _validate_pass_number(value: int | None) -> int | None:
     if value is None:
         return None
@@ -45,6 +47,8 @@ def _validate_pass_number(value: int | None) -> int | None:
         logger.warning(f"Invalid pass_number value: {value}, expected positive integer >= 1")
         return None
     return value
+
+
 def _parse_bug_verdict(output: str) -> tuple[str, str]:
     """Parse verdict and feedback from bug local review output.
 
@@ -63,7 +67,6 @@ def _parse_bug_verdict(output: str) -> tuple[str, str]:
     return parse_review_verdict(output, valid_verdicts=_VALID_VERDICTS)
 
 
-
 def route_local_review(state: WorkflowState) -> str:
     """Route from local_review based on bug verdict and retry count.
 
@@ -79,6 +82,8 @@ def route_local_review(state: WorkflowState) -> str:
         Next node name: 'create_pr' or 'implement_bug_fix'.
     """
     return state.get("current_node", "create_pr")
+
+
 async def local_review_changes(state: WorkflowState) -> WorkflowState:
     """Review implemented changes locally and fix breaking issues before PR creation.
 
@@ -394,6 +399,8 @@ async def _run_feature_review(state: WorkflowState, git: GitOperations) -> Workf
                 "last_error": None,
             }
         )
+
+
 def _has_unfixed_breaking_issues(output: str) -> bool:
     """Check if the review output indicates unfixed breaking issues remain."""
     lower = output.lower()
