@@ -232,6 +232,13 @@ async def create_pull_request(state: WorkflowState) -> WorkflowState:
         if not pr_body:
             pr_body = _build_pr_body(state, implemented_tasks)
 
+        # Append auto-review exhaustion section if any reviews failed
+        exhaustion_section = _format_review_exhaustion_section(
+            state.get("review_exhaustion_report", [])
+        )
+        if exhaustion_section:
+            pr_body = pr_body + "\n\n" + exhaustion_section
+
         project_key = ticket_key.split("-")[0] if "-" in ticket_key else ticket_key
         is_draft = await jira.is_repo_draft(project_key, current_repo)
 
@@ -339,6 +346,37 @@ def _get_pr_title(state: WorkflowState, ticket_summary: str = "") -> str:
         or context.get("summary")
         or f"Implementation for {state.get('ticket_key', 'Unknown')}"
     )
+
+
+def _format_review_exhaustion_section(report: list[dict]) -> str:
+    """Format review exhaustion data as a markdown section for the PR body."""
+    if not report:
+        return ""
+
+    lines = [
+        "## Auto-Review Notes",
+        "",
+        "The following review criteria could not be resolved after all retry attempts.",
+        "Human reviewers should pay particular attention to these areas.",
+        "",
+    ]
+
+    for entry in report:
+        step = entry.get("step_name", "unknown")
+        task = entry.get("task_key", "unknown")
+        skill = entry.get("skill", "unknown")
+        max_retries = entry.get("max_retries", "?")
+        feedback = entry.get("final_feedback", "")
+
+        lines.append(f"### {step} — {task}")
+        lines.append(f"**Skill:** {skill} | **Retries:** {max_retries}/{max_retries} exhausted")
+        lines.append("")
+        if feedback:
+            for feedback_line in feedback.split("\n"):
+                lines.append(f"> {feedback_line}")
+            lines.append("")
+
+    return "\n".join(lines)
 
 
 def _build_pr_body(

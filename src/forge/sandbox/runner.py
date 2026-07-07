@@ -99,6 +99,14 @@ class ContainerResult:
         """Check if tests specifically failed."""
         return self.exit_code == EXIT_TESTS_FAILED
 
+    @property
+    def review_exhausted(self) -> bool:
+        """Check if the review loop exhausted all retries without approval."""
+        if not self.review_cycles:
+            return False
+        last = self.review_cycles[-1]
+        return last.verdict == "rejected" and last.cycle >= last.max_cycles
+
 
 @dataclass
 class ContainerConfig:

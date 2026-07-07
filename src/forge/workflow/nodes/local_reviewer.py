@@ -21,7 +21,7 @@ from forge.workflow.nodes.review_utils import (
     run_review_container,
 )
 from forge.workflow.nodes.workspace_setup import prepare_workspace
-from forge.workflow.utils import update_state_timestamp
+from forge.workflow.utils import collect_review_exhaustion, update_state_timestamp
 from forge.workflow.utils.jira_status import post_status_comment
 from forge.workspace.git_ops import GitOperations
 
@@ -30,8 +30,6 @@ logger = logging.getLogger(__name__)
 MAX_REVIEW_ATTEMPTS = 2
 _QUALITATIVE_CAP = 2
 _VALID_VERDICTS = {"adequate", "tests_incomplete", "symptom_only"}
-
-
 def _validate_pass_number(value: int | None) -> int | None:
     if value is None:
         return None
@@ -47,8 +45,6 @@ def _validate_pass_number(value: int | None) -> int | None:
         logger.warning(f"Invalid pass_number value: {value}, expected positive integer >= 1")
         return None
     return value
-
-
 def _parse_bug_verdict(output: str) -> tuple[str, str]:
     """Parse verdict and feedback from bug local review output.
 
@@ -67,6 +63,7 @@ def _parse_bug_verdict(output: str) -> tuple[str, str]:
     return parse_review_verdict(output, valid_verdicts=_VALID_VERDICTS)
 
 
+
 def route_local_review(state: WorkflowState) -> str:
     """Route from local_review based on bug verdict and retry count.
 
@@ -82,8 +79,6 @@ def route_local_review(state: WorkflowState) -> str:
         Next node name: 'create_pr' or 'implement_bug_fix'.
     """
     return state.get("current_node", "create_pr")
-
-
 async def local_review_changes(state: WorkflowState) -> WorkflowState:
     """Review implemented changes locally and fix breaking issues before PR creation.
 
@@ -171,7 +166,7 @@ async def _run_bug_review(state: WorkflowState, git: GitOperations) -> WorkflowS
 
     try:
         runner = ContainerRunner(settings)
-        _, output = await run_review_container(
+        result, output = await run_review_container(
             runner,
             workspace_path=Path(workspace_path),
             task_summary="Qualitative bug review — root cause and test coverage",
@@ -181,6 +176,10 @@ async def _run_bug_review(state: WorkflowState, git: GitOperations) -> WorkflowS
             task_key=f"{ticket_key}-qualreview",
             repo_name=current_repo,
         )
+
+        exhaustion = collect_review_exhaustion(result, ticket_key, "local_review")
+        if exhaustion:
+            state = {**state, "review_exhaustion_report": [exhaustion]}
 
         if git.has_uncommitted_changes():
             git.stage_all()
@@ -258,6 +257,7 @@ async def _run_bug_review(state: WorkflowState, git: GitOperations) -> WorkflowS
         )
 
 
+
 async def _run_feature_review(state: WorkflowState, git: GitOperations) -> WorkflowState:
     """Run mechanical local review for non-bug tickets (existing behavior)."""
     ticket_key = state["ticket_key"]
@@ -328,7 +328,7 @@ async def _run_feature_review(state: WorkflowState, git: GitOperations) -> Workf
 
     try:
         runner = ContainerRunner(settings)
-        _, output = await run_review_container(
+        result, output = await run_review_container(
             runner,
             workspace_path=Path(workspace_path),
             task_summary="Local code review — fix breaking issues",
@@ -338,6 +338,10 @@ async def _run_feature_review(state: WorkflowState, git: GitOperations) -> Workf
             repo_name=current_repo,
             step_name="local_review",
         )
+
+        exhaustion = collect_review_exhaustion(result, ticket_key, "local_review")
+        if exhaustion:
+            state = {**state, "review_exhaustion_report": [exhaustion]}
 
         if git.has_uncommitted_changes():
             git.stage_all()
@@ -390,8 +394,6 @@ async def _run_feature_review(state: WorkflowState, git: GitOperations) -> Workf
                 "last_error": None,
             }
         )
-
-
 def _has_unfixed_breaking_issues(output: str) -> bool:
     """Check if the review output indicates unfixed breaking issues remain."""
     lower = output.lower()

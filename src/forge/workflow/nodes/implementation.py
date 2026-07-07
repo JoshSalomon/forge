@@ -25,7 +25,7 @@ from forge.workflow.nodes.git_persistence import (
     push_to_fork_with_retry,
 )
 from forge.workflow.nodes.workspace_setup import prepare_workspace
-from forge.workflow.utils import update_state_timestamp
+from forge.workflow.utils import collect_review_exhaustion, update_state_timestamp
 from forge.workflow.utils.jira_status import post_status_comment
 from forge.workspace.git_ops import GitOperations
 
@@ -210,6 +210,11 @@ async def implement_task(state: WorkflowState) -> WorkflowState:
                 current_repo=current_repo,
             ),
         )
+
+        # Collect review exhaustion data (if auto-review ran and exhausted)
+        exhaustion = collect_review_exhaustion(result, current_task, "implement_task")
+        if exhaustion:
+            state = {**state, "review_exhaustion_report": [exhaustion]}
 
         if result.success:
             logger.info(f"Container completed successfully for {current_task}")
