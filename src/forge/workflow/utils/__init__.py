@@ -15,7 +15,9 @@ from forge.workflow.utils.jira_status import (
     transition_tasks_to_in_progress,
 )
 from forge.workflow.utils.qa_summary import post_qa_summary_if_needed
-from forge.workflow.utils.review_report import collect_review_exhaustion
+from forge.workflow.utils.review_report import (
+    collect_review_exhaustion as collect_review_exhaustion,
+)
 
 # Nodes whose resume mapping is identical across all workflow types.
 # Used by route_entry / route_by_ticket_type to avoid copy-pasting the same
