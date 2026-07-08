@@ -279,12 +279,14 @@ def git_commit(workspace: Path, message: str) -> bool:
             new_files = []
         else:
             new_files = [
-                f for f in ls_result.stdout.split(b"\0")
+                f
+                for f in ls_result.stdout.split(b"\0")
                 if f and not f.startswith(b".forge/") and f != b".forge"
             ]
         if new_files:
             result = subprocess.run(
-                ["git", "add", "--"] + [f.decode("utf-8", errors="surrogateescape") for f in new_files],
+                ["git", "add", "--"]
+                + [f.decode("utf-8", errors="surrogateescape") for f in new_files],
                 cwd=workspace,
                 capture_output=True,
                 text=True,
@@ -1032,10 +1034,7 @@ def main():
 
     # Check for review.md and run review loop if it exists (SC-001, SC-010)
     if skill_name:
-        # Skills are mounted at /skills/skill_0/, /skills/skill_1/, etc.
-        # Check all skill paths for the review.md
-        skills_base = Path("/skills")
-        review_md_path = detect_review_md(skill_name, task_key, skills_base)
+        review_md_path = detect_review_md(skill_name)
 
         if review_md_path:
             logger.info(f"Found review.md at {review_md_path}, starting review loop")

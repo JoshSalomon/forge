@@ -172,52 +172,67 @@ def parse_review_config(review_md_path: Path) -> ReviewConfig:
     return ReviewConfig(max_retries=max_retries, instructions=instructions)
 
 
-def detect_review_md(skill_name: str, ticket_key: str, skills_base: Path) -> Path | None:
-    """Detect the review.md file for a skill with project override precedence.
+def find_skill_file(
+    skill_name: str,
+    filename: str,
+    skill_paths: list[str] | None = None,
+) -> Path | None:
+    """Find a file within a skill directory across all mounted skill paths.
 
-    Mirrors the precedence logic from src/forge/skills/resolver.py:
-    project-specific override wins over default.
+    Searches each skill path for {skill_name}/{filename}. Later paths in the
+    list take precedence (matching the convention where project-specific skill
+    directories are mounted after defaults).
 
-    Search order:
-    1. skills/{project}/{skill_name}/review.md (project override)
-    2. skills/default/{skill_name}/review.md (default)
+    The skill paths are read from the AGENT_SKILL_PATHS environment variable
+    if not provided explicitly.
 
     Args:
-        skill_name: Name of the skill (e.g., "local-code-review").
-        ticket_key: Jira ticket key (e.g., "AISOS-123") to extract project.
-        skills_base: Base path to the skills directory.
+        skill_name: Name of the skill (e.g., "implement-task").
+        filename: File to find (e.g., "SKILL.md", "review.md").
+        skill_paths: List of skill directory paths. If None, reads from
+            AGENT_SKILL_PATHS env var.
 
     Returns:
-        Path to review.md if found, None otherwise (SC-010).
+        Path to the file if found, None otherwise.
     """
-    # Extract project key from ticket_key (e.g., "AISOS-123" -> "aisos")
-    project: str | None = None
-    if "-" in ticket_key:
-        project = ticket_key.split("-")[0].lower()
+    if skill_paths is None:
+        env_val = os.environ.get("AGENT_SKILL_PATHS", "")
+        skill_paths = [p.strip() for p in env_val.split(",") if p.strip()]
 
-    # Check project override first (if project can be extracted)
-    if project:
-        project_path = skills_base / project / skill_name / "review.md"
-        if project_path.is_file():
-            logger.debug(
-                "Found project override review.md: %s",
-                project_path,
-            )
-            return project_path
+    found: Path | None = None
+    for base in skill_paths:
+        candidate = Path(base) / skill_name / filename
+        if candidate.is_file():
+            logger.debug("Found %s at %s", filename, candidate)
+            found = candidate
 
-    # Fall back to default
-    default_path = skills_base / "default" / skill_name / "review.md"
-    if default_path.is_file():
-        logger.debug("Found default review.md: %s", default_path)
-        return default_path
+    if found is None:
+        logger.debug(
+            "No %s found for skill %r in paths: %s",
+            filename,
+            skill_name,
+            skill_paths,
+        )
 
-    # No review.md found in either location (SC-010)
-    logger.debug(
-        "No review.md found for skill %r (ticket %s)",
-        skill_name,
-        ticket_key,
-    )
-    return None
+    return found
+
+
+def detect_review_md(
+    skill_name: str,
+    skill_paths: list[str] | None = None,
+) -> Path | None:
+    """Detect the review.md file for a skill.
+
+    Delegates to find_skill_file, searching all mounted skill paths.
+
+    Args:
+        skill_name: Name of the skill (e.g., "implement-task").
+        skill_paths: Explicit skill paths to search.
+
+    Returns:
+        Path to review.md if found, None otherwise.
+    """
+    return find_skill_file(skill_name, "review.md", skill_paths)
 
 
 def parse_verdict(output_text: str) -> tuple[Verdict, str]:

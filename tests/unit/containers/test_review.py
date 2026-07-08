@@ -11,6 +11,7 @@ from review import (
     ReviewCycleData,
     Verdict,
     detect_review_md,
+    find_skill_file,
     parse_review_config,
     parse_verdict,
     write_cycle_file,
@@ -315,168 +316,146 @@ max_retries: 1
 # ---------------------------------------------------------------------------
 
 
+class TestFindSkillFile:
+    """Tests for find_skill_file — generic skill file search across mounted paths."""
+
+    def test_finds_file_in_single_path(self, tmp_path: Path):
+        skill_dir = tmp_path / "skill_0" / "implement-task"
+        skill_dir.mkdir(parents=True)
+        review_file = skill_dir / "review.md"
+        review_file.write_text("Review instructions")
+
+        result = find_skill_file("implement-task", "review.md", [str(tmp_path / "skill_0")])
+
+        assert result == review_file
+
+    def test_later_path_overrides_earlier(self, tmp_path: Path):
+        default_dir = tmp_path / "skill_0" / "implement-task"
+        default_dir.mkdir(parents=True)
+        (default_dir / "review.md").write_text("Default review")
+
+        project_dir = tmp_path / "skill_1" / "implement-task"
+        project_dir.mkdir(parents=True)
+        project_file = project_dir / "review.md"
+        project_file.write_text("Project override")
+
+        result = find_skill_file(
+            "implement-task", "review.md",
+            [str(tmp_path / "skill_0"), str(tmp_path / "skill_1")],
+        )
+
+        assert result == project_file
+        assert result.read_text() == "Project override"
+
+    def test_falls_back_to_earlier_path(self, tmp_path: Path):
+        default_dir = tmp_path / "skill_0" / "implement-task"
+        default_dir.mkdir(parents=True)
+        default_file = default_dir / "review.md"
+        default_file.write_text("Default review")
+
+        # skill_1 exists but has no review.md for this skill
+        (tmp_path / "skill_1").mkdir(parents=True)
+
+        result = find_skill_file(
+            "implement-task", "review.md",
+            [str(tmp_path / "skill_0"), str(tmp_path / "skill_1")],
+        )
+
+        assert result == default_file
+
+    def test_returns_none_when_not_found(self, tmp_path: Path):
+        (tmp_path / "skill_0").mkdir(parents=True)
+
+        result = find_skill_file(
+            "implement-task", "review.md",
+            [str(tmp_path / "skill_0")],
+        )
+
+        assert result is None
+
+    def test_returns_none_for_empty_paths(self):
+        result = find_skill_file("implement-task", "review.md", [])
+        assert result is None
+
+    def test_reads_from_env_var(self, tmp_path: Path, monkeypatch):
+        skill_dir = tmp_path / "mounted" / "implement-task"
+        skill_dir.mkdir(parents=True)
+        skill_file = skill_dir / "SKILL.md"
+        skill_file.write_text("Skill content")
+
+        monkeypatch.setenv("AGENT_SKILL_PATHS", str(tmp_path / "mounted"))
+
+        result = find_skill_file("implement-task", "SKILL.md")
+
+        assert result == skill_file
+
+    def test_finds_skill_md(self, tmp_path: Path):
+        skill_dir = tmp_path / "skills" / "implement-task"
+        skill_dir.mkdir(parents=True)
+        skill_file = skill_dir / "SKILL.md"
+        skill_file.write_text("Skill instructions")
+
+        result = find_skill_file("implement-task", "SKILL.md", [str(tmp_path / "skills")])
+
+        assert result == skill_file
+
+    def test_ignores_directory_with_same_name(self, tmp_path: Path):
+        skill_dir = tmp_path / "skills" / "edge-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "review.md").mkdir()  # directory, not file
+
+        result = find_skill_file("edge-skill", "review.md", [str(tmp_path / "skills")])
+
+        assert result is None
+
+    def test_handles_trailing_slash_in_paths(self, tmp_path: Path):
+        skill_dir = tmp_path / "skill_0" / "my-skill"
+        skill_dir.mkdir(parents=True)
+        review_file = skill_dir / "review.md"
+        review_file.write_text("Review")
+
+        result = find_skill_file("my-skill", "review.md", [str(tmp_path / "skill_0") + "/"])
+
+        assert result == review_file
+
+
 class TestDetectReviewMd:
-    """Tests for detect_review_md function with project override precedence."""
+    """Tests for detect_review_md — delegates to find_skill_file."""
 
-    def test_returns_project_override_when_both_exist(self, tmp_path: Path):
-        """SC-006: Project override wins when both default and project exist."""
-        skills_base = tmp_path / "skills"
+    def test_finds_review_md_via_skill_paths(self, tmp_path: Path):
+        skill_dir = tmp_path / "skill_0" / "implement-task"
+        skill_dir.mkdir(parents=True)
+        review_file = skill_dir / "review.md"
+        review_file.write_text("Review instructions")
 
-        # Create default skill review.md
-        default_dir = skills_base / "default" / "local-code-review"
-        default_dir.mkdir(parents=True)
-        default_review = default_dir / "review.md"
-        default_review.write_text("Default instructions")
+        result = detect_review_md(
+            "implement-task",
+            skill_paths=[str(tmp_path / "skill_0")],
+        )
 
-        # Create project override review.md
-        project_dir = skills_base / "aisos" / "local-code-review"
-        project_dir.mkdir(parents=True)
-        project_review = project_dir / "review.md"
-        project_review.write_text("Project override instructions")
+        assert result == review_file
 
-        result = detect_review_md("local-code-review", "AISOS-123", skills_base)
+    def test_returns_none_when_not_found(self, tmp_path: Path):
+        (tmp_path / "skill_0").mkdir(parents=True)
 
-        assert result == project_review
-        assert result.read_text() == "Project override instructions"
-
-    def test_returns_default_when_only_default_exists(self, tmp_path: Path):
-        """Returns default path when no project override exists."""
-        skills_base = tmp_path / "skills"
-
-        # Create only default skill review.md
-        default_dir = skills_base / "default" / "code-review"
-        default_dir.mkdir(parents=True)
-        default_review = default_dir / "review.md"
-        default_review.write_text("Default instructions")
-
-        result = detect_review_md("code-review", "PROJ-456", skills_base)
-
-        assert result == default_review
-        assert result.read_text() == "Default instructions"
-
-    def test_returns_none_when_no_review_md_exists(self, tmp_path: Path):
-        """SC-010: Returns None when review.md doesn't exist in either location."""
-        skills_base = tmp_path / "skills"
-
-        # Create skill directories without review.md
-        default_dir = skills_base / "default" / "test-skill"
-        default_dir.mkdir(parents=True)
-
-        project_dir = skills_base / "myproj" / "test-skill"
-        project_dir.mkdir(parents=True)
-
-        result = detect_review_md("test-skill", "MYPROJ-789", skills_base)
+        result = detect_review_md(
+            "implement-task",
+            skill_paths=[str(tmp_path / "skill_0")],
+        )
 
         assert result is None
 
-    def test_returns_none_when_skills_base_empty(self, tmp_path: Path):
-        """Returns None when skills_base is empty."""
-        skills_base = tmp_path / "skills"
-        skills_base.mkdir(parents=True)
+    def test_reads_env_var_when_no_skill_paths(self, tmp_path: Path, monkeypatch):
+        skill_dir = tmp_path / "mounted" / "implement-task"
+        skill_dir.mkdir(parents=True)
+        review_file = skill_dir / "review.md"
+        review_file.write_text("Review")
 
-        result = detect_review_md("any-skill", "PROJ-1", skills_base)
+        monkeypatch.setenv("AGENT_SKILL_PATHS", str(tmp_path / "mounted"))
 
-        assert result is None
+        result = detect_review_md("implement-task")
 
-    def test_project_key_extracted_and_lowercased(self, tmp_path: Path):
-        """Project key is correctly extracted and lowercased from ticket_key."""
-        skills_base = tmp_path / "skills"
-
-        # Create project skill with lowercase directory
-        project_dir = skills_base / "myproject" / "review-skill"
-        project_dir.mkdir(parents=True)
-        project_review = project_dir / "review.md"
-        project_review.write_text("Project review")
-
-        # Ticket key has uppercase project
-        result = detect_review_md("review-skill", "MYPROJECT-999", skills_base)
-
-        assert result == project_review
-
-    def test_handles_ticket_key_without_hyphen(self, tmp_path: Path):
-        """Falls back to default when ticket_key has no hyphen (no project)."""
-        skills_base = tmp_path / "skills"
-
-        # Create default skill review.md
-        default_dir = skills_base / "default" / "test-skill"
-        default_dir.mkdir(parents=True)
-        default_review = default_dir / "review.md"
-        default_review.write_text("Default instructions")
-
-        result = detect_review_md("test-skill", "INVALID", skills_base)
-
-        assert result == default_review
-
-    def test_returns_none_for_ticket_without_hyphen_and_no_default(self, tmp_path: Path):
-        """Returns None when ticket has no hyphen and no default exists."""
-        skills_base = tmp_path / "skills"
-        skills_base.mkdir(parents=True)
-
-        result = detect_review_md("test-skill", "NOHYPHEN", skills_base)
-
-        assert result is None
-
-    def test_ignores_project_directory_without_review_md(self, tmp_path: Path):
-        """Falls back to default when project dir exists but has no review.md."""
-        skills_base = tmp_path / "skills"
-
-        # Create project directory without review.md
-        project_dir = skills_base / "proj" / "skill-name"
-        project_dir.mkdir(parents=True)
-        (project_dir / "other-file.txt").write_text("not review.md")
-
-        # Create default with review.md
-        default_dir = skills_base / "default" / "skill-name"
-        default_dir.mkdir(parents=True)
-        default_review = default_dir / "review.md"
-        default_review.write_text("Default review")
-
-        result = detect_review_md("skill-name", "PROJ-1", skills_base)
-
-        assert result == default_review
-
-    def test_returns_default_when_project_dir_does_not_exist(self, tmp_path: Path):
-        """Returns default when project directory doesn't exist at all."""
-        skills_base = tmp_path / "skills"
-
-        # Only create default
-        default_dir = skills_base / "default" / "my-skill"
-        default_dir.mkdir(parents=True)
-        default_review = default_dir / "review.md"
-        default_review.write_text("Default instructions")
-
-        # No project directory created
-        result = detect_review_md("my-skill", "PROJ-100", skills_base)
-
-        assert result == default_review
-
-    def test_does_not_match_directory_named_review_md(self, tmp_path: Path):
-        """Ensures we check for file, not directory named review.md."""
-        skills_base = tmp_path / "skills"
-
-        # Create a directory named review.md (edge case)
-        default_dir = skills_base / "default" / "edge-skill"
-        default_dir.mkdir(parents=True)
-        (default_dir / "review.md").mkdir()  # This is a directory, not a file
-
-        result = detect_review_md("edge-skill", "TEST-1", skills_base)
-
-        assert result is None
-
-    def test_multi_hyphen_ticket_key(self, tmp_path: Path):
-        """Correctly extracts project from ticket keys with multiple hyphens."""
-        skills_base = tmp_path / "skills"
-
-        # Create project skill
-        project_dir = skills_base / "proj" / "multi-hyphen-skill"
-        project_dir.mkdir(parents=True)
-        project_review = project_dir / "review.md"
-        project_review.write_text("Project review")
-
-        # Skill name also has hyphens, ticket key is "PROJ-123"
-        result = detect_review_md("multi-hyphen-skill", "PROJ-123", skills_base)
-
-        assert result == project_review
+        assert result == review_file
 
 
 # ---------------------------------------------------------------------------
