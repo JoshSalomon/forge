@@ -676,9 +676,9 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "implement", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "implement", cycle_data)
 
-        step_dir = workspace / ".forge" / "implement"
+        step_dir = workspace / ".forge" / "reviews" / "TEST-1__implement"
         assert step_dir.exists()
         assert step_dir.is_dir()
 
@@ -697,10 +697,10 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "my-step", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "my-step", cycle_data)
 
         assert (workspace / ".forge").exists()
-        assert (workspace / ".forge" / "my-step").exists()
+        assert (workspace / ".forge" / "reviews" / "TEST-1__my-step").exists()
 
     def test_writes_review_cycle_n_json(self, tmp_path: Path):
         """File written to .forge/{step_name}/review_cycle_N.json."""
@@ -717,9 +717,9 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "step-name", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "step-name", cycle_data)
 
-        output_file = workspace / ".forge" / "step-name" / "review_cycle_2.json"
+        output_file = workspace / ".forge" / "reviews" / "TEST-1__step-name" / "review_cycle_2.json"
         assert output_file.exists()
         assert output_file.is_file()
 
@@ -738,9 +738,9 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "implement", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "implement", cycle_data)
 
-        output_file = workspace / ".forge" / "implement" / "review_cycle_1.json"
+        output_file = workspace / ".forge" / "reviews" / "TEST-1__implement" / "review_cycle_1.json"
         data = json.loads(output_file.read_text(encoding="utf-8"))
 
         assert data["cycle"] == 1
@@ -767,9 +767,9 @@ class TestWriteCycleFile:
             timestamp="2024-06-20T14:30:45Z",
         )
 
-        write_cycle_file(workspace, "step", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "step", cycle_data)
 
-        output_file = workspace / ".forge" / "step" / "review_cycle_1.json"
+        output_file = workspace / ".forge" / "reviews" / "TEST-1__step" / "review_cycle_1.json"
         data = json.loads(output_file.read_text(encoding="utf-8"))
 
         # Verify timestamp format preserved
@@ -790,9 +790,9 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "step", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "step", cycle_data)
 
-        output_file = workspace / ".forge" / "step" / "review_cycle_1.json"
+        output_file = workspace / ".forge" / "reviews" / "TEST-1__step" / "review_cycle_1.json"
         data = json.loads(output_file.read_text(encoding="utf-8"))
 
         assert data["verdict"] == "approved"
@@ -813,9 +813,9 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "step", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "step", cycle_data)
 
-        output_file = workspace / ".forge" / "step" / "review_cycle_1.json"
+        output_file = workspace / ".forge" / "reviews" / "TEST-1__step" / "review_cycle_1.json"
         data = json.loads(output_file.read_text(encoding="utf-8"))
 
         assert data["verdict"] == "rejected"
@@ -836,9 +836,9 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "step", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "step", cycle_data)
 
-        output_file = workspace / ".forge" / "step" / "review_cycle_1.json"
+        output_file = workspace / ".forge" / "reviews" / "TEST-1__step" / "review_cycle_1.json"
         data = json.loads(output_file.read_text(encoding="utf-8"))
 
         assert data["verdict"] == "approved"
@@ -858,9 +858,9 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "step", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "step", cycle_data)
 
-        output_file = workspace / ".forge" / "step" / "review_cycle_1.json"
+        output_file = workspace / ".forge" / "reviews" / "TEST-1__step" / "review_cycle_1.json"
         data = json.loads(output_file.read_text(encoding="utf-8"))
 
         assert data["verdict"] == "rejected"
@@ -898,19 +898,19 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:40:00Z",
         )
 
-        write_cycle_file(workspace, "impl", cycle1)
-        write_cycle_file(workspace, "impl", cycle2)
-        write_cycle_file(workspace, "impl", cycle3)
+        write_cycle_file(workspace, "TEST-1", "impl", cycle1)
+        write_cycle_file(workspace, "TEST-1", "impl", cycle2)
+        write_cycle_file(workspace, "TEST-1", "impl", cycle3)
 
         # All three files should exist
-        assert (workspace / ".forge" / "impl" / "review_cycle_1.json").exists()
-        assert (workspace / ".forge" / "impl" / "review_cycle_2.json").exists()
-        assert (workspace / ".forge" / "impl" / "review_cycle_3.json").exists()
+        assert (workspace / ".forge" / "reviews" / "TEST-1__impl" / "review_cycle_1.json").exists()
+        assert (workspace / ".forge" / "reviews" / "TEST-1__impl" / "review_cycle_2.json").exists()
+        assert (workspace / ".forge" / "reviews" / "TEST-1__impl" / "review_cycle_3.json").exists()
 
         # Verify content of each
-        data1 = json.loads((workspace / ".forge" / "impl" / "review_cycle_1.json").read_text())
-        data2 = json.loads((workspace / ".forge" / "impl" / "review_cycle_2.json").read_text())
-        data3 = json.loads((workspace / ".forge" / "impl" / "review_cycle_3.json").read_text())
+        data1 = json.loads((workspace / ".forge" / "reviews" / "TEST-1__impl" / "review_cycle_1.json").read_text())
+        data2 = json.loads((workspace / ".forge" / "reviews" / "TEST-1__impl" / "review_cycle_2.json").read_text())
+        data3 = json.loads((workspace / ".forge" / "reviews" / "TEST-1__impl" / "review_cycle_3.json").read_text())
 
         assert data1["verdict"] == "rejected"
         assert data2["verdict"] == "rejected"
@@ -931,9 +931,9 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "step", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "step", cycle_data)
 
-        output_file = workspace / ".forge" / "step" / "review_cycle_1.json"
+        output_file = workspace / ".forge" / "reviews" / "TEST-1__step" / "review_cycle_1.json"
         content = output_file.read_text(encoding="utf-8")
 
         # Should have newlines (pretty printed)
@@ -956,7 +956,7 @@ class TestWriteCycleFile:
             elapsed_seconds=5.0,
             timestamp="2024-01-15T10:30:00Z",
         )
-        write_cycle_file(workspace, "step", cycle_data1)
+        write_cycle_file(workspace, "TEST-1", "step", cycle_data1)
 
         # Overwrite with second version
         cycle_data2 = ReviewCycleData(
@@ -968,9 +968,9 @@ class TestWriteCycleFile:
             elapsed_seconds=8.0,
             timestamp="2024-01-15T10:35:00Z",
         )
-        write_cycle_file(workspace, "step", cycle_data2)
+        write_cycle_file(workspace, "TEST-1", "step", cycle_data2)
 
-        output_file = workspace / ".forge" / "step" / "review_cycle_1.json"
+        output_file = workspace / ".forge" / "reviews" / "TEST-1__step" / "review_cycle_1.json"
         data = json.loads(output_file.read_text(encoding="utf-8"))
 
         # Should have the updated values
@@ -993,9 +993,9 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "step", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "step", cycle_data)
 
-        output_file = workspace / ".forge" / "step" / "review_cycle_1.json"
+        output_file = workspace / ".forge" / "reviews" / "TEST-1__step" / "review_cycle_1.json"
         data = json.loads(output_file.read_text(encoding="utf-8"))
 
         assert data["feedback"] == ""
@@ -1020,9 +1020,9 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "step", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "step", cycle_data)
 
-        output_file = workspace / ".forge" / "step" / "review_cycle_1.json"
+        output_file = workspace / ".forge" / "reviews" / "TEST-1__step" / "review_cycle_1.json"
         data = json.loads(output_file.read_text(encoding="utf-8"))
 
         assert data["feedback"] == multiline_feedback
@@ -1044,9 +1044,9 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "step", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "step", cycle_data)
 
-        output_file = workspace / ".forge" / "step" / "review_cycle_1.json"
+        output_file = workspace / ".forge" / "reviews" / "TEST-1__step" / "review_cycle_1.json"
         data = json.loads(output_file.read_text(encoding="utf-8"))
 
         assert data["feedback"] == 'Fix "quotes", <tags>, and unicode: émoji 🎉'
@@ -1066,9 +1066,9 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "step", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "step", cycle_data)
 
-        output_file = workspace / ".forge" / "step" / "review_cycle_1.json"
+        output_file = workspace / ".forge" / "reviews" / "TEST-1__step" / "review_cycle_1.json"
         data = json.loads(output_file.read_text(encoding="utf-8"))
 
         assert data["elapsed_seconds"] == 123.456789
@@ -1088,9 +1088,9 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "local-code-review", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "local-code-review", cycle_data)
 
-        assert (workspace / ".forge" / "local-code-review" / "review_cycle_1.json").exists()
+        assert (workspace / ".forge" / "reviews" / "TEST-1__local-code-review" / "review_cycle_1.json").exists()
 
     def test_step_name_with_underscores(self, tmp_path: Path):
         """Step name with underscores is handled correctly."""
@@ -1107,6 +1107,6 @@ class TestWriteCycleFile:
             timestamp="2024-01-15T10:30:00Z",
         )
 
-        write_cycle_file(workspace, "my_step_name", cycle_data)
+        write_cycle_file(workspace, "TEST-1", "my_step_name", cycle_data)
 
-        assert (workspace / ".forge" / "my_step_name" / "review_cycle_1.json").exists()
+        assert (workspace / ".forge" / "reviews" / "TEST-1__my_step_name" / "review_cycle_1.json").exists()

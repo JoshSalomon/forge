@@ -276,31 +276,39 @@ def parse_verdict(output_text: str) -> tuple[Verdict, str]:
     return (Verdict.REJECTED, feedback)
 
 
-def write_cycle_file(workspace: Path, step_name: str, cycle_data: ReviewCycleData) -> None:
+def review_cycle_dir_name(task_key: str, skill_name: str) -> str:
+    """Build the directory name for review cycle files.
+
+    Format: {task_key}__{skill_name} (double underscore separator).
+
+    Args:
+        task_key: Jira task key (e.g., "AISOS-2126").
+        skill_name: Skill name (e.g., "implement-task").
+
+    Returns:
+        Directory name string.
+    """
+    return f"{task_key}__{skill_name}"
+
+
+def write_cycle_file(
+    workspace: Path, task_key: str, skill_name: str, cycle_data: ReviewCycleData
+) -> None:
     """Write review cycle data to a JSON file.
 
-    Creates the directory .forge/{step_name}/ if it doesn't exist,
-    and writes review_cycle_N.json where N is the cycle number.
-
-    The JSON file contains all ReviewCycleData fields with proper formatting:
-    - cycle: Current cycle number (1-indexed)
-    - max_cycles: Maximum cycles allowed
-    - verdict: Lowercase string ("approved" or "rejected")
-    - feedback: Reviewer feedback text
-    - skill: Name of the skill that performed the review
-    - elapsed_seconds: Time taken for this review cycle
-    - timestamp: ISO 8601 UTC format timestamp
+    Creates .forge/reviews/{task_key}__{skill_name}/ and writes
+    review_cycle_N.json where N is the cycle number.
 
     Args:
         workspace: Path to the workspace root directory.
-        step_name: Name of the step (used as subdirectory name).
+        task_key: Jira task key (e.g., "AISOS-2126").
+        skill_name: Skill name (e.g., "implement-task").
         cycle_data: ReviewCycleData instance to serialize.
     """
-    # Create .forge/{step_name}/ directory if it doesn't exist
-    output_dir = workspace / ".forge" / step_name
+    dir_name = review_cycle_dir_name(task_key, skill_name)
+    output_dir = workspace / ".forge" / "reviews" / dir_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build output path: .forge/{step_name}/review_cycle_N.json
     output_file = output_dir / f"review_cycle_{cycle_data.cycle}.json"
 
     # Convert dataclass to dict

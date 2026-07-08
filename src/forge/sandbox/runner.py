@@ -426,6 +426,8 @@ class ContainerRunner:
         processed_files: set[str],
         collected_cycles: list[ReviewCycleData],
         recorder: ReviewCycleRecorder,
+        task_key: str = "",
+        skill_name: str = "",
     ) -> None:
         """Synchronous post-execution sweep for missed review cycle files.
 
@@ -435,12 +437,18 @@ class ContainerRunner:
 
         Args:
             workspace_path: Path to the workspace root.
-            step_name: Name of the step for path organization.
+            step_name: Name of the step for metrics.
             processed_files: Set of file paths already processed by the poller.
             collected_cycles: List to append newly found cycles to.
             recorder: Recorder for logging/copying detected cycles.
+            task_key: Jira task key for directory naming.
+            skill_name: Skill name for directory naming.
         """
-        cycle_dir = workspace_path / ".forge" / step_name
+        if task_key and skill_name:
+            dir_name = f"{task_key}__{skill_name}"
+            cycle_dir = workspace_path / ".forge" / "reviews" / dir_name
+        else:
+            cycle_dir = workspace_path / ".forge" / step_name
         if not cycle_dir.exists():
             return
 
@@ -624,6 +632,8 @@ class ContainerRunner:
                 poller = ReviewCyclePoller(
                     workspace_path=workspace_path,
                     step_name=step_name,
+                    task_key=task_key or "",
+                    skill_name=skill_name or "",
                     settings=self.settings,
                 )
                 # Note: recording_dir is not currently configurable.
@@ -693,6 +703,8 @@ class ContainerRunner:
                         processed_files=poller._processed_files,
                         collected_cycles=collected_cycles,
                         recorder=recorder,
+                        task_key=task_key or "",
+                        skill_name=skill_name or "",
                     )
 
             exit_code = process.returncode or 0

@@ -902,7 +902,7 @@ async def run_review_loop(
             elapsed_seconds=elapsed,
             timestamp=timestamp,
         )
-        write_cycle_file(workspace, skill_name, cycle_data)
+        write_cycle_file(workspace, task_key, skill_name, cycle_data)
 
         # On APPROVED: Exit loop successfully (SC-002)
         if verdict == Verdict.APPROVED:

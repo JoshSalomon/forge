@@ -165,7 +165,7 @@ class TestRunReviewLoop:
             mock_reviewer.assert_called_once()
 
             # Check cycle file was written
-            cycle_file = tmp_path / ".forge" / "test-skill" / "review_cycle_1.json"
+            cycle_file = tmp_path / ".forge" / "reviews" / "TEST-123__test-skill" / "review_cycle_1.json"
             assert cycle_file.exists()
             cycle_data = json.loads(cycle_file.read_text())
             assert cycle_data["verdict"] == "approved"
@@ -349,7 +349,7 @@ class TestRunReviewLoop:
             )
 
             # Check file path matches spec
-            cycle_file = tmp_path / ".forge" / "my-custom-skill" / "review_cycle_1.json"
+            cycle_file = tmp_path / ".forge" / "reviews" / "TEST-123__my-custom-skill" / "review_cycle_1.json"
             assert cycle_file.exists()
 
     @pytest.mark.asyncio
@@ -406,7 +406,7 @@ class TestRunReviewLoop:
                 review_md_path=review_md,
             )
 
-            cycle_file = tmp_path / ".forge" / "test-skill" / "review_cycle_1.json"
+            cycle_file = tmp_path / ".forge" / "reviews" / "TEST-123__test-skill" / "review_cycle_1.json"
             cycle_data = json.loads(cycle_file.read_text())
 
             # elapsed_seconds should be a positive float
@@ -442,7 +442,7 @@ class TestRunReviewLoop:
             assert result is True
 
             # Check that rejection was recorded
-            cycle_file = tmp_path / ".forge" / "test-skill" / "review_cycle_1.json"
+            cycle_file = tmp_path / ".forge" / "reviews" / "TEST-123__test-skill" / "review_cycle_1.json"
             cycle_data = json.loads(cycle_file.read_text())
             assert cycle_data["verdict"] == "rejected"
 

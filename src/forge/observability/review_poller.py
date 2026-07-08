@@ -103,17 +103,23 @@ class ReviewCyclePoller:
         self,
         workspace_path: Path,
         step_name: str,
+        task_key: str = "",
+        skill_name: str = "",
         settings: Settings | None = None,
     ):
         """Initialize the review cycle poller.
 
         Args:
             workspace_path: Path to the workspace root (where .forge/ is located).
-            step_name: Name of the step (e.g., "implement_task") for path detection.
+            step_name: Name of the step (e.g., "implement_task") for metrics.
+            task_key: Jira task key (e.g., "AISOS-2126") for directory naming.
+            skill_name: Skill name (e.g., "implement-task") for directory naming.
             settings: Application settings. Uses default if not provided.
         """
         self.workspace_path = Path(workspace_path)
         self.step_name = step_name
+        self.task_key = task_key
+        self.skill_name = skill_name
         self._settings = settings
         self._processed_files: set[str] = set()
         self._running = False
@@ -133,6 +139,9 @@ class ReviewCyclePoller:
     @property
     def review_cycle_dir(self) -> Path:
         """Get the directory path for review cycle files."""
+        if self.task_key and self.skill_name:
+            dir_name = f"{self.task_key}__{self.skill_name}"
+            return self.workspace_path / ".forge" / "reviews" / dir_name
         return self.workspace_path / ".forge" / self.step_name
 
     def _get_review_cycle_files(self) -> list[Path]:

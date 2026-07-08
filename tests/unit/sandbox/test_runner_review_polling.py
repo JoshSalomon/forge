@@ -582,7 +582,7 @@ class TestStepNamePathOrganization:
 
         captured_step_name = None
 
-        def create_poller(workspace_path=None, step_name=None, settings=None):
+        def create_poller(workspace_path=None, step_name=None, task_key=None, skill_name=None, settings=None):
             nonlocal captured_step_name
             captured_step_name = step_name
             mock_poller = MagicMock()
@@ -590,8 +590,7 @@ class TestStepNamePathOrganization:
             mock_poller.poll_once = AsyncMock(return_value=[])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = step_name
-            # Suppress unused warnings
-            _ = workspace_path, settings
+            _ = workspace_path, task_key, skill_name, settings
             return mock_poller
 
         with (
