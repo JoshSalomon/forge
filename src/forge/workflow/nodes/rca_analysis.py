@@ -110,7 +110,8 @@ async def analyze_bug(state: BugState) -> BugState:
 
             exhaustion = collect_review_exhaustion(result, ticket_key, "analyze_bug")
             if exhaustion:
-                state = {**state, "review_exhaustion_report": [exhaustion]}
+                key, data = exhaustion
+                state = {**state, "review_exhaustion_report": {key: data}}
 
             if not result.success:
                 raise RuntimeError(
@@ -262,7 +263,8 @@ async def reflect_rca(state: BugState) -> BugState:
 
             exhaustion = collect_review_exhaustion(result, ticket_key, "reflect_rca")
             if exhaustion:
-                state = {**state, "review_exhaustion_report": [exhaustion]}
+                key, data = exhaustion
+                state = {**state, "review_exhaustion_report": {key: data}}
 
             if not result.success:
                 raise RuntimeError(

@@ -234,7 +234,7 @@ async def create_pull_request(state: WorkflowState) -> WorkflowState:
 
         # Append auto-review exhaustion section if any reviews failed
         exhaustion_section = _format_review_exhaustion_section(
-            state.get("review_exhaustion_report", [])
+            state.get("review_exhaustion_report", {})
         )
         if exhaustion_section:
             pr_body = pr_body + "\n\n" + exhaustion_section
@@ -348,7 +348,7 @@ def _get_pr_title(state: WorkflowState, ticket_summary: str = "") -> str:
     )
 
 
-def _format_review_exhaustion_section(report: list[dict]) -> str:
+def _format_review_exhaustion_section(report: dict[str, dict]) -> str:
     """Format review exhaustion data as a markdown section for the PR body."""
     if not report:
         return ""
@@ -361,7 +361,7 @@ def _format_review_exhaustion_section(report: list[dict]) -> str:
         "",
     ]
 
-    for entry in report:
+    for entry in report.values():
         step = entry.get("step_name", "unknown")
         task = entry.get("task_key", "unknown")
         skill = entry.get("skill", "unknown")

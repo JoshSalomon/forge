@@ -12,7 +12,7 @@ def collect_review_exhaustion(
     container_result: ContainerResult,
     task_key: str,
     step_name: str,
-) -> dict[str, Any] | None:
+) -> tuple[str, dict[str, Any]] | None:
     """Build exhaustion report entry if review cycles exhausted.
 
     Args:
@@ -21,15 +21,16 @@ def collect_review_exhaustion(
         step_name: Workflow step name (e.g., "implement_task").
 
     Returns:
-        Dict to append to state['review_exhaustion_report'], or None
-        if review passed or no review ran.
+        Tuple of (key, data) to merge into state['review_exhaustion_report'],
+        or None if review passed or no review ran.
     """
     if not container_result.review_exhausted:
         return None
 
     cycles = container_result.review_cycles
     last_cycle = cycles[-1]
-    return {
+    key = f"{task_key}__{step_name}"
+    data = {
         "task_key": task_key,
         "step_name": step_name,
         "skill": last_cycle.skill,
@@ -39,3 +40,4 @@ def collect_review_exhaustion(
             {"cycle": c.cycle, "verdict": c.verdict, "feedback": c.feedback} for c in cycles
         ],
     }
+    return key, data
