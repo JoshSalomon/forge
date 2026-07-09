@@ -147,7 +147,8 @@ async def _run_plan_container(
 
             exhaustion = collect_review_exhaustion(result, ticket_key, "plan_bug_fix")
             if exhaustion:
-                state = {**state, "review_exhaustion_report": [exhaustion]}
+                key, data = exhaustion
+                state = {**state, "review_exhaustion_report": {key: data}}
 
             if not result.success:
                 raise RuntimeError(

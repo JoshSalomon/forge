@@ -185,7 +185,8 @@ async def _run_bug_review(state: WorkflowState, git: GitOperations) -> WorkflowS
 
         exhaustion = collect_review_exhaustion(result, ticket_key, "local_review")
         if exhaustion:
-            state = {**state, "review_exhaustion_report": [exhaustion]}
+            key, data = exhaustion
+            state = {**state, "review_exhaustion_report": {key: data}}
 
         if git.has_uncommitted_changes():
             git.stage_all()
@@ -348,7 +349,8 @@ async def _run_feature_review(state: WorkflowState, git: GitOperations) -> Workf
 
         exhaustion = collect_review_exhaustion(result, ticket_key, "local_review")
         if exhaustion:
-            state = {**state, "review_exhaustion_report": [exhaustion]}
+            key, data = exhaustion
+            state = {**state, "review_exhaustion_report": {key: data}}
 
         if git.has_uncommitted_changes():
             git.stage_all()

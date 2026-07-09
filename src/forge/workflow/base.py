@@ -64,7 +64,7 @@ class PRIntegrationState(TypedDict, total=False):
     persistence_retry_count: int
     review_push_pending: bool
     review_push_pending_updates: dict[str, Any]
-    review_exhaustion_report: Annotated[list[dict[str, Any]], operator.add]
+    review_exhaustion_report: Annotated[dict[str, Any], operator.or_]
 
 
 class CIIntegrationState(TypedDict, total=False):

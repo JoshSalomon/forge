@@ -215,7 +215,8 @@ async def implement_task(state: WorkflowState) -> WorkflowState:
         # Collect review exhaustion data (if auto-review ran and exhausted)
         exhaustion = collect_review_exhaustion(result, current_task, "implement_task")
         if exhaustion:
-            state = {**state, "review_exhaustion_report": [exhaustion]}
+            key, data = exhaustion
+            state = {**state, "review_exhaustion_report": {key: data}}
 
         if result.success:
             logger.info(f"Container completed successfully for {current_task}")

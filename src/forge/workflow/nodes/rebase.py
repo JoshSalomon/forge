@@ -162,7 +162,8 @@ async def rebase_pr(state: WorkflowState) -> WorkflowState:
 
         exhaustion = collect_review_exhaustion(result, ticket_key, "rebase")
         if exhaustion:
-            state = {**state, "review_exhaustion_report": [exhaustion]}
+            key, data = exhaustion
+            state = {**state, "review_exhaustion_report": {key: data}}
 
         if result.exit_code != 0:
             logger.error(

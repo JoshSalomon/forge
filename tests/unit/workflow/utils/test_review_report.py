@@ -110,9 +110,11 @@ class TestCollectReviewExhaustion:
                 ),
             ],
         )
-        entry = collect_review_exhaustion(result, "AISOS-2053", "implement_task")
+        result_tuple = collect_review_exhaustion(result, "AISOS-2053", "implement_task")
 
-        assert entry is not None
+        assert result_tuple is not None
+        key, entry = result_tuple
+        assert key == "AISOS-2053__implement_task"
         assert entry["task_key"] == "AISOS-2053"
         assert entry["step_name"] == "implement_task"
         assert entry["skill"] == "implement-task"
@@ -127,21 +129,23 @@ class TestFormatReviewExhaustionSection:
     """Tests for _format_review_exhaustion_section."""
 
     def test_empty_report_returns_empty(self):
-        assert _format_review_exhaustion_section([]) == ""
+        assert _format_review_exhaustion_section({}) == ""
 
     def test_single_entry(self):
-        report = [{
-            "task_key": "AISOS-2053",
-            "step_name": "implement_task",
-            "skill": "implement-task",
-            "max_retries": 3,
-            "final_feedback": "Missing test coverage",
-            "cycles": [
-                {"cycle": 1, "verdict": "rejected", "feedback": "No tests"},
-                {"cycle": 2, "verdict": "rejected", "feedback": "Still no tests"},
-                {"cycle": 3, "verdict": "rejected", "feedback": "Missing test coverage"},
-            ],
-        }]
+        report = {
+            "AISOS-2053__implement_task": {
+                "task_key": "AISOS-2053",
+                "step_name": "implement_task",
+                "skill": "implement-task",
+                "max_retries": 3,
+                "final_feedback": "Missing test coverage",
+                "cycles": [
+                    {"cycle": 1, "verdict": "rejected", "feedback": "No tests"},
+                    {"cycle": 2, "verdict": "rejected", "feedback": "Still no tests"},
+                    {"cycle": 3, "verdict": "rejected", "feedback": "Missing test coverage"},
+                ],
+            },
+        }
         section = _format_review_exhaustion_section(report)
 
         assert "Auto-Review Notes" in section
@@ -151,8 +155,8 @@ class TestFormatReviewExhaustionSection:
         assert "Missing test coverage" in section
 
     def test_multiple_entries(self):
-        report = [
-            {
+        report = {
+            "AISOS-2053__implement_task": {
                 "task_key": "AISOS-2053",
                 "step_name": "implement_task",
                 "skill": "implement-task",
@@ -160,7 +164,7 @@ class TestFormatReviewExhaustionSection:
                 "final_feedback": "No docstrings",
                 "cycles": [],
             },
-            {
+            "AISOS-2055__implement_task": {
                 "task_key": "AISOS-2055",
                 "step_name": "implement_task",
                 "skill": "implement-task",
@@ -168,7 +172,7 @@ class TestFormatReviewExhaustionSection:
                 "final_feedback": "Bare except",
                 "cycles": [],
             },
-        ]
+        }
         section = _format_review_exhaustion_section(report)
 
         assert "AISOS-2053" in section
@@ -177,14 +181,16 @@ class TestFormatReviewExhaustionSection:
         assert "Bare except" in section
 
     def test_multiline_feedback(self):
-        report = [{
-            "task_key": "TASK-1",
-            "step_name": "local_review",
-            "skill": "local-code-review",
-            "max_retries": 1,
-            "final_feedback": "Line 1\nLine 2\nLine 3",
-            "cycles": [],
-        }]
+        report = {
+            "TASK-1__local_review": {
+                "task_key": "TASK-1",
+                "step_name": "local_review",
+                "skill": "local-code-review",
+                "max_retries": 1,
+                "final_feedback": "Line 1\nLine 2\nLine 3",
+                "cycles": [],
+            },
+        }
         section = _format_review_exhaustion_section(report)
 
         assert "> Line 1" in section
