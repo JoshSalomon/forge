@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langgraph.graph import END, StateGraph
 
-from forge.models.workflow import ForgeLabel, TicketType
+from forge.models.workflow import ForgeLabel, JiraStatus, TicketType
 from forge.workflow.gates.task_plan_approval import route_task_plan_approval
 from forge.workflow.task_takeover.graph import (
     _route_after_answer,
@@ -252,12 +252,51 @@ class TestPostPrRouting:
         assert _route_human_review_task_takeover(state) == "complete_task_takeover"
 
     @pytest.mark.asyncio
-    async def test_complete_task_takeover_marks_workflow_complete(self) -> None:
-        state = make_task_state(current_node="human_review_gate", is_paused=True)
+    @patch("forge.workflow.task_takeover.graph.JiraClient")
+    async def test_complete_task_takeover_marks_workflow_complete(
+        self, mock_jira_class: MagicMock
+    ) -> None:
+        mock_jira = MagicMock()
+        mock_jira.transition_issue = AsyncMock()
+        mock_jira.set_workflow_label = AsyncMock()
+        mock_jira.close = AsyncMock()
+        mock_jira_class.return_value = mock_jira
+
+        state = make_task_state(
+            ticket_key="TASK-123", current_node="human_review_gate", is_paused=True
+        )
         result = await complete_task_takeover(state)
         assert result["current_node"] == "complete"
         assert result["is_paused"] is False
         assert result["ci_fix_attempt"] == 0
+
+        mock_jira.transition_issue.assert_called_once_with("TASK-123", JiraStatus.CLOSED.value)
+        mock_jira.set_workflow_label.assert_called_once_with(
+            "TASK-123", ForgeLabel.TASK_REVIEW_APPROVED
+        )
+        mock_jira.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("forge.workflow.task_takeover.graph.JiraClient")
+    async def test_complete_task_takeover_resilience_on_exception(
+        self, mock_jira_class: MagicMock
+    ) -> None:
+        mock_jira = MagicMock()
+        mock_jira.transition_issue = AsyncMock(side_effect=Exception("Jira is down"))
+        mock_jira.set_workflow_label = AsyncMock()
+        mock_jira.close = AsyncMock()
+        mock_jira_class.return_value = mock_jira
+
+        state = make_task_state(
+            ticket_key="TASK-123", current_node="human_review_gate", is_paused=True
+        )
+        result = await complete_task_takeover(state)
+        assert result["current_node"] == "complete"
+        assert result["is_paused"] is False
+        assert result["ci_fix_attempt"] == 0
+
+        mock_jira.transition_issue.assert_called_once_with("TASK-123", JiraStatus.CLOSED.value)
+        mock_jira.close.assert_called_once()
 
 
 class TestInteractiveGateBehavior:

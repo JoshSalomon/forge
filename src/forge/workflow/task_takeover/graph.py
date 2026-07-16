@@ -8,6 +8,8 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
+from forge.integrations.jira.client import JiraClient
+from forge.models.workflow import ForgeLabel, JiraStatus
 from forge.workflow.gates.task_plan_approval import (
     route_task_plan_approval,
     task_plan_approval_gate,
@@ -222,7 +224,21 @@ def _route_human_review_task_takeover(state: TaskTakeoverState) -> str:
 
 
 async def complete_task_takeover(state: TaskTakeoverState) -> TaskTakeoverState:
-    """Mark Task Takeover workflow complete after PR merge."""
+    """Mark Task Takeover workflow complete after PR merge and transition Jira ticket."""
+    ticket_key = state["ticket_key"]
+    logger.info(f"Completing task takeover workflow for ticket: {ticket_key}")
+
+    jira = JiraClient()
+    try:
+        try:
+            await jira.transition_issue(ticket_key, JiraStatus.CLOSED.value)
+            await jira.set_workflow_label(ticket_key, ForgeLabel.TASK_REVIEW_APPROVED)
+            logger.info(f"Task {ticket_key} successfully transitioned to Closed/Done")
+        except Exception as e:
+            logger.warning(f"Failed to transition Jira status/label for {ticket_key}: {e}")
+    finally:
+        await jira.close()
+
     return update_state_timestamp(
         {
             **state,
