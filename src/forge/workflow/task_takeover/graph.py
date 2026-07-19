@@ -144,42 +144,47 @@ def _route_after_execution(state: TaskTakeoverState) -> str:
 def _route_after_qualitative_review(state: TaskTakeoverState) -> str:
     """Route after run_qualitative_review considering qualitative verdict and retry count.
 
-    If the review is adequate (success), proceed to create_pr.
-    If the review is failed or incomplete:
-      - Check if we've reached the configured retry limit.
-      - If limit reached: proceed to PR creation with the failed-review state retained.
-      - Otherwise: transition back to execute_task_changes.
-    If the node hit an unrecoverable error (no workspace), escalate.
+    The routing logic is state-driven:
+      - If there is an active error (last_error is set), always route to escalate_blocked if we've reached or exceeded the retry cap limit, or retry the review if under the limit.
+      - If review is adequate, proceed to create_pr.
+      - If we reached the retry cap and there are no active errors, we can proceed to create_pr only if commits were successfully made (commit_info.committed is True).
+      - Otherwise, escalate or loop back to execute_task_changes.
     """
     verdict = state.get("review_verdict")
     retry_count = state.get("qualitative_review_retry_count", 0)
     last_error = state.get("last_error")
 
+    limit = QUALITATIVE_REVIEW_MAX_ATTEMPTS
+
+    if last_error:
+        if retry_count >= limit:
+            logger.error(
+                "Qualitative review retry limit reached with active error: %s. Escalating.",
+                last_error,
+            )
+            return "escalate_blocked"
+        else:
+            logger.warning(
+                "Qualitative review execution failed; retrying review (%s/%s): %s",
+                retry_count,
+                limit,
+                last_error,
+            )
+            return "run_qualitative_review"
+
     if verdict == "adequate":
         return "create_pr"
 
-    limit = QUALITATIVE_REVIEW_MAX_ATTEMPTS
-
-    # Review infrastructure failures are bounded like negative verdicts. Retry
-    # the review itself (not implementation), then proceed with the failure
-    # retained in state so the PR warns human reviewers.
-    if last_error and not verdict:
-        if retry_count >= limit:
-            logger.error(
-                "Qualitative review failed %s times; skipping review and proceeding to PR: %s",
-                retry_count,
-                last_error,
-            )
-            return "create_pr"
-        logger.warning(
-            "Qualitative review execution failed; retrying review (%s/%s): %s",
-            retry_count,
-            limit,
-            last_error,
-        )
-        return "run_qualitative_review"
-
     if retry_count >= limit:
+        commit_info = state.get("commit_info") or {}
+        committed = commit_info.get("committed", False)
+
+        if not committed:
+            logger.warning(
+                "Qualitative review retry limit reached with no committed changes. Escalating."
+            )
+            return "escalate_blocked"
+
         logger.warning(
             f"Qualitative review cap ({limit}) reached on task takeover workflow, "
             "proceeding to PR creation with review state retained"

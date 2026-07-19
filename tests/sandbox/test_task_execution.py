@@ -135,8 +135,8 @@ class TestTaskExecutionSandbox:
                     return_value=mock_jira,
                 ),
                 patch(
-                    "forge.workflow.nodes.task_takeover_execution.GitOperations",
-                    return_value=mock_git,
+                    "forge.workflow.nodes.task_takeover_execution.prepare_workspace",
+                    return_value=(str(workspace_path), mock_git),
                 ),
                 patch("forge.workflow.nodes.task_takeover_execution.get_settings"),
             ):
@@ -198,8 +198,8 @@ class TestTaskExecutionSandbox:
                     return_value=mock_jira,
                 ),
                 patch(
-                    "forge.workflow.nodes.task_takeover_execution.GitOperations",
-                    return_value=mock_git_fail,
+                    "forge.workflow.nodes.task_takeover_execution.prepare_workspace",
+                    return_value=(str(workspace_path), mock_git_fail),
                 ),
                 patch("forge.workflow.nodes.task_takeover_execution.get_settings"),
             ):
@@ -233,8 +233,8 @@ class TestTaskExecutionSandbox:
                     return_value=mock_jira,
                 ),
                 patch(
-                    "forge.workflow.nodes.task_takeover_execution.GitOperations",
-                    return_value=mock_git_success,
+                    "forge.workflow.nodes.task_takeover_execution.prepare_workspace",
+                    return_value=(str(workspace_path), mock_git_success),
                 ),
                 patch("forge.workflow.nodes.task_takeover_execution.get_settings"),
             ):

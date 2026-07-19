@@ -7,6 +7,7 @@ from langgraph.graph import END, StateGraph
 
 from forge.models.workflow import TicketType
 from forge.workflow.task_takeover.graph import (
+    _route_after_qualitative_review,
     _route_after_triage_check,
     build_task_takeover_graph,
     route_entry,
@@ -118,3 +119,86 @@ class TestTaskTakeoverGraph:
         # Compile the graph to verify correctness
         compiled_graph = graph.compile()
         assert compiled_graph is not None
+
+
+class TestRouteAfterQualitativeReview:
+    """Tests for _route_after_qualitative_review routing logic."""
+
+    def test_route_after_qualitative_review_no_changes_escalates(self) -> None:
+        """Verifies: When qualitative_review_retry_count reaches the maximum attempts limit (e.g., 2) and commit_info.committed is False (or commit_info is missing/empty), _route_after_qualitative_review returns 'escalate_blocked'."""
+        state = _task_state(
+            qualitative_review_retry_count=2,
+            review_verdict="tests_incomplete",
+            commit_info={"committed": False},
+        )
+        assert _route_after_qualitative_review(state) == "escalate_blocked"
+
+        state_missing = _task_state(
+            qualitative_review_retry_count=2,
+            review_verdict="tests_incomplete",
+        )
+        assert _route_after_qualitative_review(state_missing) == "escalate_blocked"
+
+    def test_route_after_qualitative_review_with_last_error_escalates(self) -> None:
+        """Verifies: When qualitative_review_retry_count reaches the maximum attempts limit (e.g., 2) and state.last_error is set, _route_after_qualitative_review returns 'escalate_blocked'."""
+        state = _task_state(
+            qualitative_review_retry_count=2,
+            review_verdict="tests_incomplete",
+            last_error="Container execution failed",
+            commit_info={"committed": True},
+        )
+        assert _route_after_qualitative_review(state) == "escalate_blocked"
+
+    def test_route_after_qualitative_review_with_changes_creates_pr(self) -> None:
+        """Verifies: When qualitative_review_retry_count reaches/exceeds the limit, state.last_error is None / empty, and commit_info.committed is True, _route_after_qualitative_review still successfully proceeds to 'create_pr'."""
+        state = _task_state(
+            qualitative_review_retry_count=2,
+            review_verdict="tests_incomplete",
+            last_error=None,
+            commit_info={"committed": True},
+        )
+        assert _route_after_qualitative_review(state) == "create_pr"
+
+    def test_route_after_qualitative_review_infrastructure_failure_routes_to_escalate_blocked_at_limit(
+        self,
+    ) -> None:
+        """Verifies: When qualitative review has an active error and no verdict, it escalates to escalate_blocked if limit is reached."""
+        state = _task_state(
+            qualitative_review_retry_count=2,
+            review_verdict=None,
+            last_error="Docker/Podman daemon not running",
+        )
+        assert _route_after_qualitative_review(state) == "escalate_blocked"
+
+    def test_route_after_qualitative_review_infrastructure_failure_retries_under_limit(
+        self,
+    ) -> None:
+        """Verifies: When qualitative review has an active error and no verdict, it retries review under the limit."""
+        state = _task_state(
+            qualitative_review_retry_count=1,
+            review_verdict=None,
+            last_error="Docker/Podman daemon not running",
+        )
+        assert _route_after_qualitative_review(state) == "run_qualitative_review"
+
+    def test_route_after_qualitative_review_active_error_with_adequate_verdict_escalates_at_limit(
+        self,
+    ) -> None:
+        """Verifies: When last_error is set and review_verdict is 'adequate', but we are at the limit, it escalates instead of routing to create_pr."""
+        state = _task_state(
+            qualitative_review_retry_count=2,
+            review_verdict="adequate",
+            last_error="Active execution error",
+        )
+        assert _route_after_qualitative_review(state) == "escalate_blocked"
+
+    def test_route_after_qualitative_review_active_error_with_adequate_verdict_retries_under_limit(
+        self,
+    ) -> None:
+        """Verifies: When last_error is set and review_verdict is 'adequate', but we are under the limit, it retries instead of routing to create_pr."""
+        state = _task_state(
+            qualitative_review_retry_count=1,
+            review_verdict="adequate",
+            last_error="Active execution error",
+        )
+        assert _route_after_qualitative_review(state) == "run_qualitative_review"

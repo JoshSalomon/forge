@@ -117,7 +117,7 @@ After the container run, Forge stages and commits workspace changes on the host.
 
 Forge reviews the implemented changes before opening a PR. If the verdict is adequate, the workflow proceeds to PR creation.
 
-If the review finds incomplete tests or a symptom-only implementation, Forge routes back to implementation with the review feedback. The Task workflow allows up to 2 qualitative review retries. If the retry cap is reached, Forge proceeds to PR creation with the failed review state retained so reviewers can see the risk.
+If the review finds incomplete tests or a symptom-only implementation, Forge routes back to implementation with the review feedback. The Task workflow allows up to 2 qualitative review retries. If the retry cap is reached, as long as there is no active error and a successful commit was made, Forge proceeds to PR creation with the failed review state retained. If there is an active error (e.g., container execution failed) or no changes were committed, the workflow escalates to blocked (`forge:blocked`) instead of opening an empty or broken PR.
 
 Infrastructure errors that prevent review from producing a verdict route to `forge:blocked`.
 

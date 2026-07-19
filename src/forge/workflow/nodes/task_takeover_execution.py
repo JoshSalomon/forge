@@ -137,6 +137,11 @@ async def execute_task_changes(state: TaskTakeoverState) -> TaskTakeoverState:
             git.stage_all()
             committed = git.commit(commit_message)
 
+        # Preserve the cumulative committed state if we've already committed in a previous attempt
+        prev_commit_info = state.get("commit_info") or {}
+        prev_committed = prev_commit_info.get("committed", False)
+        has_ever_committed = prev_committed or committed
+
         current_sha = git.get_current_sha()
         execution_state = {
             **state,
@@ -152,7 +157,7 @@ async def execute_task_changes(state: TaskTakeoverState) -> TaskTakeoverState:
             "commit_info": {
                 "sha": current_sha,
                 "message": commit_message,
-                "committed": committed,
+                "committed": has_ever_committed,
             },
             "current_node": "execute_task_changes",
             "last_error": None if result.success else result.error_message,

@@ -196,15 +196,39 @@ class TestQualitativeReviewRouting:
         assert _route_after_qualitative_review(state) == "execute_task_changes"
 
     def test_route_after_qualitative_review_failed_at_or_above_limit(self) -> None:
-        """If review is failed or incomplete and at/above the limit, proceed to PR creation."""
+        """If review is failed or incomplete and at/above the limit, proceed to PR creation if changes exist."""
         from forge.workflow.task_takeover.graph import _route_after_qualitative_review
 
         state = make_task_state(
             review_verdict="tests_incomplete",
             qualitative_review_retry_count=2,
+            commit_info={"committed": True},
         )
         # retry_count of 2 is at/above the limit of 2, so stop retrying but keep Jira silent.
         assert _route_after_qualitative_review(state) == "create_pr"
+
+    def test_route_after_qualitative_review_no_changes_escalates(self) -> None:
+        """When qualitative_review_retry_count reaches max and commit_info.committed is False, escalate."""
+        from forge.workflow.task_takeover.graph import _route_after_qualitative_review
+
+        state = make_task_state(
+            review_verdict="tests_incomplete",
+            qualitative_review_retry_count=2,
+            commit_info={"committed": False},
+        )
+        assert _route_after_qualitative_review(state) == "escalate_blocked"
+
+    def test_route_after_qualitative_review_with_last_error_escalates(self) -> None:
+        """When qualitative_review_retry_count reaches max and state.last_error is set, escalate."""
+        from forge.workflow.task_takeover.graph import _route_after_qualitative_review
+
+        state = make_task_state(
+            review_verdict="tests_incomplete",
+            qualitative_review_retry_count=2,
+            commit_info={"committed": True},
+            last_error="Container execution failed",
+        )
+        assert _route_after_qualitative_review(state) == "escalate_blocked"
 
     def test_route_after_qualitative_review_error_without_verdict_retries(self) -> None:
         """Review execution errors retry the review without rerunning implementation."""
@@ -216,16 +240,42 @@ class TestQualitativeReviewRouting:
         )
         assert _route_after_qualitative_review(state) == "run_qualitative_review"
 
-    def test_route_after_qualitative_review_error_at_cap_skips(self) -> None:
-        """Review execution errors proceed to PR after the bounded retry cap."""
+    def test_route_after_qualitative_review_error_at_cap_escalates(self) -> None:
+        """Review execution errors escalate after retry limit when error is present with review_verdict=None."""
         from forge.workflow.task_takeover.graph import _route_after_qualitative_review
 
         state = make_task_state(
             last_error="Review container unavailable",
             qualitative_review_retry_count=2,
-            qualitative_review_failed=True,
+            review_verdict=None,
         )
-        assert _route_after_qualitative_review(state) == "create_pr"
+        assert _route_after_qualitative_review(state) == "escalate_blocked"
+
+    def test_route_after_qualitative_review_active_error_with_adequate_verdict_escalates_at_limit(
+        self,
+    ) -> None:
+        """Verifies: When last_error is set and review_verdict is 'adequate', but we are at/above the limit, it escalates instead of routing to create_pr."""
+        from forge.workflow.task_takeover.graph import _route_after_qualitative_review
+
+        state = make_task_state(
+            last_error="Active execution error",
+            qualitative_review_retry_count=2,
+            review_verdict="adequate",
+        )
+        assert _route_after_qualitative_review(state) == "escalate_blocked"
+
+    def test_route_after_qualitative_review_active_error_with_adequate_verdict_retries_under_limit(
+        self,
+    ) -> None:
+        """Verifies: When last_error is set and review_verdict is 'adequate', but we are under the limit, it retries instead of routing to create_pr."""
+        from forge.workflow.task_takeover.graph import _route_after_qualitative_review
+
+        state = make_task_state(
+            last_error="Active execution error",
+            qualitative_review_retry_count=1,
+            review_verdict="adequate",
+        )
+        assert _route_after_qualitative_review(state) == "run_qualitative_review"
 
 
 class TestPostPrRouting:

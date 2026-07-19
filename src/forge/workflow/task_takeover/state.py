@@ -1,7 +1,7 @@
 """Task Takeover workflow state definition."""
 
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 from forge.models.workflow import TicketType
 from forge.workflow.base import (
@@ -10,6 +10,14 @@ from forge.workflow.base import (
     PRIntegrationState,
     ReviewIntegrationState,
 )
+
+
+class CommitInfo(TypedDict, total=False):
+    """Information about the implementation commit."""
+
+    sha: str | None
+    message: str | None
+    committed: bool
 
 
 class TaskTakeoverState(
@@ -25,6 +33,7 @@ class TaskTakeoverState(
     review_feedback: str | None
     qualitative_review_retry_count: int
     qualitative_review_failed: bool
+    commit_info: CommitInfo
 
 
 def create_initial_task_takeover_state(ticket_key: str, **kwargs: Any) -> TaskTakeoverState:
@@ -62,6 +71,11 @@ def create_initial_task_takeover_state(ticket_key: str, **kwargs: Any) -> TaskTa
         "review_feedback": None,
         "qualitative_review_retry_count": 0,
         "qualitative_review_failed": False,
+        "commit_info": {
+            "sha": None,
+            "message": None,
+            "committed": False,
+        },
         "implementation_push_pending": False,
         "implementation_push_pending_task": None,
         "persistence_retry_count": 0,
