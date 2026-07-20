@@ -3,7 +3,7 @@
 from forge.observability.review_poller import ReviewCycleData
 from forge.sandbox.runner import ContainerResult
 from forge.workflow.nodes.pr_creation import _format_review_exhaustion_section
-from forge.workflow.utils.review_report import collect_review_exhaustion
+from forge.workflow.utils.review_report import collect_review_exhaustion, merge_review_exhaustion
 
 
 class TestReviewExhausted:
@@ -252,3 +252,88 @@ class TestFormatReviewExhaustionSection:
         assert "> Line 1" in section
         assert "> Line 2" in section
         assert "> Line 3" in section
+
+
+class TestMergeReviewExhaustion:
+    """Tests for merge_review_exhaustion utility."""
+
+    def test_returns_state_unchanged_when_not_exhausted(self):
+        """Test that state is returned unchanged when review is not exhausted."""
+        state = {"some_key": "some_value", "other": 42}
+        result = ContainerResult(success=True, exit_code=0, stdout="", stderr="")
+
+        merged = merge_review_exhaustion(state, result, "TASK-1", "implement_task")
+
+        assert merged is state
+        assert "review_exhaustion_report" not in merged
+
+    def test_returns_state_with_report_when_exhausted(self):
+        """Test that state includes review_exhaustion_report when exhausted."""
+        state = {"some_key": "some_value"}
+        result = ContainerResult(
+            success=True,
+            exit_code=0,
+            stdout="",
+            stderr="",
+            review_cycles=[
+                ReviewCycleData(
+                    cycle=1,
+                    max_cycles=2,
+                    verdict="rejected",
+                    feedback="missing tests",
+                    skill="implement-task",
+                    elapsed_seconds=5.0,
+                    timestamp="",
+                ),
+                ReviewCycleData(
+                    cycle=2,
+                    max_cycles=2,
+                    verdict="rejected",
+                    feedback="still missing tests",
+                    skill="implement-task",
+                    elapsed_seconds=3.0,
+                    timestamp="",
+                ),
+            ],
+        )
+
+        merged = merge_review_exhaustion(state, result, "AISOS-2053", "implement_task")
+
+        assert "review_exhaustion_report" in merged
+        report = merged["review_exhaustion_report"]
+        assert "AISOS-2053__implement_task" in report
+        assert report["AISOS-2053__implement_task"]["task_key"] == "AISOS-2053"
+        assert report["AISOS-2053__implement_task"]["step_name"] == "implement_task"
+        # Original state keys preserved
+        assert merged["some_key"] == "some_value"
+
+    def test_dict_merge_preserves_existing_state_entries(self):
+        """Test that the merge creates a new dict containing original state entries."""
+        state = {"existing_key": "existing_value", "count": 10}
+        result = ContainerResult(
+            success=True,
+            exit_code=0,
+            stdout="",
+            stderr="",
+            review_cycles=[
+                ReviewCycleData(
+                    cycle=1,
+                    max_cycles=1,
+                    verdict="rejected",
+                    feedback="bad code",
+                    skill="impl",
+                    elapsed_seconds=1.0,
+                    timestamp="",
+                ),
+            ],
+        )
+
+        merged = merge_review_exhaustion(state, result, "T-1", "step")
+
+        # Original entries are preserved
+        assert merged["existing_key"] == "existing_value"
+        assert merged["count"] == 10
+        # New report entry is present
+        assert "review_exhaustion_report" in merged
+        # Original state is not mutated
+        assert "review_exhaustion_report" not in state

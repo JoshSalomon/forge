@@ -1061,6 +1061,71 @@ class TestSweepIntegrationWithRun:
         # Should log warning about missed files
         assert "Sweep caught 1 review cycle file(s) missed" in caplog.text
 
+
+# ---------------------------------------------------------------------------
+# _build_container_result tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildContainerResult:
+    """Tests for ContainerRunner._build_container_result method."""
+
+    def test_exit_success_returns_success_true(self):
+        """Test EXIT_SUCCESS returns success=True."""
+        runner = _runner_without_init()
+        runner.settings = MagicMock()
+        runner.settings.container_keep = False
+
+        result = runner._build_container_result(
+            exit_code=0,
+            stdout_str="output",
+            stderr_str="",
+            collected_cycles=[],
+            container_name="test-container",
+        )
+
+        assert result.success is True
+        assert result.exit_code == 0
+        assert result.tests_passed is True
+        assert result.error_message is None
+
+    def test_exit_tests_failed_returns_tests_passed_false(self):
+        """Test EXIT_TESTS_FAILED returns tests_passed=False."""
+        runner = _runner_without_init()
+        runner.settings = MagicMock()
+        runner.settings.container_keep = False
+
+        result = runner._build_container_result(
+            exit_code=2,  # EXIT_TESTS_FAILED
+            stdout_str="output",
+            stderr_str="test failures",
+            collected_cycles=[],
+            container_name="test-container",
+        )
+
+        assert result.success is False
+        assert result.exit_code == 2
+        assert result.tests_passed is False
+        assert result.error_message == "Tests failed after max retries"
+
+    def test_other_exit_code_returns_generic_error(self):
+        """Test other exit code returns generic error message."""
+        runner = _runner_without_init()
+        runner.settings = MagicMock()
+        runner.settings.container_keep = False
+
+        result = runner._build_container_result(
+            exit_code=1,  # EXIT_TASK_FAILED
+            stdout_str="output",
+            stderr_str="error details",
+            collected_cycles=[],
+            container_name="test-container",
+        )
+
+        assert result.success is False
+        assert result.exit_code == 1
+        assert result.error_message == "Task failed with exit code 1"
+
     @pytest.mark.asyncio
     async def test_sweep_runs_after_async_polling(self, tmp_path: Path):
         """Test that sweep is called after container exits."""

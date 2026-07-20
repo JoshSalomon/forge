@@ -730,5 +730,310 @@ class TestMainReviewLoopIntegration:
 
 
 # ---------------------------------------------------------------------------
+# Test _discover_skill_paths
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverSkillPaths:
+    """Tests for _discover_skill_paths function."""
+
+    def test_parses_comma_separated_env_var(self, tmp_path: Path, monkeypatch):
+        """Test parsing AGENT_SKILL_PATHS env var (comma-separated)."""
+        monkeypatch.setenv("AGENT_SKILL_PATHS", "/path/a/,/path/b/,/path/c/")
+
+        from entrypoint import _discover_skill_paths
+
+        result = _discover_skill_paths(tmp_path)
+        assert "/path/a/" in result
+        assert "/path/b/" in result
+        assert "/path/c/" in result
+
+    def test_trailing_slash_added_when_missing(self, tmp_path: Path, monkeypatch):
+        """Test trailing slash is added when missing."""
+        monkeypatch.setenv("AGENT_SKILL_PATHS", "/path/a,/path/b/")
+
+        from entrypoint import _discover_skill_paths
+
+        result = _discover_skill_paths(tmp_path)
+        assert "/path/a/" in result
+        assert "/path/b/" in result
+
+    def test_auto_discovers_claude_skills_dir(self, tmp_path: Path, monkeypatch):
+        """Test auto-discovery of .claude/skills workspace dir."""
+        monkeypatch.delenv("AGENT_SKILL_PATHS", raising=False)
+
+        # Create .claude/skills directory
+        (tmp_path / ".claude" / "skills").mkdir(parents=True)
+
+        from entrypoint import _discover_skill_paths
+
+        result = _discover_skill_paths(tmp_path)
+        assert f"{tmp_path / '.claude' / 'skills'}/" in result
+
+    def test_auto_discovers_agents_skills_dir(self, tmp_path: Path, monkeypatch):
+        """Test auto-discovery of .agents/skills workspace dir."""
+        monkeypatch.delenv("AGENT_SKILL_PATHS", raising=False)
+
+        # Create .agents/skills directory
+        (tmp_path / ".agents" / "skills").mkdir(parents=True)
+
+        from entrypoint import _discover_skill_paths
+
+        result = _discover_skill_paths(tmp_path)
+        assert f"{tmp_path / '.agents' / 'skills'}/" in result
+
+    def test_empty_env_returns_only_auto_discovered(self, tmp_path: Path, monkeypatch):
+        """Test empty env var returns only auto-discovered paths."""
+        monkeypatch.setenv("AGENT_SKILL_PATHS", "")
+
+        # Create one auto-discoverable directory
+        (tmp_path / ".claude" / "skills").mkdir(parents=True)
+
+        from entrypoint import _discover_skill_paths
+
+        result = _discover_skill_paths(tmp_path)
+        # Should only contain auto-discovered path
+        assert len(result) == 1
+        assert f"{tmp_path / '.claude' / 'skills'}/" in result
+
+    def test_deduplication(self, tmp_path: Path, monkeypatch):
+        """Test deduplication between env var and auto-discovered paths."""
+        # Create .claude/skills directory
+        claude_skills = tmp_path / ".claude" / "skills"
+        claude_skills.mkdir(parents=True)
+
+        # Set env var to include the same path that would be auto-discovered
+        monkeypatch.setenv("AGENT_SKILL_PATHS", f"{claude_skills}/")
+
+        from entrypoint import _discover_skill_paths
+
+        result = _discover_skill_paths(tmp_path)
+        # Should not have duplicates
+        assert result.count(f"{claude_skills}/") == 1
+
+
+# ---------------------------------------------------------------------------
+# Test _fallback_commit
+# ---------------------------------------------------------------------------
+
+
+class TestFallbackCommit:
+    """Tests for _fallback_commit function."""
+
+    def test_calls_git_commit_when_git_repo(self, tmp_path: Path, monkeypatch):
+        """Test it calls git_commit when workspace is a git repo."""
+        from unittest.mock import MagicMock
+
+        import entrypoint
+
+        # Mock subprocess.run to return is_git_repo=True
+        mock_subprocess_run = MagicMock()
+        mock_subprocess_run.return_value = MagicMock(returncode=0)
+        monkeypatch.setattr(entrypoint, "subprocess", MagicMock(run=mock_subprocess_run))
+
+        # Mock git_commit to succeed
+        mock_git_commit = MagicMock(return_value=True)
+        monkeypatch.setattr(entrypoint, "git_commit", mock_git_commit)
+
+        entrypoint._fallback_commit(tmp_path, "TEST-1", "Test summary")
+
+        mock_git_commit.assert_called_once()
+        call_args = mock_git_commit.call_args
+        assert call_args[0][0] == tmp_path
+        assert "TEST-1" in call_args[0][1]
+        assert "Test summary" in call_args[0][1]
+
+    def test_skips_when_not_git_repo(self, tmp_path: Path, monkeypatch):
+        """Test it skips when workspace is NOT a git repo."""
+        from unittest.mock import MagicMock
+
+        import entrypoint
+
+        # Mock subprocess.run to return is_git_repo=False
+        mock_subprocess_run = MagicMock()
+        mock_subprocess_run.return_value = MagicMock(returncode=128)
+        monkeypatch.setattr(entrypoint, "subprocess", MagicMock(run=mock_subprocess_run))
+
+        mock_git_commit = MagicMock()
+        monkeypatch.setattr(entrypoint, "git_commit", mock_git_commit)
+
+        entrypoint._fallback_commit(tmp_path, "TEST-1", "Test summary")
+
+        mock_git_commit.assert_not_called()
+
+    def test_exits_when_git_commit_fails(self, tmp_path: Path, monkeypatch):
+        """Test it calls sys.exit(EXIT_TASK_FAILED) when git_commit fails."""
+        from unittest.mock import MagicMock
+
+        import entrypoint
+
+        # Mock subprocess.run to return is_git_repo=True
+        mock_subprocess_run = MagicMock()
+        mock_subprocess_run.return_value = MagicMock(returncode=0)
+        monkeypatch.setattr(entrypoint, "subprocess", MagicMock(run=mock_subprocess_run))
+
+        # Mock git_commit to fail
+        monkeypatch.setattr(entrypoint, "git_commit", MagicMock(return_value=False))
+
+        with pytest.raises(SystemExit) as exc_info:
+            entrypoint._fallback_commit(tmp_path, "TEST-1", "Test summary")
+
+        assert exc_info.value.code == 1  # EXIT_TASK_FAILED
+
+
+# ---------------------------------------------------------------------------
+# Test _setup_langfuse_tracing
+# ---------------------------------------------------------------------------
+
+
+class TestSetupLangfuseTracing:
+    """Tests for _setup_langfuse_tracing function."""
+
+    def test_returns_config_with_callbacks_when_key_set(self, monkeypatch):
+        """Test returns (config_with_callbacks, True) when LANGFUSE_PUBLIC_KEY is set."""
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test-123")
+
+        from entrypoint import _setup_langfuse_tracing
+
+        with patch("entrypoint.CallbackHandler", create=True) as mock_handler_cls:
+            # Use importlib to make langfuse.langchain.CallbackHandler importable
+            mock_handler = MagicMock()
+            mock_handler_cls.return_value = mock_handler
+
+            with patch.dict(
+                "sys.modules",
+                {
+                    "langfuse": MagicMock(),
+                    "langfuse.langchain": MagicMock(CallbackHandler=mock_handler_cls),
+                },
+            ):
+                config, enabled = _setup_langfuse_tracing("TEST-1", {})
+
+        assert enabled is True
+        assert "callbacks" in config
+        assert len(config["callbacks"]) == 1
+
+    def test_returns_empty_when_key_not_set(self, monkeypatch):
+        """Test returns ({}, False) when LANGFUSE_PUBLIC_KEY is not set."""
+        monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+
+        from entrypoint import _setup_langfuse_tracing
+
+        config, enabled = _setup_langfuse_tracing("TEST-1", {})
+
+        assert enabled is False
+        assert config == {}
+
+    def test_returns_empty_when_import_fails(self, monkeypatch):
+        """Test returns ({}, False) when langfuse import fails."""
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test-123")
+
+        from entrypoint import _setup_langfuse_tracing
+
+        with patch.dict("sys.modules", {"langfuse": None, "langfuse.langchain": None}):
+            config, enabled = _setup_langfuse_tracing("TEST-1", {})
+
+        assert enabled is False
+        assert config == {}
+
+
+# ---------------------------------------------------------------------------
+# Test _parse_task_config
+# ---------------------------------------------------------------------------
+
+
+class TestParseTaskConfig:
+    """Tests for _parse_task_config function."""
+
+    def test_cli_args_branch(self):
+        """Test CLI args branch (--task-summary + --task-description)."""
+        from entrypoint import _parse_task_config
+
+        args = MagicMock()
+        args.task_file = None
+        args.task_summary = "CLI summary"
+        args.task_description = "CLI description"
+
+        result = _parse_task_config(args)
+
+        assert result["task_key"] == "UNKNOWN"
+        assert result["task_summary"] == "CLI summary"
+        assert result["task_description"] == "CLI description"
+        assert result["skill_name"] == ""
+        assert result["previous_task_keys"] == []
+        assert result["trace_context"] == {}
+
+    def test_sys_exit_when_no_args_provided(self):
+        """Test sys.exit when neither task-file nor CLI args provided."""
+        from entrypoint import _parse_task_config
+
+        args = MagicMock()
+        args.task_file = None
+        args.task_summary = None
+        args.task_description = None
+
+        with pytest.raises(SystemExit) as exc_info:
+            _parse_task_config(args)
+
+        assert exc_info.value.code == 3  # EXIT_CONFIG_ERROR
+
+    def test_trace_context_type_guard_non_dict(self, tmp_path: Path):
+        """Test trace_context type guard (non-dict becomes {})."""
+        from entrypoint import _parse_task_config
+
+        task_file = tmp_path / "task.json"
+        task_file.write_text(
+            json.dumps(
+                {
+                    "task_key": "TEST-1",
+                    "summary": "Test",
+                    "description": "Test desc",
+                    "trace_context": "not-a-dict",
+                }
+            )
+        )
+
+        args = MagicMock()
+        args.task_file = task_file
+        args.task_summary = None
+        args.task_description = None
+
+        result = _parse_task_config(args)
+
+        assert result["trace_context"] == {}
+
+
+# ---------------------------------------------------------------------------
+# Test run_reviewer_agent with empty messages
+# ---------------------------------------------------------------------------
+
+
+class TestRunReviewerAgentEmptyMessages:
+    """Tests for run_reviewer_agent edge case with empty messages."""
+
+    @pytest.mark.asyncio
+    async def test_empty_messages_returns_empty_string(self, tmp_path: Path):
+        """Test that empty messages list returns empty string."""
+        from entrypoint import run_reviewer_agent
+
+        mock_agent = MagicMock()
+        mock_agent.ainvoke = AsyncMock(return_value={"messages": []})
+        mock_create = MagicMock(return_value=mock_agent)
+
+        with (
+            patch("entrypoint._create_llm_model", return_value=("test-model", MagicMock())),
+            patch("deepagents.create_deep_agent", mock_create),
+            patch("deepagents.backends.LocalShellBackend"),
+        ):
+            result = await run_reviewer_agent(
+                workspace=tmp_path,
+                review_instructions="Check for bugs",
+                task_key="TEST-123",
+            )
+
+        assert result == ""
+
+
+# ---------------------------------------------------------------------------
 # Test _print_review_progress (SC-011)
 # ---------------------------------------------------------------------------

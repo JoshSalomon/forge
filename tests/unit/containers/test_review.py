@@ -14,6 +14,7 @@ from review import (
     find_skill_file,
     parse_review_config,
     parse_verdict,
+    review_cycle_dir_name,
     write_cycle_file,
 )
 
@@ -653,6 +654,25 @@ Ship it!
 """
         result = parse_verdict(review)
         assert result == (Verdict.APPROVED, "")
+
+
+# ---------------------------------------------------------------------------
+# review_cycle_dir_name tests
+# ---------------------------------------------------------------------------
+
+
+class TestReviewCycleDirName:
+    """Tests for review_cycle_dir_name function."""
+
+    def test_returns_task_key_double_underscore_skill_name(self):
+        """Test it returns '{task_key}__{skill_name}' format."""
+        result = review_cycle_dir_name("AISOS-2126", "implement-task")
+        assert result == "AISOS-2126__implement-task"
+
+    def test_with_different_inputs(self):
+        """Test with different task_key and skill_name values."""
+        result = review_cycle_dir_name("PROJ-42", "local-code-review")
+        assert result == "PROJ-42__local-code-review"
 
 
 # ---------------------------------------------------------------------------
