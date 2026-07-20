@@ -16,8 +16,6 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-import aiofiles
-
 from forge.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -136,13 +134,21 @@ class ReviewCyclePoller:
         """Get the polling interval from settings."""
         return self.settings.auto_review_poll_interval
 
+    @staticmethod
+    def build_cycle_dir(
+        workspace_path: Path, task_key: str, skill_name: str, step_name: str
+    ) -> Path:
+        """Build the directory path for review cycle files."""
+        if task_key and skill_name:
+            return workspace_path / ".forge" / "reviews" / f"{task_key}__{skill_name}"
+        return workspace_path / ".forge" / step_name
+
     @property
     def review_cycle_dir(self) -> Path:
         """Get the directory path for review cycle files."""
-        if self.task_key and self.skill_name:
-            dir_name = f"{self.task_key}__{self.skill_name}"
-            return self.workspace_path / ".forge" / "reviews" / dir_name
-        return self.workspace_path / ".forge" / self.step_name
+        return self.build_cycle_dir(
+            self.workspace_path, self.task_key, self.skill_name, self.step_name
+        )
 
     def _get_review_cycle_files(self) -> list[Path]:
         """Get list of review_cycle_*.json files in the step directory.
@@ -170,8 +176,7 @@ class ReviewCyclePoller:
         """
         for attempt in range(MAX_JSON_PARSE_RETRIES):
             try:
-                async with aiofiles.open(file_path, encoding="utf-8") as f:
-                    content = await f.read()
+                content = file_path.read_text(encoding="utf-8")
 
                 if not content.strip():
                     # Empty file, likely still being written
@@ -247,56 +252,20 @@ class ReviewCyclePoller:
 
         return new_cycles
 
-    def poll(self) -> "ReviewCyclePoller":
-        """Start the polling loop as an async iterator.
-
-        Yields:
-            List of newly detected ReviewCycleData objects on each poll.
-
-        Usage:
-            async for new_cycles in poller.poll():
-                for cycle in new_cycles:
-                    process(cycle)
-        """
-        self._running = True
-        return self
-
     def stop(self) -> None:
         """Stop the polling loop."""
         self._running = False
 
-    def __aiter__(self) -> "ReviewCyclePoller":
-        """Return self as async iterator."""
-        return self
+    async def run_loop(self, callback) -> None:
+        """Poll for review cycle files, calling callback(cycles) on each batch.
 
-    async def __anext__(self) -> list[ReviewCycleData]:
-        """Get next batch of new review cycles.
-
-        Returns:
-            List of newly detected ReviewCycleData objects.
-
-        Raises:
-            StopAsyncIteration: When polling is stopped.
+        Runs until stop() is called or the task is cancelled.
         """
-        if not self._running:
-            raise StopAsyncIteration
-
-        # Wait for the poll interval before checking
-        await asyncio.sleep(self.poll_interval)
-
-        if not self._running:
-            raise StopAsyncIteration
-
-        return await self.poll_once()
-
-    def reset(self) -> None:
-        """Reset the set of processed files.
-
-        This allows re-detecting previously processed files.
-        """
-        self._processed_files.clear()
-
-    @property
-    def processed_count(self) -> int:
-        """Get the number of processed files."""
-        return len(self._processed_files)
+        self._running = True
+        while self._running:
+            await asyncio.sleep(self.poll_interval)
+            if not self._running:
+                break
+            new_cycles = await self.poll_once()
+            if new_cycles:
+                callback(new_cycles)

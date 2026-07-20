@@ -251,12 +251,15 @@ def parse_verdict(output_text: str) -> tuple[Verdict, str]:
           where feedback is the text following the marker
         - (Verdict.REJECTED, "Verdict could not be parsed") when neither marker found
     """
-    # Normalize for case-insensitive matching
+    import re
+
     text_upper = output_text.upper()
 
-    # Find positions of both markers (case-insensitive)
-    approved_pos = text_upper.find("APPROVED")
-    rejected_pos = text_upper.find("REJECTED")
+    # Use word-boundary matching to avoid false positives like "DISAPPROVED"
+    approved_match = re.search(r"\bAPPROVED\b", text_upper)
+    rejected_match = re.search(r"\bREJECTED\b", text_upper)
+    approved_pos = approved_match.start() if approved_match else -1
+    rejected_pos = rejected_match.start() if rejected_match else -1
 
     # Neither marker found
     if approved_pos == -1 and rejected_pos == -1:

@@ -1,5 +1,6 @@
 """Unit tests for the ReviewCyclePoller class."""
 
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -307,23 +308,23 @@ class TestParseJsonWithRetry:
         )
 
         call_count = 0
+        original_read_text = Path.read_text
 
-        async def mock_read():
+        def mock_read_text(self_path, encoding="utf-8"):
             nonlocal call_count
-            call_count += 1
-            if call_count < 3:
-                return '{"incomplete": '
-            return '{"cycle": 1, "max_cycles": 3, "verdict": "approved"}'
+            # Only intercept reads for our test file
+            if self_path == json_file:
+                call_count += 1
+                if call_count < 3:
+                    return '{"incomplete": '
+                return '{"cycle": 1, "max_cycles": 3, "verdict": "approved"}'
+            return original_read_text(self_path, encoding=encoding)
 
-        with patch("aiofiles.open") as mock_open:
-            mock_file = AsyncMock()
-            mock_file.read = mock_read
-            mock_file.__aenter__ = AsyncMock(return_value=mock_file)
-            mock_file.__aexit__ = AsyncMock(return_value=None)
-            mock_open.return_value = mock_file
-
-            with patch("asyncio.sleep", new_callable=AsyncMock):
-                result = await poller._parse_json_with_retry(json_file)
+        with (
+            patch.object(Path, "read_text", mock_read_text),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await poller._parse_json_with_retry(json_file)
 
         assert result == {"cycle": 1, "max_cycles": 3, "verdict": "approved"}
 
@@ -482,12 +483,12 @@ class TestPollOnce:
 # ---------------------------------------------------------------------------
 
 
-class TestAsyncIteration:
-    """Tests for async iteration interface."""
+class TestRunLoop:
+    """Tests for run_loop(callback) interface."""
 
     @pytest.mark.asyncio
-    async def test_poll_starts_iteration(self, tmp_path, mock_settings):
-        """Test that poll() returns an iterator."""
+    async def test_run_loop_sets_running(self, tmp_path, mock_settings):
+        """Test that run_loop() sets _running to True."""
         mock_settings.auto_review_poll_interval = 0.01
         poller = ReviewCyclePoller(
             workspace_path=tmp_path,
@@ -495,13 +496,26 @@ class TestAsyncIteration:
             settings=mock_settings,
         )
 
-        iterator = poller.poll()
-        assert iterator is poller
-        assert poller._running is True
+        running_during_loop = False
+
+        def callback(cycles):
+            nonlocal running_during_loop
+            running_during_loop = poller._running
+            poller.stop()
+
+        # Create a file so the callback fires
+        step_dir = tmp_path / ".forge" / "test"
+        step_dir.mkdir(parents=True)
+        (step_dir / "review_cycle_1.json").write_text(
+            json.dumps({"cycle": 1, "max_cycles": 3, "verdict": "approved"})
+        )
+
+        await poller.run_loop(callback)
+        assert running_during_loop is True
 
     @pytest.mark.asyncio
-    async def test_stop_ends_iteration(self, tmp_path, mock_settings):
-        """Test that stop() ends iteration."""
+    async def test_stop_ends_run_loop(self, tmp_path, mock_settings):
+        """Test that stop() ends run_loop."""
         mock_settings.auto_review_poll_interval = 0.01
         poller = ReviewCyclePoller(
             workspace_path=tmp_path,
@@ -509,16 +523,18 @@ class TestAsyncIteration:
             settings=mock_settings,
         )
 
-        poller.poll()
-        poller.stop()
+        async def stop_soon():
+            await asyncio.sleep(0.05)
+            poller.stop()
+
+        asyncio.get_event_loop().create_task(stop_soon())
+        await poller.run_loop(lambda cycles: None)
+
         assert poller._running is False
 
-        with pytest.raises(StopAsyncIteration):
-            await poller.__anext__()
-
     @pytest.mark.asyncio
-    async def test_iteration_polls_at_interval(self, tmp_path, mock_settings):
-        """Test that iteration waits for poll interval."""
+    async def test_run_loop_respects_poll_interval(self, tmp_path, mock_settings):
+        """Test that run_loop waits for poll interval between polls."""
         mock_settings.auto_review_poll_interval = 0.5
         poller = ReviewCyclePoller(
             workspace_path=tmp_path,
@@ -526,19 +542,17 @@ class TestAsyncIteration:
             settings=mock_settings,
         )
 
-        poller.poll()
-
         with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-            result = await poller.__anext__()
+            # Stop after first sleep call
+            mock_sleep.side_effect = [None, asyncio.CancelledError()]
+            with pytest.raises(asyncio.CancelledError):
+                await poller.run_loop(lambda cycles: None)
 
-        mock_sleep.assert_awaited_once_with(0.5)
-        assert result == []
-
-        poller.stop()
+        mock_sleep.assert_awaited_with(0.5)
 
     @pytest.mark.asyncio
-    async def test_async_for_loop(self, tmp_path, mock_settings):
-        """Test using poller in async for loop."""
+    async def test_run_loop_calls_callback_with_new_cycles(self, tmp_path, mock_settings):
+        """Test that run_loop invokes callback with detected cycles."""
         mock_settings.auto_review_poll_interval = 0.01
         step_dir = tmp_path / ".forge" / "test_step"
         step_dir.mkdir(parents=True)
@@ -553,71 +567,18 @@ class TestAsyncIteration:
         )
 
         results = []
-        iteration_count = 0
+        call_count = 0
 
-        async for new_cycles in poller.poll():
-            iteration_count += 1
+        def callback(new_cycles):
+            nonlocal call_count
+            call_count += 1
             results.extend(new_cycles)
-            if iteration_count >= 2:  # Stop after 2 iterations
-                poller.stop()
+            poller.stop()
+
+        await poller.run_loop(callback)
 
         assert len(results) == 1
         assert results[0].verdict == "approved"
-
-
-# ---------------------------------------------------------------------------
-# ReviewCyclePoller reset and processed_count tests
-# ---------------------------------------------------------------------------
-
-
-class TestResetAndProcessedCount:
-    """Tests for reset and processed_count methods."""
-
-    @pytest.mark.asyncio
-    async def test_processed_count(self, tmp_path):
-        """Test processed_count tracks processed files."""
-        step_dir = tmp_path / ".forge" / "test_step"
-        step_dir.mkdir(parents=True)
-
-        for i in range(3):
-            data = {"cycle": i + 1, "max_cycles": 5, "verdict": "approved"}
-            (step_dir / f"review_cycle_{i + 1}.json").write_text(json.dumps(data))
-
-        poller = ReviewCyclePoller(
-            workspace_path=tmp_path,
-            step_name="test_step",
-        )
-
-        assert poller.processed_count == 0
-
-        await poller.poll_once()
-        assert poller.processed_count == 3
-
-    @pytest.mark.asyncio
-    async def test_reset_clears_processed(self, tmp_path):
-        """Test that reset clears processed files."""
-        step_dir = tmp_path / ".forge" / "test_step"
-        step_dir.mkdir(parents=True)
-
-        data = {"cycle": 1, "max_cycles": 3, "verdict": "approved"}
-        (step_dir / "review_cycle_1.json").write_text(json.dumps(data))
-
-        poller = ReviewCyclePoller(
-            workspace_path=tmp_path,
-            step_name="test_step",
-        )
-
-        # First poll
-        result1 = await poller.poll_once()
-        assert len(result1) == 1
-        assert poller.processed_count == 1
-
-        # Reset and poll again
-        poller.reset()
-        assert poller.processed_count == 0
-
-        result2 = await poller.poll_once()
-        assert len(result2) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -631,7 +592,7 @@ class TestPollerIntegration:
     @pytest.mark.asyncio
     async def test_detects_files_within_time_limit(self, tmp_path, mock_settings):
         """Test that new files are detected within acceptable time."""
-        mock_settings.auto_review_poll_interval = 0.1  # Fast polling for test
+        mock_settings.auto_review_poll_interval = 0.05  # Fast polling for test
         step_dir = tmp_path / ".forge" / "implement_task"
         step_dir.mkdir(parents=True)
 
@@ -641,10 +602,7 @@ class TestPollerIntegration:
             settings=mock_settings,
         )
 
-        # Start polling
-        poller.poll()
-
-        # Create file after starting poll
+        # Create file before starting loop (simulates file appearing during execution)
         cycle_data = {
             "cycle": 1,
             "max_cycles": 3,
@@ -656,15 +614,13 @@ class TestPollerIntegration:
         }
         (step_dir / "review_cycle_1.json").write_text(json.dumps(cycle_data))
 
-        # Poll and check detection
         detected = []
-        for _ in range(5):  # Max 5 iterations
-            result = await poller.__anext__()
-            detected.extend(result)
-            if detected:
-                break
 
-        poller.stop()
+        def callback(new_cycles):
+            detected.extend(new_cycles)
+            poller.stop()
+
+        await poller.run_loop(callback)
 
         assert len(detected) == 1
         assert detected[0].cycle == 1

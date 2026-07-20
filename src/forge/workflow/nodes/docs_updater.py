@@ -7,7 +7,7 @@ from forge.config import get_settings
 from forge.prompts import load_prompt
 from forge.sandbox import ContainerRunner
 from forge.workflow.feature.state import FeatureState as WorkflowState
-from forge.workflow.utils import collect_review_exhaustion, update_state_timestamp
+from forge.workflow.utils import merge_review_exhaustion, update_state_timestamp
 from forge.workspace.git_ops import GitOperations
 from forge.workspace.manager import Workspace
 
@@ -63,10 +63,7 @@ async def update_documentation(state: WorkflowState) -> WorkflowState:
             skill_name="update-docs",
         )
 
-        exhaustion = collect_review_exhaustion(result, ticket_key, "update_docs")
-        if exhaustion:
-            key, data = exhaustion
-            state = {**state, "review_exhaustion_report": {key: data}}
+        state = merge_review_exhaustion(state, result, ticket_key, "update_docs")
 
         git = GitOperations(
             Workspace(

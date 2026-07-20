@@ -11,7 +11,7 @@ from forge.models.workflow import ForgeLabel
 from forge.prompts import load_prompt
 from forge.sandbox import ContainerRunner
 from forge.workflow.bug.state import BugState
-from forge.workflow.utils import collect_review_exhaustion, update_state_timestamp
+from forge.workflow.utils import merge_review_exhaustion, update_state_timestamp
 from forge.workflow.utils.jira_status import post_status_comment
 
 logger = logging.getLogger(__name__)
@@ -108,10 +108,7 @@ async def analyze_bug(state: BugState) -> BugState:
                 skill_name="analyze-bug",
             )
 
-            exhaustion = collect_review_exhaustion(result, ticket_key, "analyze_bug")
-            if exhaustion:
-                key, data = exhaustion
-                state = {**state, "review_exhaustion_report": {key: data}}
+            state = merge_review_exhaustion(state, result, ticket_key, "analyze_bug")
 
             if not result.success:
                 raise RuntimeError(
@@ -261,10 +258,7 @@ async def reflect_rca(state: BugState) -> BugState:
                 skill_name="reflect-rca",
             )
 
-            exhaustion = collect_review_exhaustion(result, ticket_key, "reflect_rca")
-            if exhaustion:
-                key, data = exhaustion
-                state = {**state, "review_exhaustion_report": {key: data}}
+            state = merge_review_exhaustion(state, result, ticket_key, "reflect_rca")
 
             if not result.success:
                 raise RuntimeError(

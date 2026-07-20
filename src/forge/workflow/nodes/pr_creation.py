@@ -232,13 +232,6 @@ async def create_pull_request(state: WorkflowState) -> WorkflowState:
         if not pr_body:
             pr_body = _build_pr_body(state, implemented_tasks)
 
-        # Append auto-review exhaustion section if any reviews failed
-        exhaustion_section = _format_review_exhaustion_section(
-            state.get("review_exhaustion_report", {})
-        )
-        if exhaustion_section:
-            pr_body = pr_body + "\n\n" + exhaustion_section
-
         project_key = ticket_key.split("-")[0] if "-" in ticket_key else ticket_key
         is_draft = await jira.is_repo_draft(project_key, current_repo)
 
@@ -309,6 +302,28 @@ async def create_pull_request(state: WorkflowState) -> WorkflowState:
             pr_number=pr_number,
             attempt=0,
         )
+
+        # Append auto-review exhaustion section AFTER sync_pr_description
+        # (sync rewrites the body with an AI agent that would drop this section)
+        if pr_number is not None:
+            exhaustion_section = _format_review_exhaustion_section(
+                state.get("review_exhaustion_report", {})
+            )
+            if exhaustion_section:
+                try:
+                    pr_data = await github.get_pull_request(
+                        pr_target.owner, pr_target.repo, pr_number
+                    )
+                    current_body = pr_data.get("body", "") or ""
+                    await github.update_pull_request(
+                        pr_target.owner,
+                        pr_target.repo,
+                        pr_number,
+                        body=current_body + "\n\n" + exhaustion_section,
+                    )
+                    logger.info("Appended auto-review exhaustion section to PR body")
+                except Exception as e:
+                    logger.warning(f"Failed to append review exhaustion section: {e}")
 
         return update_state_timestamp(
             {
