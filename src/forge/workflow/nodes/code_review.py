@@ -60,7 +60,7 @@ async def run_post_change_review(
         )
 
         runner = ContainerRunner(settings)
-        await runner.run(
+        result = await runner.run(
             workspace_path=Path(workspace_path),
             task_summary=f"Post-{label} code review",
             task_description=task_description,
@@ -70,6 +70,12 @@ async def run_post_change_review(
             step_name="code_review",
             skill_name="review-code",
         )
+
+        if result.review_exhausted:
+            logger.warning(
+                f"Post-{label} review exhausted retries for {ticket_key} "
+                "(exhaustion data not propagated to state from utility function)"
+            )
 
         git = GitOperations(
             Workspace(

@@ -235,8 +235,8 @@ def git_commit(workspace: Path, message: str) -> bool:
             capture_output=True,
         )
         if ls_result.returncode != 0:
-            logger.warning(f"git ls-files failed: {ls_result.stderr}")
-            new_files = []
+            logger.error(f"git ls-files failed: {ls_result.stderr}")
+            return False
         else:
             new_files = [
                 f
@@ -732,6 +732,7 @@ async def run_worker_with_feedback(
     guardrails: str,
     feedback: str,
     previous_task_keys: list[str] | None = None,
+    trace_context: dict[str, Any] | None = None,
 ) -> bool:
     """Re-run worker agent with reviewer feedback injected.
 
@@ -743,6 +744,7 @@ async def run_worker_with_feedback(
         guardrails: Repository guidelines.
         feedback: Reviewer feedback to inject.
         previous_task_keys: List of previously implemented task keys.
+        trace_context: Workflow fields forwarded to Langfuse only.
 
     Returns:
         True if agent completed successfully.
@@ -760,6 +762,7 @@ async def run_worker_with_feedback(
         task_description=enhanced_description,
         guardrails=guardrails,
         previous_task_keys=previous_task_keys,
+        trace_context=trace_context,
     )
 
 
@@ -772,6 +775,7 @@ async def run_review_loop(
     skill_name: str,
     review_md_path: Path,
     previous_task_keys: list[str] | None = None,
+    trace_context: dict[str, Any] | None = None,
 ) -> bool:
     """Run the review loop after initial skill execution.
 
@@ -784,6 +788,7 @@ async def run_review_loop(
         skill_name: Name of the skill being reviewed.
         review_md_path: Path to the review.md file.
         previous_task_keys: List of previously implemented task keys.
+        trace_context: Workflow fields forwarded to Langfuse only.
 
     Returns:
         True if review loop completed successfully (approved or max retries).
@@ -799,6 +804,10 @@ async def run_review_loop(
         if len(instructions) > 200
         else f"Review instructions: {instructions}"
     )
+
+    if max_retries == 0:
+        logger.info(f"Review disabled (max_retries=0) for {skill_name}")
+        return True
 
     cycle = 0
     while cycle < max_retries:
@@ -857,13 +866,15 @@ async def run_review_loop(
                 guardrails=guardrails,
                 feedback=feedback,
                 previous_task_keys=previous_task_keys,
+                trace_context=trace_context,
             )
             if not worker_success:
                 logger.error(f"Worker retry failed on cycle {cycle}")
-                # Continue to next cycle anyway, let reviewer decide
+                break
 
     # Max retries exhausted - exit with success (BR-005)
-    logger.warning(f"Review loop exhausted max_retries ({max_retries}) for {skill_name}")
+    if max_retries > 0:
+        logger.warning(f"Review loop exhausted max_retries ({max_retries}) for {skill_name}")
     return True
 
 
@@ -1040,6 +1051,7 @@ def main():
                     skill_name=skill_name,
                     review_md_path=review_md_path,
                     previous_task_keys=previous_task_keys,
+                    trace_context=trace_context,
                 )
             )
         else:

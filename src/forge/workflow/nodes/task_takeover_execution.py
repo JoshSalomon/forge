@@ -14,7 +14,7 @@ from forge.workflow.nodes.git_persistence import (
 )
 from forge.workflow.nodes.workspace_setup import prepare_workspace
 from forge.workflow.task_takeover.state import TaskTakeoverState
-from forge.workflow.utils import update_state_timestamp
+from forge.workflow.utils import merge_review_exhaustion, update_state_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -123,8 +123,13 @@ async def execute_task_changes(state: TaskTakeoverState) -> TaskTakeoverState:
             ticket_key=ticket_key,
             task_key=current_task,
             repo_name=current_repo,
+            step_name="task_takeover_execution",
+            skill_name="implement-task",
             previous_task_keys=state.get("implemented_tasks", []),
         )
+
+        # Collect review exhaustion data (if auto-review ran and exhausted)
+        state = merge_review_exhaustion(state, result, current_task, "task_takeover_execution")
 
         # Initialize GitOperations on the host to stage and commit
         committed = False
