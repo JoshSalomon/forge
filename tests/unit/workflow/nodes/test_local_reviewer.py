@@ -407,7 +407,6 @@ class TestLocalReviewStepName:
                 return result
 
         mock_git = _make_mock_git()
-        mock_workspace = MagicMock()
 
         with (
             patch(
@@ -415,7 +414,6 @@ class TestLocalReviewStepName:
                 return_value=_CapturingRunner(),
             ),
             patch("forge.workflow.nodes.local_reviewer.GitOperations", return_value=mock_git),
-            patch("forge.workflow.nodes.local_reviewer.Workspace", return_value=mock_workspace),
         ):
             await local_review_changes(base_bug_review_state)
 
@@ -438,7 +436,6 @@ class TestLocalReviewStepName:
                 return result
 
         mock_git = _make_mock_git()
-        mock_workspace = MagicMock()
 
         with (
             patch(
@@ -446,7 +443,6 @@ class TestLocalReviewStepName:
                 return_value=_CapturingRunner(),
             ),
             patch("forge.workflow.nodes.local_reviewer.GitOperations", return_value=mock_git),
-            patch("forge.workflow.nodes.local_reviewer.Workspace", return_value=mock_workspace),
         ):
             await local_review_changes(base_feature_review_state)
 
