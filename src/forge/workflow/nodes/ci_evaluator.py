@@ -17,7 +17,7 @@ from forge.workflow.feature.state import FeatureState as WorkflowState
 from forge.workflow.nodes.code_review import run_post_change_review, sync_pr_description
 from forge.workflow.nodes.error_handler import notify_error
 from forge.workflow.nodes.workspace_setup import prepare_workspace
-from forge.workflow.utils import update_state_timestamp
+from forge.workflow.utils import merge_review_exhaustion, update_state_timestamp
 from forge.workflow.utils.jira_status import (
     post_status_comment,
     remove_implementing_label,
@@ -315,7 +315,7 @@ async def attempt_ci_fix(state: WorkflowState) -> WorkflowState:
         )
 
         runner = ContainerRunner(settings)
-        await runner.run(
+        result = await runner.run(
             workspace_path=Path(workspace_path),
             task_summary=f"Analyze CI failures (attempt {attempt})",
             task_description=analysis_prompt,
@@ -325,6 +325,7 @@ async def attempt_ci_fix(state: WorkflowState) -> WorkflowState:
             step_name="analyze_ci",
             skill_name="analyze-ci",
         )
+        state = merge_review_exhaustion(state, result, ticket_key, "analyze_ci")
 
         if not fix_plan_file.exists():
             logger.warning(f"No fix plan written for {ticket_key} — skipping fix phase")
@@ -345,7 +346,7 @@ async def attempt_ci_fix(state: WorkflowState) -> WorkflowState:
         fix_prompt = load_prompt("fix-ci", fix_plan=fix_plan)
 
         runner = ContainerRunner(settings)
-        await runner.run(
+        result = await runner.run(
             workspace_path=Path(workspace_path),
             task_summary=f"Apply CI fix plan (attempt {attempt})",
             task_description=fix_prompt,
@@ -355,6 +356,7 @@ async def attempt_ci_fix(state: WorkflowState) -> WorkflowState:
             step_name="fix_ci",
             skill_name="fix-ci",
         )
+        state = merge_review_exhaustion(state, result, ticket_key, "fix_ci")
 
         workspace = Workspace(
             path=Path(workspace_path),

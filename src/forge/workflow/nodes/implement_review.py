@@ -15,7 +15,7 @@ from forge.sandbox import ContainerRunner
 from forge.workflow.feature.state import FeatureState as WorkflowState
 from forge.workflow.nodes.code_review import run_post_change_review, sync_pr_description
 from forge.workflow.nodes.workspace_setup import prepare_workspace
-from forge.workflow.utils import set_paused, update_state_timestamp
+from forge.workflow.utils import merge_review_exhaustion, set_paused, update_state_timestamp
 from forge.workflow.utils.jira_status import post_status_comment
 from forge.workflow.utils.review_decisions import (
     merge_review_decisions,
@@ -256,7 +256,7 @@ async def implement_review(state: WorkflowState) -> WorkflowState:
         analysis_prompt = load_prompt("implement-review", ticket_key=ticket_key)
 
         runner = ContainerRunner(settings)
-        await runner.run(
+        result = await runner.run(
             workspace_path=Path(workspace_path),
             task_summary=f"Analyze PR review feedback for {ticket_key}",
             task_description=analysis_prompt,
@@ -266,6 +266,7 @@ async def implement_review(state: WorkflowState) -> WorkflowState:
             step_name="implement_review_analyze",
             skill_name="implement-review",
         )
+        state = merge_review_exhaustion(state, result, ticket_key, "implement_review_analyze")
 
         # ── Process per-thread dispositions ──────────────────────────────────
         decisions = _load_review_decisions(workspace_path)
@@ -309,7 +310,7 @@ async def implement_review(state: WorkflowState) -> WorkflowState:
             fix_prompt = load_prompt("implement-review-fix", ticket_key=ticket_key)
 
             runner = ContainerRunner(settings)
-            await runner.run(
+            result = await runner.run(
                 workspace_path=Path(workspace_path),
                 task_summary=f"Implement PR review plan for {ticket_key}",
                 task_description=fix_prompt,
@@ -319,6 +320,7 @@ async def implement_review(state: WorkflowState) -> WorkflowState:
                 step_name="implement_review_fix",
                 skill_name="implement-review",
             )
+            state = merge_review_exhaustion(state, result, ticket_key, "implement_review_fix")
 
             # Commit any uncommitted changes the container left
             if git.has_uncommitted_changes():

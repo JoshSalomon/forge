@@ -111,7 +111,7 @@ def parse_review_config(review_md_path: Path) -> ReviewConfig:
     env_value = os.environ.get(ENV_MAX_RETRIES)
     if env_value is not None:
         try:
-            env_max_retries = int(env_value)
+            env_max_retries = max(0, int(env_value))
         except ValueError:
             logger.warning(
                 "Invalid %s value %r, ignoring",
@@ -160,8 +160,8 @@ def parse_review_config(review_md_path: Path) -> ReviewConfig:
     max_retries = default_max_retries
     if isinstance(frontmatter, dict) and "max_retries" in frontmatter:
         fm_value = frontmatter["max_retries"]
-        if isinstance(fm_value, int):
-            max_retries = fm_value
+        if isinstance(fm_value, int) and not isinstance(fm_value, bool):
+            max_retries = max(0, fm_value)
         else:
             logger.warning(
                 "Invalid max_retries value %r in %s, using default",

@@ -315,13 +315,16 @@ async def create_pull_request(state: WorkflowState) -> WorkflowState:
                         pr_target.owner, pr_target.repo, pr_number
                     )
                     current_body = pr_data.get("body", "") or ""
-                    await github.update_pull_request(
-                        pr_target.owner,
-                        pr_target.repo,
-                        pr_number,
-                        body=current_body + "\n\n" + exhaustion_section,
-                    )
-                    logger.info("Appended auto-review exhaustion section to PR body")
+                    if "## Auto-Review Notes" in current_body:
+                        logger.debug("PR body already contains Auto-Review Notes — skipping append")
+                    else:
+                        await github.update_pull_request(
+                            pr_target.owner,
+                            pr_target.repo,
+                            pr_number,
+                            body=current_body + "\n\n" + exhaustion_section,
+                        )
+                        logger.info("Appended auto-review exhaustion section to PR body")
                 except Exception as e:
                     logger.warning(f"Failed to append review exhaustion section: {e}")
 
