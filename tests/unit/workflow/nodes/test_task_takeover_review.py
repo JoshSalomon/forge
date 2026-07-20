@@ -53,6 +53,8 @@ def _make_mock_runner(stdout: str) -> MagicMock:
     result.stdout = stdout
     result.stderr = ""
     result.error_message = None
+    result.review_cycles = []
+    result.review_exhausted = False
     runner.run = AsyncMock(return_value=result)
     return runner
 
