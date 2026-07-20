@@ -109,7 +109,10 @@ class TestRunQualitativeReview:
         with (
             patch("forge.workflow.nodes.task_takeover_review.JiraClient", return_value=mock_jira),
             patch("forge.workflow.nodes.task_takeover_review.GitOperations") as mock_git,
-            patch("forge.workflow.nodes.task_takeover_review.ContainerRunner", return_value=mock_runner),
+            patch(
+                "forge.workflow.nodes.task_takeover_review.ContainerRunner",
+                return_value=mock_runner,
+            ),
             patch("forge.workflow.nodes.task_takeover_review.prepare_workspace") as mock_prepare,
         ):
             mock_git_instance = MagicMock()
@@ -150,7 +153,10 @@ class TestRunQualitativeReview:
         with (
             patch("forge.workflow.nodes.task_takeover_review.JiraClient", return_value=mock_jira),
             patch("forge.workflow.nodes.task_takeover_review.GitOperations") as mock_git,
-            patch("forge.workflow.nodes.task_takeover_review.ContainerRunner", return_value=mock_runner),
+            patch(
+                "forge.workflow.nodes.task_takeover_review.ContainerRunner",
+                return_value=mock_runner,
+            ),
             patch("forge.workflow.nodes.task_takeover_review.prepare_workspace") as mock_prepare,
         ):
             mock_git_instance = MagicMock()
@@ -193,11 +199,12 @@ class TestRunQualitativeReview:
         mock_jira = _make_mock_jira()
         mock_jira.get_issue = AsyncMock(side_effect=RuntimeError("Jira connection failure"))
 
-        with patch(
-            "forge.workflow.nodes.task_takeover_review.JiraClient", return_value=mock_jira
-        ), patch(
-            "forge.workflow.nodes.task_takeover_review.prepare_workspace",
-            return_value=("/tmp/fake-workspace-review", MagicMock()),
+        with (
+            patch("forge.workflow.nodes.task_takeover_review.JiraClient", return_value=mock_jira),
+            patch(
+                "forge.workflow.nodes.task_takeover_review.prepare_workspace",
+                return_value=("/tmp/fake-workspace-review", MagicMock()),
+            ),
         ):
             result = await run_qualitative_review(base_task_state)
 

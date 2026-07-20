@@ -1,7 +1,5 @@
 """Unit tests for review exhaustion reporting utility."""
 
-
-
 from forge.observability.review_poller import ReviewCycleData
 from forge.sandbox.runner import ContainerResult
 from forge.workflow.nodes.pr_creation import _format_review_exhaustion_section
@@ -17,11 +15,19 @@ class TestReviewExhausted:
 
     def test_approved_not_exhausted(self):
         result = ContainerResult(
-            success=True, exit_code=0, stdout="", stderr="",
+            success=True,
+            exit_code=0,
+            stdout="",
+            stderr="",
             review_cycles=[
                 ReviewCycleData(
-                    cycle=1, max_cycles=3, verdict="approved",
-                    feedback="", skill="test", elapsed_seconds=1.0, timestamp="",
+                    cycle=1,
+                    max_cycles=3,
+                    verdict="approved",
+                    feedback="",
+                    skill="test",
+                    elapsed_seconds=1.0,
+                    timestamp="",
                 ),
             ],
         )
@@ -29,11 +35,19 @@ class TestReviewExhausted:
 
     def test_rejected_below_max_not_exhausted(self):
         result = ContainerResult(
-            success=True, exit_code=0, stdout="", stderr="",
+            success=True,
+            exit_code=0,
+            stdout="",
+            stderr="",
             review_cycles=[
                 ReviewCycleData(
-                    cycle=1, max_cycles=3, verdict="rejected",
-                    feedback="fix it", skill="test", elapsed_seconds=1.0, timestamp="",
+                    cycle=1,
+                    max_cycles=3,
+                    verdict="rejected",
+                    feedback="fix it",
+                    skill="test",
+                    elapsed_seconds=1.0,
+                    timestamp="",
                 ),
             ],
         )
@@ -41,15 +55,28 @@ class TestReviewExhausted:
 
     def test_rejected_at_max_is_exhausted(self):
         result = ContainerResult(
-            success=True, exit_code=0, stdout="", stderr="",
+            success=True,
+            exit_code=0,
+            stdout="",
+            stderr="",
             review_cycles=[
                 ReviewCycleData(
-                    cycle=1, max_cycles=2, verdict="rejected",
-                    feedback="fix it", skill="test", elapsed_seconds=1.0, timestamp="",
+                    cycle=1,
+                    max_cycles=2,
+                    verdict="rejected",
+                    feedback="fix it",
+                    skill="test",
+                    elapsed_seconds=1.0,
+                    timestamp="",
                 ),
                 ReviewCycleData(
-                    cycle=2, max_cycles=2, verdict="rejected",
-                    feedback="still broken", skill="test", elapsed_seconds=1.0, timestamp="",
+                    cycle=2,
+                    max_cycles=2,
+                    verdict="rejected",
+                    feedback="still broken",
+                    skill="test",
+                    elapsed_seconds=1.0,
+                    timestamp="",
                 ),
             ],
         )
@@ -57,15 +84,28 @@ class TestReviewExhausted:
 
     def test_approved_at_max_not_exhausted(self):
         result = ContainerResult(
-            success=True, exit_code=0, stdout="", stderr="",
+            success=True,
+            exit_code=0,
+            stdout="",
+            stderr="",
             review_cycles=[
                 ReviewCycleData(
-                    cycle=1, max_cycles=2, verdict="rejected",
-                    feedback="fix it", skill="test", elapsed_seconds=1.0, timestamp="",
+                    cycle=1,
+                    max_cycles=2,
+                    verdict="rejected",
+                    feedback="fix it",
+                    skill="test",
+                    elapsed_seconds=1.0,
+                    timestamp="",
                 ),
                 ReviewCycleData(
-                    cycle=2, max_cycles=2, verdict="approved",
-                    feedback="", skill="test", elapsed_seconds=1.0, timestamp="",
+                    cycle=2,
+                    max_cycles=2,
+                    verdict="approved",
+                    feedback="",
+                    skill="test",
+                    elapsed_seconds=1.0,
+                    timestamp="",
                 ),
             ],
         )
@@ -81,12 +121,19 @@ class TestCollectReviewExhaustion:
 
     def test_returns_none_when_approved(self):
         result = ContainerResult(
-            success=True, exit_code=0, stdout="", stderr="",
+            success=True,
+            exit_code=0,
+            stdout="",
+            stderr="",
             review_cycles=[
                 ReviewCycleData(
-                    cycle=1, max_cycles=3, verdict="approved",
-                    feedback="", skill="implement-task",
-                    elapsed_seconds=5.0, timestamp="",
+                    cycle=1,
+                    max_cycles=3,
+                    verdict="approved",
+                    feedback="",
+                    skill="implement-task",
+                    elapsed_seconds=5.0,
+                    timestamp="",
                 ),
             ],
         )
@@ -94,17 +141,28 @@ class TestCollectReviewExhaustion:
 
     def test_returns_dict_when_exhausted(self):
         result = ContainerResult(
-            success=True, exit_code=0, stdout="", stderr="",
+            success=True,
+            exit_code=0,
+            stdout="",
+            stderr="",
             review_cycles=[
                 ReviewCycleData(
-                    cycle=1, max_cycles=2, verdict="rejected",
-                    feedback="missing tests", skill="implement-task",
-                    elapsed_seconds=5.0, timestamp="",
+                    cycle=1,
+                    max_cycles=2,
+                    verdict="rejected",
+                    feedback="missing tests",
+                    skill="implement-task",
+                    elapsed_seconds=5.0,
+                    timestamp="",
                 ),
                 ReviewCycleData(
-                    cycle=2, max_cycles=2, verdict="rejected",
-                    feedback="still missing tests", skill="implement-task",
-                    elapsed_seconds=3.0, timestamp="",
+                    cycle=2,
+                    max_cycles=2,
+                    verdict="rejected",
+                    feedback="still missing tests",
+                    skill="implement-task",
+                    elapsed_seconds=3.0,
+                    timestamp="",
                 ),
             ],
         )

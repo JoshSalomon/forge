@@ -11,7 +11,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[3] / "containers"))
 
 
-
 # ---------------------------------------------------------------------------
 # Test _create_llm_model
 # ---------------------------------------------------------------------------
@@ -89,9 +88,7 @@ class TestRunReviewerAgent:
         from entrypoint import run_reviewer_agent
 
         mock_agent = MagicMock()
-        mock_agent.ainvoke = AsyncMock(return_value={
-            "messages": [MagicMock(content="APPROVED")]
-        })
+        mock_agent.ainvoke = AsyncMock(return_value={"messages": [MagicMock(content="APPROVED")]})
         mock_create = MagicMock(return_value=mock_agent)
 
         with (
@@ -113,9 +110,9 @@ class TestRunReviewerAgent:
         from entrypoint import run_reviewer_agent
 
         mock_agent = MagicMock()
-        mock_agent.ainvoke = AsyncMock(return_value={
-            "messages": [MagicMock(content="REJECTED: bad code")]
-        })
+        mock_agent.ainvoke = AsyncMock(
+            return_value={"messages": [MagicMock(content="REJECTED: bad code")]}
+        )
         mock_create = MagicMock(return_value=mock_agent)
 
         with (
@@ -138,12 +135,12 @@ class TestRunReviewerAgent:
         from entrypoint import run_reviewer_agent
 
         mock_agent = MagicMock()
-        mock_agent.ainvoke = AsyncMock(return_value={
-            "messages": [MagicMock(content="APPROVED")]
-        })
+        mock_agent.ainvoke = AsyncMock(return_value={"messages": [MagicMock(content="APPROVED")]})
 
         with (
-            patch("entrypoint._create_llm_model", return_value=("test-model", MagicMock())) as mock_create_model,
+            patch(
+                "entrypoint._create_llm_model", return_value=("test-model", MagicMock())
+            ) as mock_create_model,
             patch("deepagents.create_deep_agent", return_value=mock_agent),
             patch("deepagents.backends.LocalShellBackend"),
         ):
@@ -257,7 +254,9 @@ class TestRunReviewLoop:
             mock_reviewer.assert_called_once()
 
             # Check cycle file was written
-            cycle_file = tmp_path / ".forge" / "reviews" / "TEST-123__test-skill" / "review_cycle_1.json"
+            cycle_file = (
+                tmp_path / ".forge" / "reviews" / "TEST-123__test-skill" / "review_cycle_1.json"
+            )
             assert cycle_file.exists()
             cycle_data = json.loads(cycle_file.read_text())
             assert cycle_data["verdict"] == "approved"
@@ -441,7 +440,13 @@ class TestRunReviewLoop:
             )
 
             # Check file path matches spec
-            cycle_file = tmp_path / ".forge" / "reviews" / "TEST-123__my-custom-skill" / "review_cycle_1.json"
+            cycle_file = (
+                tmp_path
+                / ".forge"
+                / "reviews"
+                / "TEST-123__my-custom-skill"
+                / "review_cycle_1.json"
+            )
             assert cycle_file.exists()
 
     @pytest.mark.asyncio
@@ -498,7 +503,9 @@ class TestRunReviewLoop:
                 review_md_path=review_md,
             )
 
-            cycle_file = tmp_path / ".forge" / "reviews" / "TEST-123__test-skill" / "review_cycle_1.json"
+            cycle_file = (
+                tmp_path / ".forge" / "reviews" / "TEST-123__test-skill" / "review_cycle_1.json"
+            )
             cycle_data = json.loads(cycle_file.read_text())
 
             # elapsed_seconds should be a positive float
@@ -534,7 +541,9 @@ class TestRunReviewLoop:
             assert result is True
 
             # Check that rejection was recorded
-            cycle_file = tmp_path / ".forge" / "reviews" / "TEST-123__test-skill" / "review_cycle_1.json"
+            cycle_file = (
+                tmp_path / ".forge" / "reviews" / "TEST-123__test-skill" / "review_cycle_1.json"
+            )
             cycle_data = json.loads(cycle_file.read_text())
             assert cycle_data["verdict"] == "rejected"
 
@@ -723,5 +732,3 @@ class TestMainReviewLoopIntegration:
 # ---------------------------------------------------------------------------
 # Test _print_review_progress (SC-011)
 # ---------------------------------------------------------------------------
-
-

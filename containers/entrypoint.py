@@ -823,7 +823,6 @@ async def run_review_loop(
         elapsed = time.perf_counter() - cycle_start
         timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-
         logger.info(f"Review verdict: {verdict}, elapsed: {elapsed:.2f}s")
         if feedback:
             logger.info(

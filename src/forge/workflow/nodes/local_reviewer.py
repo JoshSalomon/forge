@@ -261,7 +261,6 @@ async def _run_bug_review(state: WorkflowState, git: GitOperations) -> WorkflowS
         )
 
 
-
 async def _run_feature_review(state: WorkflowState, git: GitOperations) -> WorkflowState:
     """Run mechanical local review for non-bug tickets (existing behavior)."""
     ticket_key = state["ticket_key"]

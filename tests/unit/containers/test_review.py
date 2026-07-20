@@ -340,7 +340,8 @@ class TestFindSkillFile:
         project_file.write_text("Project override")
 
         result = find_skill_file(
-            "implement-task", "review.md",
+            "implement-task",
+            "review.md",
             [str(tmp_path / "skill_0"), str(tmp_path / "skill_1")],
         )
 
@@ -357,7 +358,8 @@ class TestFindSkillFile:
         (tmp_path / "skill_1").mkdir(parents=True)
 
         result = find_skill_file(
-            "implement-task", "review.md",
+            "implement-task",
+            "review.md",
             [str(tmp_path / "skill_0"), str(tmp_path / "skill_1")],
         )
 
@@ -367,7 +369,8 @@ class TestFindSkillFile:
         (tmp_path / "skill_0").mkdir(parents=True)
 
         result = find_skill_file(
-            "implement-task", "review.md",
+            "implement-task",
+            "review.md",
             [str(tmp_path / "skill_0")],
         )
 
@@ -907,9 +910,15 @@ class TestWriteCycleFile:
         assert (workspace / ".forge" / "reviews" / "TEST-1__impl" / "review_cycle_3.json").exists()
 
         # Verify content of each
-        data1 = json.loads((workspace / ".forge" / "reviews" / "TEST-1__impl" / "review_cycle_1.json").read_text())
-        data2 = json.loads((workspace / ".forge" / "reviews" / "TEST-1__impl" / "review_cycle_2.json").read_text())
-        data3 = json.loads((workspace / ".forge" / "reviews" / "TEST-1__impl" / "review_cycle_3.json").read_text())
+        data1 = json.loads(
+            (workspace / ".forge" / "reviews" / "TEST-1__impl" / "review_cycle_1.json").read_text()
+        )
+        data2 = json.loads(
+            (workspace / ".forge" / "reviews" / "TEST-1__impl" / "review_cycle_2.json").read_text()
+        )
+        data3 = json.loads(
+            (workspace / ".forge" / "reviews" / "TEST-1__impl" / "review_cycle_3.json").read_text()
+        )
 
         assert data1["verdict"] == "rejected"
         assert data2["verdict"] == "rejected"
@@ -1089,7 +1098,9 @@ class TestWriteCycleFile:
 
         write_cycle_file(workspace, "TEST-1", "local-code-review", cycle_data)
 
-        assert (workspace / ".forge" / "reviews" / "TEST-1__local-code-review" / "review_cycle_1.json").exists()
+        assert (
+            workspace / ".forge" / "reviews" / "TEST-1__local-code-review" / "review_cycle_1.json"
+        ).exists()
 
     def test_step_name_with_underscores(self, tmp_path: Path):
         """Step name with underscores is handled correctly."""
@@ -1108,4 +1119,6 @@ class TestWriteCycleFile:
 
         write_cycle_file(workspace, "TEST-1", "my_step_name", cycle_data)
 
-        assert (workspace / ".forge" / "reviews" / "TEST-1__my_step_name" / "review_cycle_1.json").exists()
+        assert (
+            workspace / ".forge" / "reviews" / "TEST-1__my_step_name" / "review_cycle_1.json"
+        ).exists()
