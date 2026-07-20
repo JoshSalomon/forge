@@ -15,7 +15,7 @@ from forge.workflow.nodes.review_utils import (
 )
 from forge.workflow.nodes.workspace_setup import prepare_workspace
 from forge.workflow.task_takeover.state import TaskTakeoverState as WorkflowState
-from forge.workflow.utils import update_state_timestamp
+from forge.workflow.utils import merge_review_exhaustion, update_state_timestamp
 from forge.workspace.git_ops import GitOperations
 from forge.workspace.manager import Workspace
 
@@ -99,7 +99,7 @@ async def run_qualitative_review(state: WorkflowState) -> WorkflowState:
         )
 
         runner = ContainerRunner(settings)
-        _, response = await run_review_container(
+        result, response = await run_review_container(
             runner,
             workspace_path=Path(workspace_path),
             task_summary=f"Review task takeover changes for {current_task}",
@@ -109,7 +109,11 @@ async def run_qualitative_review(state: WorkflowState) -> WorkflowState:
             task_key=f"{current_task}-review",
             repo_name=current_repo,
             previous_task_keys=state.get("implemented_tasks", []),
+            step_name="task_takeover_review",
+            skill_name="local-code-review",
         )
+
+        state = merge_review_exhaustion(state, result, ticket_key, "task_takeover_review")
 
         # Parse verdict and feedback
         verdict, feedback = _parse_qualitative_review(response)
