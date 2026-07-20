@@ -9,7 +9,6 @@ import pytest
 from forge.observability.review_poller import ReviewCycleData
 from forge.observability.review_recorder import ReviewCycleRecorder
 
-
 # ---------------------------------------------------------------------------
 # ReviewCycleRecorder initialization tests
 # ---------------------------------------------------------------------------

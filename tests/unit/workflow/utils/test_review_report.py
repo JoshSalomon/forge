@@ -1,8 +1,6 @@
 """Unit tests for review exhaustion reporting utility."""
 
-from unittest.mock import MagicMock
 
-import pytest
 
 from forge.observability.review_poller import ReviewCycleData
 from forge.sandbox.runner import ContainerResult

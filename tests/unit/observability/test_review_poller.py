@@ -498,7 +498,7 @@ class TestRunLoop:
 
         running_during_loop = False
 
-        def callback(cycles):
+        def callback(_cycles):
             nonlocal running_during_loop
             running_during_loop = poller._running
             poller.stop()
@@ -528,7 +528,7 @@ class TestRunLoop:
             poller.stop()
 
         asyncio.get_event_loop().create_task(stop_soon())
-        await poller.run_loop(lambda cycles: None)
+        await poller.run_loop(lambda _cycles: None)
 
         assert poller._running is False
 
@@ -546,7 +546,7 @@ class TestRunLoop:
             # Stop after first sleep call
             mock_sleep.side_effect = [None, asyncio.CancelledError()]
             with pytest.raises(asyncio.CancelledError):
-                await poller.run_loop(lambda cycles: None)
+                await poller.run_loop(lambda _cycles: None)
 
         mock_sleep.assert_awaited_with(0.5)
 
