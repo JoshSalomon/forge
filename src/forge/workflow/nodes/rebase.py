@@ -16,7 +16,7 @@ from forge.prompts import load_prompt
 from forge.sandbox import ContainerRunner
 from forge.workflow.feature.state import FeatureState as WorkflowState
 from forge.workflow.nodes.workspace_setup import get_workspace_manager
-from forge.workflow.utils import collect_review_exhaustion, update_state_timestamp
+from forge.workflow.utils import merge_review_exhaustion, update_state_timestamp
 from forge.workflow.utils.jira_status import post_status_comment
 from forge.workspace.git_ops import GitOperations
 
@@ -160,10 +160,7 @@ async def rebase_pr(state: WorkflowState) -> WorkflowState:
             step_name="rebase",
         )
 
-        exhaustion = collect_review_exhaustion(result, ticket_key, "rebase")
-        if exhaustion:
-            key, data = exhaustion
-            state = {**state, "review_exhaustion_report": {key: data}}
+        state = merge_review_exhaustion(state, result, ticket_key, "rebase")
 
         if result.exit_code != 0:
             logger.error(

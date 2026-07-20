@@ -12,63 +12,17 @@ The step name is passed to the recorder constructor and used to organize
 recorded files into step-specific subdirectories.
 """
 
-import json
 import logging
 import shutil
-from dataclasses import asdict, dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Literal
+
+from forge.observability.review_poller import ReviewCycleData
 
 logger = logging.getLogger(__name__)
 
 # Type alias for recording modes
 RecordingMode = Literal["log", "copy"] | None
-
-
-@dataclass
-class ReviewCycleData:
-    """Data captured for a single review cycle iteration.
-
-    This dataclass stores all fields specified in the Epic spec for
-    review cycle recording and observability.
-
-    Attributes:
-        cycle: Current cycle number (1-indexed).
-        max_cycles: Maximum cycles allowed.
-        verdict: Review outcome ("approved" or "rejected").
-        feedback: Reviewer feedback text.
-        skill: Name of the skill that performed the review.
-        elapsed_seconds: Time taken for this review cycle.
-        timestamp: Datetime of cycle completion.
-    """
-
-    cycle: int
-    max_cycles: int
-    verdict: str
-    feedback: str
-    skill: str
-    elapsed_seconds: float
-    timestamp: datetime
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary with ISO 8601 formatted timestamp.
-
-        Returns:
-            Dictionary representation suitable for JSON serialization.
-        """
-        data = asdict(self)
-        # Convert datetime to ISO 8601 string
-        data["timestamp"] = self.timestamp.isoformat()
-        return data
-
-    def to_json(self) -> str:
-        """Convert to JSON string with pretty printing.
-
-        Returns:
-            JSON string representation.
-        """
-        return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)
 
 
 class ReviewCycleRecorder:

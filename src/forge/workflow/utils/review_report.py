@@ -41,3 +41,20 @@ def collect_review_exhaustion(
         ],
     }
     return key, data
+
+
+def merge_review_exhaustion(
+    state: dict[str, Any],
+    container_result: ContainerResult,
+    task_key: str,
+    step_name: str,
+) -> dict[str, Any]:
+    """Merge review exhaustion data into state if review cycles were exhausted.
+
+    Returns the state unchanged if review passed or no review ran.
+    """
+    exhaustion = collect_review_exhaustion(container_result, task_key, step_name)
+    if exhaustion:
+        key, data = exhaustion
+        return {**state, "review_exhaustion_report": {key: data}}
+    return state

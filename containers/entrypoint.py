@@ -42,46 +42,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# TTY detection for terminal progress display
-_IS_TTY = sys.stdout.isatty()
-
-
-def _print_review_progress(
-    cycle: int,
-    max_cycles: int,
-    verdict: str,
-    feedback: str,
-) -> None:
-    """Print review cycle progress to terminal (TTY only).
-
-    Displays progress in format: "Review cycle N/M: VERDICT - [truncated feedback]"
-    Only prints when stdout is a TTY (local/terminal mode).
-
-    Args:
-        cycle: Current cycle number (1-indexed).
-        max_cycles: Maximum cycles allowed.
-        verdict: Review verdict (e.g., "approved", "rejected").
-        feedback: Reviewer feedback text to truncate.
-    """
-    if not _IS_TTY:
-        return
-
-    # Build progress message
-    verdict_upper = verdict.upper()
-    message = f"Review cycle {cycle}/{max_cycles}: {verdict_upper}"
-
-    # Append truncated feedback for rejections
-    if feedback:
-        max_feedback_len = 200
-        if len(feedback) > max_feedback_len:
-            truncated = feedback[:max_feedback_len] + "..."
-        else:
-            truncated = feedback
-        message = f"{message} - {truncated}"
-
-    # Print immediately (flush ensures display within 1 second of call)
-    print(message, flush=True)
-
 
 # Enable LangChain debug/verbose mode if requested
 if os.environ.get("LANGCHAIN_VERBOSE", "").lower() in ("true", "1", "yes"):
@@ -404,6 +364,183 @@ def resolve_container_trace_fields(trace_state: dict[str, Any]) -> tuple[list[st
     return tags, metadata
 
 
+def _create_llm_model(max_tokens_default: int = 16384):
+    """Create the LLM model from environment configuration.
+
+    Args:
+        max_tokens_default: Default max tokens if LLM_MAX_TOKENS is not set.
+
+    Returns:
+        Tuple of (model_name, model) where model is a LangChain chat model.
+
+    Raises:
+        RuntimeError: If credentials are missing or Gemini is used without Vertex AI.
+    """
+    model_name = os.environ.get("LLM_MODEL") or os.environ.get(
+        "CLAUDE_MODEL", "claude-sonnet-4-5@20250929"
+    )
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    vertex_project = os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID")
+
+    if not api_key and not vertex_project:
+        raise RuntimeError(
+            "No API credentials found (ANTHROPIC_API_KEY or ANTHROPIC_VERTEX_PROJECT_ID)"
+        )
+
+    is_gemini = model_name.lower().startswith(("gemini", "models/gemini"))
+    max_tokens = int(os.environ.get("LLM_MAX_TOKENS", str(max_tokens_default)))
+
+    if vertex_project:
+        if is_gemini:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+
+            logger.info(f"Using Gemini model: {model_name}, max_output_tokens={max_tokens}")
+            model = ChatGoogleGenerativeAI(
+                model=model_name,
+                project=vertex_project,
+                location=os.environ.get("ANTHROPIC_VERTEX_REGION", "us-east5"),
+                vertexai=True,
+                max_output_tokens=max_tokens,
+            )
+        else:
+            from langchain_google_vertexai.model_garden import ChatAnthropicVertex
+
+            logger.info(f"Using Claude model: {model_name}, max_tokens={max_tokens}")
+            model = ChatAnthropicVertex(
+                model_name=model_name,
+                project=vertex_project,
+                location=os.environ.get("ANTHROPIC_VERTEX_REGION", "us-east5"),
+                max_tokens=max_tokens,
+            )
+    else:
+        if is_gemini:
+            raise RuntimeError(f"Gemini model '{model_name}' requires Vertex AI credentials")
+
+        from langchain_anthropic import ChatAnthropic
+
+        logger.info(f"Using Claude model: {model_name}, max_tokens={max_tokens}")
+        model = ChatAnthropic(
+            model=model_name,
+            api_key=api_key,
+            max_tokens=max_tokens,
+        )
+
+    return model_name, model
+
+
+def _discover_skill_paths(workspace: Path) -> list[str]:
+    """Parse AGENT_SKILL_PATHS env var and auto-discover workspace skill dirs.
+
+    Parses comma-separated paths from AGENT_SKILL_PATHS, ensures trailing
+    slashes, and checks common workspace locations (.claude/skills,
+    .agents/skills).
+
+    Args:
+        workspace: Path to the workspace directory.
+
+    Returns:
+        List of skill directory paths with trailing slashes.
+    """
+    skill_paths: list[str] = []
+    skill_paths_env = os.environ.get("AGENT_SKILL_PATHS", "")
+    if skill_paths_env:
+        for path in skill_paths_env.split(","):
+            path = path.strip()
+            if path:
+                # Ensure trailing slash for directory paths
+                if not path.endswith("/"):
+                    path = f"{path}/"
+                skill_paths.append(path)
+
+    # Auto-discover skill directories in the workspace
+    # Check common locations for project-specific skills
+    workspace_skill_dirs = [
+        workspace / ".claude" / "skills",
+        workspace / ".agents" / "skills",
+    ]
+    for skill_dir in workspace_skill_dirs:
+        if skill_dir.is_dir():
+            skill_path = f"{skill_dir}/"
+            if skill_path not in skill_paths:
+                skill_paths.append(skill_path)
+                logger.info(f"Auto-discovered workspace skills: {skill_dir}")
+
+    if skill_paths:
+        logger.info(f"Agent skills: {skill_paths}")
+
+    return skill_paths
+
+
+def _setup_langfuse_tracing(task_key: str, trace_state: dict) -> tuple[dict, bool]:
+    """Set up Langfuse tracing if credentials are available.
+
+    Imports CallbackHandler, creates handler, and prepares the config dict
+    with callbacks.  The caller must use ``propagate_attributes`` to wrap
+    the agent invocation when ``langfuse_enabled`` is True.
+
+    Args:
+        task_key: Jira task key for log context.
+        trace_state: Workflow fields forwarded to Langfuse (passed through
+            for the caller to use with ``propagate_attributes``).
+
+    Returns:
+        Tuple of (config dict with callbacks, langfuse_enabled flag).
+    """
+    _ = trace_state  # consumed by caller for propagate_attributes
+    config: dict = {}
+    langfuse_enabled = False
+    if os.environ.get("LANGFUSE_PUBLIC_KEY"):
+        try:
+            from langfuse.langchain import CallbackHandler
+
+            handler = CallbackHandler()
+            config["callbacks"] = [handler]
+            langfuse_enabled = True
+            logger.info(f"Langfuse tracing enabled for task {task_key}")
+        except ImportError:
+            logger.debug("Langfuse not installed, skipping tracing")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Langfuse: {e}")
+
+    return config, langfuse_enabled
+
+
+def _save_conversation_history(
+    workspace: Path, task_key: str, task_summary: str, result: dict
+) -> None:
+    """Save conversation messages to .forge/history/{task_key}.json.
+
+    Args:
+        workspace: Path to the workspace directory.
+        task_key: Jira task key.
+        task_summary: Short task summary.
+        result: Agent result dict containing messages.
+    """
+    try:
+        history_dir = workspace / ".forge" / "history"
+        history_dir.mkdir(parents=True, exist_ok=True)
+        history_file = history_dir / f"{task_key}.json"
+
+        # Extract messages from result and serialize
+        messages = result.get("messages", [])
+        history_data = {
+            "task_key": task_key,
+            "task_summary": task_summary,
+            "messages": [
+                {
+                    "role": getattr(msg, "type", "unknown"),
+                    "content": getattr(msg, "content", str(msg)),
+                    "tool_calls": getattr(msg, "tool_calls", None),
+                }
+                for msg in messages
+            ],
+        }
+        history_file.write_text(json.dumps(history_data, indent=2, default=str))
+        logger.info(f"Saved conversation history to {history_file}")
+    except Exception as e:
+        logger.warning(f"Failed to save conversation history: {e}")
+
+
 async def run_agent_task(
     workspace: Path,
     task_key: str,
@@ -424,30 +561,15 @@ async def run_agent_task(
         previous_task_keys: List of previously implemented task keys for handoff context.
         trace_context: Workflow fields forwarded to Langfuse only.
     """
-    # Support both new (LLM_MODEL) and legacy (CLAUDE_MODEL) env var names
-    model_name = os.environ.get("LLM_MODEL") or os.environ.get(
-        "CLAUDE_MODEL", "claude-sonnet-4-5@20250929"
-    )
     logger.info(f"Implementing task: {task_summary}")
-    logger.info(f"Model: {model_name}")
 
     try:
         from deepagents import create_deep_agent
         from deepagents.backends import LocalShellBackend
 
-        # Check for API credentials
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        vertex_project = os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID")
+        model_name, model = _create_llm_model(max_tokens_default=16384)
+        logger.info(f"Model: {model_name}")
 
-        if not api_key and not vertex_project:
-            logger.error(
-                "No API credentials found (ANTHROPIC_API_KEY or ANTHROPIC_VERTEX_PROJECT_ID)"
-            )
-            return False
-
-        # Create the agent with local shell backend (enables git commands)
-        # virtual_mode=False: we want real filesystem access, not virtual paths
-        # timeout=600: 10 minutes — allows long builds, test suites, and codegen
         backend = LocalShellBackend(
             root_dir=str(workspace),
             inherit_env=True,
@@ -465,80 +587,11 @@ async def run_agent_task(
             "llm_model": model_name,
         }
 
-        # Determine model type (Gemini vs Claude)
-        is_gemini = model_name.lower().startswith(("gemini", "models/gemini"))
-
-        # Get max tokens from env (default 16384)
-        max_tokens = int(os.environ.get("LLM_MAX_TOKENS", "16384"))
-
-        if vertex_project:
-            if is_gemini:
-                # Gemini models via ChatGoogleGenerativeAI with Vertex AI backend
-                from langchain_google_genai import ChatGoogleGenerativeAI
-
-                logger.info(f"Using Gemini model: {model_name}, max_output_tokens={max_tokens}")
-                model = ChatGoogleGenerativeAI(
-                    model=model_name,
-                    project=vertex_project,
-                    location=os.environ.get("ANTHROPIC_VERTEX_REGION", "us-east5"),
-                    vertexai=True,
-                    max_output_tokens=max_tokens,
-                )
-            else:
-                # Claude models via ChatAnthropicVertex
-                from langchain_google_vertexai.model_garden import ChatAnthropicVertex
-
-                logger.info(f"Using Claude model: {model_name}, max_tokens={max_tokens}")
-                model = ChatAnthropicVertex(
-                    model_name=model_name,
-                    project=vertex_project,
-                    location=os.environ.get("ANTHROPIC_VERTEX_REGION", "us-east5"),
-                    max_tokens=max_tokens,
-                )
-        else:
-            if is_gemini:
-                logger.error(f"Gemini model '{model_name}' requires Vertex AI credentials")
-                return False
-
-            from langchain_anthropic import ChatAnthropic
-
-            logger.info(f"Using Claude model: {model_name}, max_tokens={max_tokens}")
-            model = ChatAnthropic(
-                model=model_name,
-                api_key=api_key,
-                max_tokens=max_tokens,
-            )
-
         # Load Context7 MCP tools for library documentation
         mcp_tools = await load_context7_tools()
 
-        # Parse skill paths from environment (comma-separated)
-        skill_paths = []
-        skill_paths_env = os.environ.get("AGENT_SKILL_PATHS", "")
-        if skill_paths_env:
-            for path in skill_paths_env.split(","):
-                path = path.strip()
-                if path:
-                    # Ensure trailing slash for directory paths
-                    if not path.endswith("/"):
-                        path = f"{path}/"
-                    skill_paths.append(path)
-
-        # Auto-discover skill directories in the workspace
-        # Check common locations for project-specific skills
-        workspace_skill_dirs = [
-            workspace / ".claude" / "skills",
-            workspace / ".agents" / "skills",
-        ]
-        for skill_dir in workspace_skill_dirs:
-            if skill_dir.is_dir():
-                skill_path = f"{skill_dir}/"
-                if skill_path not in skill_paths:
-                    skill_paths.append(skill_path)
-                    logger.info(f"Auto-discovered workspace skills: {skill_dir}")
-
-        if skill_paths:
-            logger.info(f"Agent skills: {skill_paths}")
+        # Discover skill paths from env and workspace
+        skill_paths = _discover_skill_paths(workspace)
 
         # Create and run the agent.
         # Note: create_deep_agent already adds SummarizationMiddleware internally —
@@ -551,22 +604,8 @@ async def run_agent_task(
             skills=skill_paths if skill_paths else None,
         )
 
-        # Set up Langfuse tracing if credentials are available
-        config: dict = {}
-        langfuse_enabled = False
-        if os.environ.get("LANGFUSE_PUBLIC_KEY"):
-            try:
-                from langfuse import propagate_attributes
-                from langfuse.langchain import CallbackHandler
-
-                handler = CallbackHandler()
-                config["callbacks"] = [handler]
-                langfuse_enabled = True
-                logger.info(f"Langfuse tracing enabled for task {task_key}")
-            except ImportError:
-                logger.debug("Langfuse not installed, skipping tracing")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Langfuse: {e}")
+        # Set up Langfuse tracing
+        config, langfuse_enabled = _setup_langfuse_tracing(task_key, trace_state)
 
         # Run the agent (with Langfuse session context if enabled)
         initial_message = {
@@ -574,6 +613,8 @@ async def run_agent_task(
         }
 
         if langfuse_enabled:
+            from langfuse import propagate_attributes
+
             trace_tags, trace_metadata = resolve_container_trace_fields(trace_state)
             tags = ["forge-container", "task-implementation", *trace_tags]
             metadata = {"task_summary": task_summary, **trace_metadata}
@@ -595,30 +636,8 @@ async def run_agent_task(
             except Exception:
                 pass
 
-        # Save conversation history to .forge/history/{task_key}.json
-        try:
-            history_dir = workspace / ".forge" / "history"
-            history_dir.mkdir(parents=True, exist_ok=True)
-            history_file = history_dir / f"{task_key}.json"
-
-            # Extract messages from result and serialize
-            messages = result.get("messages", [])
-            history_data = {
-                "task_key": task_key,
-                "task_summary": task_summary,
-                "messages": [
-                    {
-                        "role": getattr(msg, "type", "unknown"),
-                        "content": getattr(msg, "content", str(msg)),
-                        "tool_calls": getattr(msg, "tool_calls", None),
-                    }
-                    for msg in messages
-                ],
-            }
-            history_file.write_text(json.dumps(history_data, indent=2, default=str))
-            logger.info(f"Saved conversation history to {history_file}")
-        except Exception as e:
-            logger.warning(f"Failed to save conversation history: {e}")
+        # Save conversation history
+        _save_conversation_history(workspace, task_key, task_summary, result)
 
         logger.info("Agent completed task execution")
         return True
@@ -646,34 +665,21 @@ async def run_reviewer_agent(
     Returns:
         The reviewer agent's output text.
     """
-    # Support both new (LLM_MODEL) and legacy (CLAUDE_MODEL) env var names
-    model_name = os.environ.get("LLM_MODEL") or os.environ.get(
-        "CLAUDE_MODEL", "claude-sonnet-4-5@20250929"
-    )
     logger.info(f"Running reviewer agent for {task_key}")
-    logger.info(f"Model: {model_name}")
 
     from deepagents import create_deep_agent
     from deepagents.backends import LocalShellBackend
 
-    # Check for API credentials
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    vertex_project = os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID")
+    model_name, model = _create_llm_model(max_tokens_default=8192)
+    logger.info(f"Model: {model_name}")
 
-    if not api_key and not vertex_project:
-        raise RuntimeError(
-            "No API credentials found (ANTHROPIC_API_KEY or ANTHROPIC_VERTEX_PROJECT_ID)"
-        )
-
-    # Create the agent with local shell backend (read-only access for review)
     backend = LocalShellBackend(
         root_dir=str(workspace),
         inherit_env=True,
         virtual_mode=False,
-        timeout=300,  # 5 minutes for review
+        timeout=300,
     )
 
-    # Build reviewer system prompt
     system_prompt = f"""You are a code reviewer agent. Your job is to review the implementation and provide a verdict.
 
 ## Review Instructions
@@ -689,44 +695,6 @@ Example outputs:
 - "REJECTED: The function is missing error handling. Please add try/except blocks."
 
 Be specific in your feedback if rejecting."""
-
-    # Determine model type (Gemini vs Claude)
-    is_gemini = model_name.lower().startswith(("gemini", "models/gemini"))
-
-    # Get max tokens from env (default 8192 for review)
-    max_tokens = int(os.environ.get("LLM_MAX_TOKENS", "8192"))
-
-    if vertex_project:
-        if is_gemini:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-
-            model = ChatGoogleGenerativeAI(
-                model=model_name,
-                project=vertex_project,
-                location=os.environ.get("ANTHROPIC_VERTEX_REGION", "us-east5"),
-                vertexai=True,
-                max_output_tokens=max_tokens,
-            )
-        else:
-            from langchain_google_vertexai.model_garden import ChatAnthropicVertex
-
-            model = ChatAnthropicVertex(
-                model_name=model_name,
-                project=vertex_project,
-                location=os.environ.get("ANTHROPIC_VERTEX_REGION", "us-east5"),
-                max_tokens=max_tokens,
-            )
-    else:
-        if is_gemini:
-            raise RuntimeError(f"Gemini model '{model_name}' requires Vertex AI credentials")
-
-        from langchain_anthropic import ChatAnthropic
-
-        model = ChatAnthropic(
-            model=model_name,
-            api_key=api_key,
-            max_tokens=max_tokens,
-        )
 
     # Create reviewer agent (no skills needed for review)
     agent = create_deep_agent(
@@ -754,29 +722,6 @@ Be specific in your feedback if rejecting."""
         content = getattr(last_message, "content", str(last_message))
         return content if isinstance(content, str) else str(content)
     return ""
-
-
-def load_conversation_history(workspace: Path, task_key: str) -> list[dict] | None:
-    """Load conversation history from .forge/history/{task_key}.json.
-
-    Args:
-        workspace: Path to the workspace directory.
-        task_key: Jira task key to load history for.
-
-    Returns:
-        List of message dicts or None if file doesn't exist.
-    """
-    history_file = workspace / ".forge" / "history" / f"{task_key}.json"
-    if not history_file.exists():
-        logger.warning(f"Conversation history not found: {history_file}")
-        return None
-
-    try:
-        history_data = json.loads(history_file.read_text())
-        return history_data.get("messages", [])
-    except Exception as e:
-        logger.warning(f"Failed to load conversation history: {e}")
-        return None
 
 
 async def run_worker_with_feedback(
@@ -807,11 +752,6 @@ async def run_worker_with_feedback(
     enhanced_description = task_description + feedback_section
 
     logger.info(f"Re-running worker with feedback for {task_key}")
-
-    # Load conversation history for context
-    history = load_conversation_history(workspace, task_key)
-    if history:
-        logger.info(f"Loaded {len(history)} messages from conversation history")
 
     return await run_agent_task(
         workspace=workspace,
@@ -883,8 +823,6 @@ async def run_review_loop(
         elapsed = time.perf_counter() - cycle_start
         timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        # Display terminal progress immediately (SC-011)
-        _print_review_progress(cycle, max_retries, verdict, feedback)
 
         logger.info(f"Review verdict: {verdict}, elapsed: {elapsed:.2f}s")
         if feedback:
@@ -930,6 +868,78 @@ async def run_review_loop(
     return True
 
 
+def _parse_task_config(args) -> dict:
+    """Parse task configuration from task file or CLI args.
+
+    Returns:
+        Dict with keys: task_key, task_summary, task_description,
+        skill_name, previous_task_keys, trace_context.
+
+    Raises:
+        SystemExit: With EXIT_CONFIG_ERROR on missing/invalid config.
+    """
+    previous_task_keys: list[str] = []
+    trace_context: dict[str, Any] = {}
+    task_key: str = "UNKNOWN"
+    if args.task_file:
+        if not args.task_file.exists():
+            logger.error(f"Task file not found: {args.task_file}")
+            sys.exit(EXIT_CONFIG_ERROR)
+
+        task_data = json.loads(args.task_file.read_text())
+        task_key = task_data.get("task_key", "UNKNOWN")
+        task_summary = task_data.get("summary", "")
+        task_description = task_data.get("description", "")
+        previous_task_keys = task_data.get("previous_task_keys", [])
+        raw_trace_context = task_data.get("trace_context", {})
+        trace_context = raw_trace_context if isinstance(raw_trace_context, dict) else {}
+        skill_name = task_data.get("skill_name", "")
+    elif args.task_summary and args.task_description:
+        task_summary = args.task_summary
+        task_description = args.task_description
+        skill_name = ""
+    else:
+        logger.error(
+            "Task details required: use --task-file or --task-summary + --task-description"
+        )
+        sys.exit(EXIT_CONFIG_ERROR)
+
+    return {
+        "task_key": task_key,
+        "task_summary": task_summary,
+        "task_description": task_description,
+        "skill_name": skill_name,
+        "previous_task_keys": previous_task_keys,
+        "trace_context": trace_context,
+    }
+
+
+def _fallback_commit(workspace: Path, task_key: str, task_summary: str) -> None:
+    """Check if workspace is a git repo and run git_commit() as fallback.
+
+    Skips if workspace is not a git repo -- analysis tasks (RCA, reflection)
+    write artifacts to .forge/ without needing a commit.
+
+    Raises:
+        SystemExit: With EXIT_TASK_FAILED if commit fails.
+    """
+    is_git_repo = (
+        subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=workspace,
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+    if is_git_repo:
+        fallback_message = (
+            f"[{task_key}] {task_summary}\n\nAuto-committed by Forge container fallback."
+        )
+        if not git_commit(workspace, fallback_message):
+            logger.error("Failed to commit changes")
+            sys.exit(EXIT_TASK_FAILED)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Forge container entrypoint for AI code implementation"
@@ -961,32 +971,14 @@ def main():
 
     args = parser.parse_args()
 
-    # Load task details
-    previous_task_keys: list[str] = []
-    trace_context: dict[str, Any] = {}
-    task_key: str = "UNKNOWN"
-    if args.task_file:
-        if not args.task_file.exists():
-            logger.error(f"Task file not found: {args.task_file}")
-            sys.exit(EXIT_CONFIG_ERROR)
-
-        task_data = json.loads(args.task_file.read_text())
-        task_key = task_data.get("task_key", "UNKNOWN")
-        task_summary = task_data.get("summary", "")
-        task_description = task_data.get("description", "")
-        previous_task_keys = task_data.get("previous_task_keys", [])
-        raw_trace_context = task_data.get("trace_context", {})
-        trace_context = raw_trace_context if isinstance(raw_trace_context, dict) else {}
-        skill_name = task_data.get("skill_name", "")
-    elif args.task_summary and args.task_description:
-        task_summary = args.task_summary
-        task_description = args.task_description
-        skill_name = ""
-    else:
-        logger.error(
-            "Task details required: use --task-file or --task-summary + --task-description"
-        )
-        sys.exit(EXIT_CONFIG_ERROR)
+    # Parse task configuration
+    task_config = _parse_task_config(args)
+    task_key = task_config["task_key"]
+    task_summary = task_config["task_summary"]
+    task_description = task_config["task_description"]
+    skill_name = task_config["skill_name"]
+    previous_task_keys = task_config["previous_task_keys"]
+    trace_context = task_config["trace_context"]
 
     workspace = args.workspace
     if not workspace.exists():
@@ -1057,24 +1049,8 @@ def main():
     else:
         logger.info("No skill_name provided, skipping review loop")
 
-    # Ensure changes are committed (agent should have done this, but as fallback).
-    # Skip if workspace is not a git repo — analysis tasks (RCA, reflection) write
-    # artifacts to .forge/ without needing a commit.
-    is_git_repo = (
-        subprocess.run(
-            ["git", "rev-parse", "--is-inside-work-tree"],
-            cwd=workspace,
-            capture_output=True,
-        ).returncode
-        == 0
-    )
-    if is_git_repo:
-        fallback_message = (
-            f"[{task_key}] {task_summary}\n\nAuto-committed by Forge container fallback."
-        )
-        if not git_commit(workspace, fallback_message):
-            logger.error("Failed to commit changes")
-            sys.exit(EXIT_TASK_FAILED)
+    # Ensure changes are committed (agent should have done this, but as fallback)
+    _fallback_commit(workspace, task_key, task_summary)
 
     logger.info("Task completed successfully")
     sys.exit(EXIT_SUCCESS)

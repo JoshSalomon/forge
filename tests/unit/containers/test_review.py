@@ -587,11 +587,10 @@ class TestParseVerdict:
     # ----- Partial matches should not be detected -----
 
     def test_approved_as_word_in_middle(self):
-        """APPROVED as substring in longer word is still detected (per current impl)."""
-        # NOTE: The spec doesn't mention word boundaries, so "APPROVED" in "UNAPPROVED"
-        # would still match. This documents current behavior.
+        """APPROVED as substring in longer word is NOT detected (word boundary matching)."""
+        # Word-boundary regex (\bAPPROVED\b) prevents false positives like "PREAPPROVED"
         result = parse_verdict("This is PREAPPROVED for the next phase")
-        assert result == (Verdict.APPROVED, "")
+        assert result == (Verdict.REJECTED, "Verdict could not be parsed")
 
     def test_rejected_as_word_in_middle(self):
         """REJECTED as substring is still detected (per current impl)."""

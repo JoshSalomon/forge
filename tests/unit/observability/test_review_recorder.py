@@ -1,139 +1,13 @@
 """Unit tests for the ReviewCycleRecorder class."""
 
-import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from forge.observability.review_recorder import (
-    ReviewCycleData,
-    ReviewCycleRecorder,
-)
-
-
-# ---------------------------------------------------------------------------
-# ReviewCycleData tests
-# ---------------------------------------------------------------------------
-
-
-class TestReviewCycleData:
-    """Tests for ReviewCycleData dataclass."""
-
-    def test_all_fields(self):
-        """Test that all fields are correctly stored."""
-        ts = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-        data = ReviewCycleData(
-            cycle=1,
-            max_cycles=3,
-            verdict="approved",
-            feedback="Looks good!",
-            skill="code-review",
-            elapsed_seconds=12.5,
-            timestamp=ts,
-        )
-        assert data.cycle == 1
-        assert data.max_cycles == 3
-        assert data.verdict == "approved"
-        assert data.feedback == "Looks good!"
-        assert data.skill == "code-review"
-        assert data.elapsed_seconds == 12.5
-        assert data.timestamp == ts
-
-    def test_timestamp_is_datetime(self):
-        """Test that timestamp field is datetime type."""
-        ts = datetime.now(timezone.utc)
-        data = ReviewCycleData(
-            cycle=1,
-            max_cycles=3,
-            verdict="approved",
-            feedback="",
-            skill="review",
-            elapsed_seconds=1.0,
-            timestamp=ts,
-        )
-        assert isinstance(data.timestamp, datetime)
-
-    def test_to_dict_returns_dict(self):
-        """Test to_dict returns a dictionary."""
-        ts = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-        data = ReviewCycleData(
-            cycle=2,
-            max_cycles=5,
-            verdict="rejected",
-            feedback="Needs fixes",
-            skill="local-code-review",
-            elapsed_seconds=8.3,
-            timestamp=ts,
-        )
-        result = data.to_dict()
-
-        assert isinstance(result, dict)
-        assert result["cycle"] == 2
-        assert result["max_cycles"] == 5
-        assert result["verdict"] == "rejected"
-        assert result["feedback"] == "Needs fixes"
-        assert result["skill"] == "local-code-review"
-        assert result["elapsed_seconds"] == 8.3
-
-    def test_to_dict_timestamp_is_iso_string(self):
-        """Test that to_dict converts timestamp to ISO 8601 string."""
-        ts = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-        data = ReviewCycleData(
-            cycle=1,
-            max_cycles=3,
-            verdict="approved",
-            feedback="",
-            skill="",
-            elapsed_seconds=0.0,
-            timestamp=ts,
-        )
-        result = data.to_dict()
-
-        assert isinstance(result["timestamp"], str)
-        assert "2024-01-15" in result["timestamp"]
-        assert "10:30:00" in result["timestamp"]
-
-    def test_to_json_returns_string(self):
-        """Test that to_json returns a JSON string."""
-        ts = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-        data = ReviewCycleData(
-            cycle=1,
-            max_cycles=3,
-            verdict="approved",
-            feedback="Good work",
-            skill="review",
-            elapsed_seconds=5.0,
-            timestamp=ts,
-        )
-        result = data.to_json()
-
-        assert isinstance(result, str)
-        # Should be valid JSON
-        parsed = json.loads(result)
-        assert parsed["cycle"] == 1
-        assert parsed["verdict"] == "approved"
-
-    def test_to_json_pretty_printed(self):
-        """Test that to_json output is pretty-printed with indentation."""
-        ts = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-        data = ReviewCycleData(
-            cycle=1,
-            max_cycles=3,
-            verdict="approved",
-            feedback="",
-            skill="",
-            elapsed_seconds=0.0,
-            timestamp=ts,
-        )
-        result = data.to_json()
-
-        # Should contain newlines (pretty printed)
-        assert "\n" in result
-        # Should contain indentation
-        assert "  " in result
+from forge.observability.review_poller import ReviewCycleData
+from forge.observability.review_recorder import ReviewCycleRecorder
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +94,7 @@ class TestReviewCycleRecorderRecord:
     def test_record_disabled_mode_does_nothing(self, caplog):
         """Test that record does nothing when mode is None."""
         recorder = ReviewCycleRecorder(step_name="test_step", mode=None)
-        ts = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+        ts = "2024-01-15T10:30:00+00:00"
         data = ReviewCycleData(
             cycle=1,
             max_cycles=3,
@@ -240,7 +114,7 @@ class TestReviewCycleRecorderRecord:
     def test_record_log_mode_logs_at_info_level(self, caplog):
         """Test that log mode records at INFO level."""
         recorder = ReviewCycleRecorder(step_name="implement_task", mode="log")
-        ts = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+        ts = "2024-01-15T10:30:00+00:00"
         data = ReviewCycleData(
             cycle=2,
             max_cycles=5,
@@ -260,7 +134,7 @@ class TestReviewCycleRecorderRecord:
     def test_record_log_mode_includes_cycle_info(self, caplog):
         """Test that log output includes cycle number and max cycles."""
         recorder = ReviewCycleRecorder(step_name="test_step", mode="log")
-        ts = datetime.now(timezone.utc)
+        ts = "2024-01-15T10:30:00+00:00"
         data = ReviewCycleData(
             cycle=3,
             max_cycles=5,
@@ -280,7 +154,7 @@ class TestReviewCycleRecorderRecord:
     def test_record_log_mode_includes_step_name(self, caplog):
         """Test that log output includes step name."""
         recorder = ReviewCycleRecorder(step_name="implement_task", mode="log")
-        ts = datetime.now(timezone.utc)
+        ts = "2024-01-15T10:30:00+00:00"
         data = ReviewCycleData(
             cycle=1,
             max_cycles=3,
@@ -300,7 +174,7 @@ class TestReviewCycleRecorderRecord:
     def test_record_log_mode_includes_verdict(self, caplog):
         """Test that log output includes verdict."""
         recorder = ReviewCycleRecorder(step_name="test_step", mode="log")
-        ts = datetime.now(timezone.utc)
+        ts = "2024-01-15T10:30:00+00:00"
         data = ReviewCycleData(
             cycle=1,
             max_cycles=3,
@@ -320,7 +194,7 @@ class TestReviewCycleRecorderRecord:
     def test_record_log_mode_includes_skill(self, caplog):
         """Test that log output includes skill name."""
         recorder = ReviewCycleRecorder(step_name="test_step", mode="log")
-        ts = datetime.now(timezone.utc)
+        ts = "2024-01-15T10:30:00+00:00"
         data = ReviewCycleData(
             cycle=1,
             max_cycles=3,
@@ -340,7 +214,7 @@ class TestReviewCycleRecorderRecord:
     def test_record_log_mode_includes_elapsed_seconds(self, caplog):
         """Test that log output includes elapsed seconds."""
         recorder = ReviewCycleRecorder(step_name="test_step", mode="log")
-        ts = datetime.now(timezone.utc)
+        ts = "2024-01-15T10:30:00+00:00"
         data = ReviewCycleData(
             cycle=1,
             max_cycles=3,
@@ -360,7 +234,7 @@ class TestReviewCycleRecorderRecord:
     def test_record_log_mode_includes_feedback(self, caplog):
         """Test that log output includes feedback."""
         recorder = ReviewCycleRecorder(step_name="test_step", mode="log")
-        ts = datetime.now(timezone.utc)
+        ts = "2024-01-15T10:30:00+00:00"
         data = ReviewCycleData(
             cycle=1,
             max_cycles=3,
@@ -380,7 +254,7 @@ class TestReviewCycleRecorderRecord:
     def test_record_log_mode_truncates_long_feedback(self, caplog):
         """Test that log output truncates feedback longer than 100 chars."""
         recorder = ReviewCycleRecorder(step_name="test_step", mode="log")
-        ts = datetime.now(timezone.utc)
+        ts = "2024-01-15T10:30:00+00:00"
         long_feedback = "x" * 150
         data = ReviewCycleData(
             cycle=1,

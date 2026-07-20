@@ -3,7 +3,7 @@
 import json
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,57 +11,149 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[3] / "containers"))
 
 
+
 # ---------------------------------------------------------------------------
-# Test load_conversation_history
+# Test _create_llm_model
 # ---------------------------------------------------------------------------
 
 
-class TestLoadConversationHistory:
-    def test_loads_existing_history(self, tmp_path: Path):
-        """Test loading conversation history from existing file (SC-003)."""
-        from entrypoint import load_conversation_history
+class TestCreateLlmModel:
+    def test_raises_without_credentials(self, monkeypatch):
+        """Test that missing credentials raises RuntimeError."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
 
-        # Create history file
-        history_dir = tmp_path / ".forge" / "history"
-        history_dir.mkdir(parents=True)
-        history_file = history_dir / "TEST-123.json"
-        history_data = {
-            "task_key": "TEST-123",
-            "messages": [
-                {"role": "user", "content": "Hello"},
-                {"role": "assistant", "content": "Hi there"},
-            ],
-        }
-        history_file.write_text(json.dumps(history_data))
+        from entrypoint import _create_llm_model
 
-        result = load_conversation_history(tmp_path, "TEST-123")
+        with pytest.raises(RuntimeError, match="No API credentials"):
+            _create_llm_model()
 
-        assert result is not None
-        assert len(result) == 2
-        assert result[0]["role"] == "user"
-        assert result[1]["role"] == "assistant"
+    def test_raises_gemini_without_vertex(self, monkeypatch):
+        """Test that Gemini model without Vertex AI raises RuntimeError."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
+        monkeypatch.setenv("LLM_MODEL", "gemini-pro")
 
-    def test_returns_none_when_file_missing(self, tmp_path: Path):
-        """Test returns None when history file doesn't exist."""
-        from entrypoint import load_conversation_history
+        from entrypoint import _create_llm_model
 
-        result = load_conversation_history(tmp_path, "MISSING-123")
+        with pytest.raises(RuntimeError, match="requires Vertex AI"):
+            _create_llm_model()
 
-        assert result is None
+    def test_creates_anthropic_model_with_api_key(self, monkeypatch):
+        """Test model creation with direct Anthropic API key."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
+        monkeypatch.setenv("LLM_MODEL", "claude-sonnet-4-5@20250929")
 
-    def test_returns_none_on_json_error(self, tmp_path: Path):
-        """Test returns None when JSON parsing fails."""
-        from entrypoint import load_conversation_history
+        from entrypoint import _create_llm_model
 
-        # Create malformed history file
-        history_dir = tmp_path / ".forge" / "history"
-        history_dir.mkdir(parents=True)
-        history_file = history_dir / "BAD-123.json"
-        history_file.write_text("not valid json")
+        name, model = _create_llm_model(max_tokens_default=8192)
+        assert name == "claude-sonnet-4-5@20250929"
+        assert model is not None
 
-        result = load_conversation_history(tmp_path, "BAD-123")
+    def test_respects_max_tokens_env_override(self, monkeypatch):
+        """Test that LLM_MAX_TOKENS env var overrides default."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
+        monkeypatch.setenv("LLM_MODEL", "claude-sonnet-4-5@20250929")
+        monkeypatch.setenv("LLM_MAX_TOKENS", "4096")
 
-        assert result is None
+        from entrypoint import _create_llm_model
+
+        name, model = _create_llm_model(max_tokens_default=16384)
+        assert model is not None
+
+    def test_creates_vertex_claude_model(self, monkeypatch):
+        """Test model creation with Vertex AI for Claude."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "my-project")
+        monkeypatch.setenv("ANTHROPIC_VERTEX_REGION", "us-east5")
+        monkeypatch.setenv("LLM_MODEL", "claude-sonnet-4-5@20250929")
+
+        from entrypoint import _create_llm_model
+
+        name, model = _create_llm_model()
+        assert name == "claude-sonnet-4-5@20250929"
+        assert model is not None
+
+
+# ---------------------------------------------------------------------------
+# Test run_reviewer_agent
+# ---------------------------------------------------------------------------
+
+
+class TestRunReviewerAgent:
+    @pytest.mark.asyncio
+    async def test_returns_agent_output(self, tmp_path: Path):
+        """Test that reviewer agent returns its output text."""
+        from entrypoint import run_reviewer_agent
+
+        mock_agent = MagicMock()
+        mock_agent.ainvoke = AsyncMock(return_value={
+            "messages": [MagicMock(content="APPROVED")]
+        })
+        mock_create = MagicMock(return_value=mock_agent)
+
+        with (
+            patch("entrypoint._create_llm_model", return_value=("test-model", MagicMock())),
+            patch("deepagents.create_deep_agent", mock_create),
+            patch("deepagents.backends.LocalShellBackend"),
+        ):
+            result = await run_reviewer_agent(
+                workspace=tmp_path,
+                review_instructions="Check for bugs",
+                task_key="TEST-123",
+            )
+
+        assert result == "APPROVED"
+
+    @pytest.mark.asyncio
+    async def test_system_prompt_contains_instructions(self, tmp_path: Path):
+        """Test that review instructions are included in system prompt."""
+        from entrypoint import run_reviewer_agent
+
+        mock_agent = MagicMock()
+        mock_agent.ainvoke = AsyncMock(return_value={
+            "messages": [MagicMock(content="REJECTED: bad code")]
+        })
+        mock_create = MagicMock(return_value=mock_agent)
+
+        with (
+            patch("entrypoint._create_llm_model", return_value=("test-model", MagicMock())),
+            patch("deepagents.create_deep_agent", mock_create),
+            patch("deepagents.backends.LocalShellBackend"),
+        ):
+            await run_reviewer_agent(
+                workspace=tmp_path,
+                review_instructions="Check for security issues",
+                task_key="TEST-456",
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        assert "Check for security issues" in call_kwargs["system_prompt"]
+
+    @pytest.mark.asyncio
+    async def test_uses_8192_max_tokens_default(self, tmp_path: Path):
+        """Test that reviewer uses 8192 as default max tokens."""
+        from entrypoint import run_reviewer_agent
+
+        mock_agent = MagicMock()
+        mock_agent.ainvoke = AsyncMock(return_value={
+            "messages": [MagicMock(content="APPROVED")]
+        })
+
+        with (
+            patch("entrypoint._create_llm_model", return_value=("test-model", MagicMock())) as mock_create_model,
+            patch("deepagents.create_deep_agent", return_value=mock_agent),
+            patch("deepagents.backends.LocalShellBackend"),
+        ):
+            await run_reviewer_agent(
+                workspace=tmp_path,
+                review_instructions="Review",
+                task_key="TEST-789",
+            )
+
+        mock_create_model.assert_called_once_with(max_tokens_default=8192)
 
 
 # ---------------------------------------------------------------------------
@@ -478,12 +570,16 @@ class TestMainReviewLoopIntegration:
         monkeypatch.setenv("FORGE_SYSTEM_PROMPT_TEMPLATE", "Test prompt {task_key}")
         monkeypatch.chdir(workspace)
 
+        def _close_and_return_true(coro):
+            coro.close()
+            return True
+
         with (
             patch("entrypoint.asyncio.run") as mock_asyncio_run,
             patch("entrypoint.configure_git"),
             patch("entrypoint.subprocess.run") as mock_subprocess,
         ):
-            mock_asyncio_run.return_value = True
+            mock_asyncio_run.side_effect = _close_and_return_true
             mock_subprocess.return_value = MagicMock(returncode=0)
 
             from entrypoint import main
@@ -527,13 +623,17 @@ class TestMainReviewLoopIntegration:
         monkeypatch.setenv("FORGE_SYSTEM_PROMPT_TEMPLATE", "Test prompt {task_key}")
         monkeypatch.chdir(workspace)
 
+        def _close_and_return_true(coro):
+            coro.close()
+            return True
+
         with (
             patch("entrypoint.asyncio.run") as mock_asyncio_run,
             patch("entrypoint.configure_git"),
             patch("entrypoint.subprocess.run") as mock_subprocess,
             patch("entrypoint.detect_review_md") as mock_detect,
         ):
-            mock_asyncio_run.return_value = True
+            mock_asyncio_run.side_effect = _close_and_return_true
             mock_subprocess.return_value = MagicMock(returncode=0)
             mock_detect.return_value = None  # No review.md found
 
@@ -587,9 +687,10 @@ class TestMainReviewLoopIntegration:
 
         asyncio_call_count = 0
 
-        def mock_asyncio_side_effect(_coro):
+        def mock_asyncio_side_effect(coro):
             nonlocal asyncio_call_count
             asyncio_call_count += 1
+            coro.close()
             return True
 
         with (
@@ -624,166 +725,3 @@ class TestMainReviewLoopIntegration:
 # ---------------------------------------------------------------------------
 
 
-class TestPrintReviewProgress:
-    """Tests for terminal progress display in local mode (SC-011)."""
-
-    def test_prints_progress_when_tty(self, capsys):
-        """Test progress is printed when stdout is a TTY."""
-        import sys
-
-        sys.path.insert(0, str(Path(__file__).parents[3] / "containers"))
-
-        with patch("entrypoint._IS_TTY", True):
-            # Need to reload the function to pick up the mocked _IS_TTY
-            import importlib
-
-            import entrypoint
-
-            importlib.reload(entrypoint)
-
-            # Re-patch after reload
-            with patch.object(entrypoint, "_IS_TTY", True):
-                entrypoint._print_review_progress(1, 3, "rejected", "Missing tests")
-
-                captured = capsys.readouterr()
-                assert "Review cycle 1/3: REJECTED - Missing tests" in captured.out
-
-    def test_no_output_when_not_tty(self, capsys):
-        """Test no output when stdout is not a TTY."""
-        import sys
-
-        sys.path.insert(0, str(Path(__file__).parents[3] / "containers"))
-
-        import importlib
-
-        import entrypoint
-
-        importlib.reload(entrypoint)
-
-        with patch.object(entrypoint, "_IS_TTY", False):
-            entrypoint._print_review_progress(1, 3, "rejected", "Missing tests")
-
-            captured = capsys.readouterr()
-            assert captured.out == ""
-
-    def test_feedback_truncated_at_200_chars(self, capsys):
-        """Test that feedback is truncated to 200 characters with ellipsis."""
-        import sys
-
-        sys.path.insert(0, str(Path(__file__).parents[3] / "containers"))
-
-        import importlib
-
-        import entrypoint
-
-        importlib.reload(entrypoint)
-
-        long_feedback = "x" * 300  # 300 characters
-
-        with patch.object(entrypoint, "_IS_TTY", True):
-            entrypoint._print_review_progress(2, 5, "rejected", long_feedback)
-
-            captured = capsys.readouterr()
-            # Should have 200 chars + "..."
-            assert "x" * 200 + "..." in captured.out
-            # Should NOT have 201 x's
-            assert "x" * 201 not in captured.out
-
-    def test_feedback_not_truncated_when_under_200(self, capsys):
-        """Test that feedback under 200 chars is not truncated."""
-        import sys
-
-        sys.path.insert(0, str(Path(__file__).parents[3] / "containers"))
-
-        import importlib
-
-        import entrypoint
-
-        importlib.reload(entrypoint)
-
-        short_feedback = "Fix the error handling in function xyz"
-
-        with patch.object(entrypoint, "_IS_TTY", True):
-            entrypoint._print_review_progress(1, 3, "rejected", short_feedback)
-
-            captured = capsys.readouterr()
-            assert short_feedback in captured.out
-            assert "..." not in captured.out
-
-    def test_verdict_uppercased(self, capsys):
-        """Test that verdict is uppercased in output."""
-        import sys
-
-        sys.path.insert(0, str(Path(__file__).parents[3] / "containers"))
-
-        import importlib
-
-        import entrypoint
-
-        importlib.reload(entrypoint)
-
-        with patch.object(entrypoint, "_IS_TTY", True):
-            entrypoint._print_review_progress(1, 3, "approved", "")
-
-            captured = capsys.readouterr()
-            assert "APPROVED" in captured.out
-            assert "approved" not in captured.out
-
-    def test_no_feedback_shows_just_verdict(self, capsys):
-        """Test that empty feedback shows just the verdict without dash."""
-        import sys
-
-        sys.path.insert(0, str(Path(__file__).parents[3] / "containers"))
-
-        import importlib
-
-        import entrypoint
-
-        importlib.reload(entrypoint)
-
-        with patch.object(entrypoint, "_IS_TTY", True):
-            entrypoint._print_review_progress(3, 3, "approved", "")
-
-            captured = capsys.readouterr()
-            assert "Review cycle 3/3: APPROVED" in captured.out
-            assert " - " not in captured.out
-
-    def test_format_matches_spec(self, capsys):
-        """Test output format matches spec: 'Review cycle N/M: VERDICT - feedback'."""
-        import sys
-
-        sys.path.insert(0, str(Path(__file__).parents[3] / "containers"))
-
-        import importlib
-
-        import entrypoint
-
-        importlib.reload(entrypoint)
-
-        with patch.object(entrypoint, "_IS_TTY", True):
-            entrypoint._print_review_progress(1, 3, "rejected", "Please add error handling")
-
-            captured = capsys.readouterr()
-            expected = "Review cycle 1/3: REJECTED - Please add error handling\n"
-            assert captured.out == expected
-
-    def test_feedback_exactly_200_chars_not_truncated(self, capsys):
-        """Test that feedback exactly 200 chars is not truncated."""
-        import sys
-
-        sys.path.insert(0, str(Path(__file__).parents[3] / "containers"))
-
-        import importlib
-
-        import entrypoint
-
-        importlib.reload(entrypoint)
-
-        exact_feedback = "y" * 200
-
-        with patch.object(entrypoint, "_IS_TTY", True):
-            entrypoint._print_review_progress(1, 2, "rejected", exact_feedback)
-
-            captured = capsys.readouterr()
-            assert exact_feedback in captured.out
-            assert "..." not in captured.out

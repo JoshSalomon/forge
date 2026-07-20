@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from forge.observability import ReviewCycleData
+from forge.observability.review_poller import ReviewCyclePoller
 from forge.sandbox.runner import (
     ContainerResult,
     ContainerRunner,
-    _poller_to_recorder_cycle,
 )
 
 # ---------------------------------------------------------------------------
@@ -74,70 +74,6 @@ class TestContainerResultReviewCycles:
         assert result.review_cycles[0].verdict == "rejected"
         assert result.review_cycles[1].verdict == "approved"
 
-
-# ---------------------------------------------------------------------------
-# _poller_to_recorder_cycle conversion tests
-# ---------------------------------------------------------------------------
-
-
-class TestPollerToRecorderCycle:
-    """Tests for the _poller_to_recorder_cycle helper function."""
-
-    def test_converts_all_fields(self):
-        """Test that all fields are converted correctly."""
-        poller_cycle = ReviewCycleData(
-            cycle=1,
-            max_cycles=3,
-            verdict="approved",
-            feedback="Looks good",
-            skill="implement-task",
-            elapsed_seconds=12.5,
-            timestamp="2024-01-15T10:30:00Z",
-        )
-        recorder_cycle = _poller_to_recorder_cycle(poller_cycle, "implement_task")
-
-        assert recorder_cycle.cycle == 1
-        assert recorder_cycle.max_cycles == 3
-        assert recorder_cycle.verdict == "approved"
-        assert recorder_cycle.feedback == "Looks good"
-        assert recorder_cycle.skill == "implement-task"
-        assert recorder_cycle.elapsed_seconds == 12.5
-        # Timestamp is converted to datetime
-        assert recorder_cycle.timestamp.year == 2024
-        assert recorder_cycle.timestamp.month == 1
-        assert recorder_cycle.timestamp.day == 15
-
-    def test_handles_invalid_timestamp(self):
-        """Test that invalid timestamp falls back to now."""
-        poller_cycle = ReviewCycleData(
-            cycle=1,
-            max_cycles=3,
-            verdict="rejected",
-            feedback="",
-            skill="skill",
-            elapsed_seconds=1.0,
-            timestamp="not-a-valid-timestamp",
-        )
-        recorder_cycle = _poller_to_recorder_cycle(poller_cycle, "step")
-
-        # Should have a valid datetime (fallback to now)
-        assert recorder_cycle.timestamp is not None
-
-    def test_handles_empty_timestamp(self):
-        """Test that empty timestamp falls back to now."""
-        poller_cycle = ReviewCycleData(
-            cycle=1,
-            max_cycles=3,
-            verdict="approved",
-            feedback="",
-            skill="skill",
-            elapsed_seconds=1.0,
-            timestamp="",
-        )
-        recorder_cycle = _poller_to_recorder_cycle(poller_cycle, "step")
-
-        # Should have a valid datetime (fallback to now)
-        assert recorder_cycle.timestamp is not None
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +188,7 @@ class TestBackgroundPollingTask:
             nonlocal poller_created
             poller_created = True
             mock_poller = MagicMock()
-            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
+            mock_poller.run_loop = AsyncMock()
             mock_poller.poll_once = AsyncMock(return_value=[])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = "implement_task"
@@ -301,7 +237,7 @@ class TestBackgroundPollingTask:
 
         def create_poller(*_args, **_kwargs):
             mock_poller = MagicMock()
-            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
+            mock_poller.run_loop = AsyncMock()
             mock_poller.poll_once = AsyncMock(return_value=[])
 
             def stop():
@@ -373,7 +309,7 @@ class TestReviewCycleCollection:
 
         def create_poller(*_args, **_kwargs):
             mock_poller = MagicMock()
-            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
+            mock_poller.run_loop = AsyncMock()
             mock_poller.poll_once = AsyncMock(return_value=[detected_cycle])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = "implement_task"
@@ -439,14 +375,13 @@ class TestReviewCycleCollection:
         def create_poller(*_args, **_kwargs):
             mock_poller = MagicMock()
 
-            async def poll_iter():
-                # Yield one cycle before timeout
+            async def run_loop(callback):
+                # Deliver one cycle via callback, then block (simulating ongoing polling)
                 cycles_collected.append(timeout_cycle)
-                yield [timeout_cycle]
-                # Then wait forever (simulating ongoing polling)
+                callback([timeout_cycle])
                 await asyncio.sleep(1000)
 
-            mock_poller.poll = MagicMock(return_value=poll_iter())
+            mock_poller.run_loop = run_loop
             mock_poller.poll_once = AsyncMock(return_value=[])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = "implement_task"
@@ -479,8 +414,7 @@ class TestReviewCycleCollection:
         # Result should indicate failure
         assert result.success is False
         assert "Timeout" in (result.error_message or "")
-        # But cycles collected should still be present
-        assert len(result.review_cycles) >= 0  # May have collected the cycle
+        assert isinstance(result.review_cycles, list)
 
 
 # ---------------------------------------------------------------------------
@@ -520,7 +454,7 @@ class TestMetricsRecording:
 
         def create_poller(*_args, **_kwargs):
             mock_poller = MagicMock()
-            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
+            mock_poller.run_loop = AsyncMock()
             mock_poller.poll_once = AsyncMock(return_value=[detected_cycle])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = "implement_task"
@@ -586,7 +520,7 @@ class TestStepNamePathOrganization:
             nonlocal captured_step_name
             captured_step_name = step_name
             mock_poller = MagicMock()
-            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
+            mock_poller.run_loop = AsyncMock()
             mock_poller.poll_once = AsyncMock(return_value=[])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = step_name
@@ -636,7 +570,7 @@ class TestStepNamePathOrganization:
 
         def create_poller(**kwargs):
             mock_poller = MagicMock()
-            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
+            mock_poller.run_loop = AsyncMock()
             mock_poller.poll_once = AsyncMock(return_value=[])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = kwargs.get("step_name", "")
@@ -676,29 +610,6 @@ class TestStepNamePathOrganization:
             )
 
         assert captured_recorder_step_name == "fix_ci"
-
-
-# ---------------------------------------------------------------------------
-# Helper classes for async iteration mocking
-# ---------------------------------------------------------------------------
-
-
-class AsyncIteratorMock:
-    """Mock for async iterators that yields a list of items once and then stops."""
-
-    def __init__(self, items: list):
-        self.items = items
-        self.index = 0
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if self.index < len(self.items):
-            item = self.items[self.index]
-            self.index += 1
-            return item
-        raise StopAsyncIteration
 
 
 # ---------------------------------------------------------------------------
@@ -1097,17 +1008,22 @@ class TestSweepIntegrationWithRun:
         cycle_file = cycle_dir / "review_cycle_1.json"
         cycle_file.write_text(json.dumps(cycle_data))
 
+        mock_poller_class = MagicMock()
+        mock_poller_class.build_cycle_dir = ReviewCyclePoller.build_cycle_dir
+
         def create_poller(**kwargs):
             mock_poller = MagicMock()
-            # Poller returns no files during polling and poll_once
-            # (simulating fast exit where files are written after polling stops)
-            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
+            # run_loop does nothing (simulating fast exit where files are
+            # written after polling stops)
+            mock_poller.run_loop = AsyncMock()
             mock_poller.poll_once = AsyncMock(return_value=[])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = kwargs.get("step_name", "")
             # Empty processed files - nothing was caught during async polling
             mock_poller._processed_files = set()
             return mock_poller
+
+        mock_poller_class.side_effect = create_poller
 
         with (
             patch.object(runner, "_build_container_name", return_value="test-container"),
@@ -1118,7 +1034,7 @@ class TestSweepIntegrationWithRun:
             ),
             patch(
                 "forge.sandbox.runner.ReviewCyclePoller",
-                side_effect=create_poller,
+                mock_poller_class,
             ),
             patch("forge.sandbox.runner.ReviewCycleRecorder") as mock_recorder_class,
             patch("forge.sandbox.runner.record_review_cycle"),
@@ -1171,7 +1087,7 @@ class TestSweepIntegrationWithRun:
 
         def create_poller(**kwargs):
             mock_poller = MagicMock()
-            mock_poller.poll = MagicMock(return_value=AsyncIteratorMock([]))
+            mock_poller.run_loop = AsyncMock()
             mock_poller.poll_once = AsyncMock(return_value=[])
             mock_poller.stop = MagicMock()
             mock_poller.step_name = kwargs.get("step_name", "")

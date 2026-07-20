@@ -63,7 +63,9 @@ The frontmatter section is delimited by `---` markers and contains YAML key-valu
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `max_retries` | `int` | No | `3` | Maximum retry attempts after a REJECTED verdict |
+| `max_retries` | `int` | No | `3` | Maximum retry attempts after a REJECTED verdict. Set to `0` to skip review. |
+
+**Disabling review:** Set `max_retries: 0` in the skill's `review.md` frontmatter, or set the `AUTO_REVIEW_MAX_RETRIES=0` environment variable to disable review globally for all skills.
 
 **Frontmatter rules:**
 
