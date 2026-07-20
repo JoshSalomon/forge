@@ -12,10 +12,7 @@ class TestMetricsEndpoint:
     @pytest.mark.asyncio
     async def test_metrics_returns_200(self):
         """Metrics endpoint returns 200."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/metrics")
 
         assert response.status_code == 200
@@ -23,10 +20,7 @@ class TestMetricsEndpoint:
     @pytest.mark.asyncio
     async def test_metrics_returns_prometheus_format(self):
         """Metrics endpoint returns Prometheus format."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/metrics")
 
         content_type = response.headers.get("content-type", "")
@@ -35,10 +29,7 @@ class TestMetricsEndpoint:
     @pytest.mark.asyncio
     async def test_metrics_includes_forge_metrics(self):
         """Metrics includes forge-related counters."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/metrics")
 
         body = response.text
@@ -48,10 +39,7 @@ class TestMetricsEndpoint:
     @pytest.mark.asyncio
     async def test_metrics_includes_workflow_metrics(self):
         """Metrics includes workflow-related counters."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/metrics")
 
         body = response.text
@@ -193,9 +181,7 @@ class TestReviewCycleMetrics:
         observe_review_duration(skill="duration-skill", step="duration-step", duration=45.5)
 
         # Sum should increase by observed value
-        final_sum = REVIEW_DURATION.labels(
-            skill="duration-skill", step="duration-step"
-        )._sum.get()
+        final_sum = REVIEW_DURATION.labels(skill="duration-skill", step="duration-step")._sum.get()
         # Just check that something was observed (sum increased)
         assert final_sum >= initial_sum + 45.5
 
@@ -213,10 +199,7 @@ class TestReviewCycleMetrics:
         record_review_verdict(skill="endpoint-skill", step="endpoint-step", verdict="approved")
         observe_review_duration(skill="endpoint-skill", step="endpoint-step", duration=30.0)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/metrics")
 
         body = response.text

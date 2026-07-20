@@ -496,6 +496,7 @@ class ContainerRunner:
             recorder: The ReviewCycleRecorder for recording cycles.
             collected_cycles: List to aggregate detected cycles into.
         """
+
         def on_cycles(new_cycles: list[ReviewCycleData]) -> None:
             for cycle in new_cycles:
                 _process_cycle(cycle, poller.step_name, recorder, collected_cycles)
@@ -757,7 +758,10 @@ class ContainerRunner:
 
             # Start review polling background task if step_name is provided
             poller, recorder, polling_task = await self._start_review_polling(
-                workspace_path, step_name, task_key or "", skill_name or "",
+                workspace_path,
+                step_name,
+                task_key or "",
+                skill_name or "",
                 collected_cycles,
             )
 
@@ -783,8 +787,13 @@ class ContainerRunner:
                 raise  # Re-raise CancelledError
             finally:
                 await self._finalize_review_polling(
-                    poller, recorder, polling_task,
-                    workspace_path, step_name, task_key or "", skill_name or "",
+                    poller,
+                    recorder,
+                    polling_task,
+                    workspace_path,
+                    step_name,
+                    task_key or "",
+                    skill_name or "",
                     collected_cycles,
                 )
 

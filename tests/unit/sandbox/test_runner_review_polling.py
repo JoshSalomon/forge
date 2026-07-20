@@ -75,7 +75,6 @@ class TestContainerResultReviewCycles:
         assert result.review_cycles[1].verdict == "approved"
 
 
-
 # ---------------------------------------------------------------------------
 # ContainerRunner.run() with step_name tests
 # ---------------------------------------------------------------------------
@@ -516,7 +515,9 @@ class TestStepNamePathOrganization:
 
         captured_step_name = None
 
-        def create_poller(workspace_path=None, step_name=None, task_key=None, skill_name=None, settings=None):
+        def create_poller(
+            workspace_path=None, step_name=None, task_key=None, skill_name=None, settings=None
+        ):
             nonlocal captured_step_name
             captured_step_name = step_name
             mock_poller = MagicMock()
