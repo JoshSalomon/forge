@@ -251,29 +251,20 @@ def parse_verdict(output_text: str) -> tuple[Verdict, str]:
           where feedback is the text following the marker
         - (Verdict.REJECTED, "Verdict could not be parsed") when neither marker found
     """
-    import re
-
-    text_upper = output_text.upper()
-
-    # Use word-boundary matching to avoid false positives like "DISAPPROVED"
-    approved_match = re.search(r"\bAPPROVED\b", text_upper)
-    rejected_match = re.search(r"\bREJECTED\b", text_upper)
+    # Search original text with IGNORECASE to avoid Unicode length mismatch
+    # (str.upper() can change length for certain chars like ß→SS)
+    approved_match = re.search(r"\bAPPROVED\b", output_text, re.IGNORECASE)
+    rejected_match = re.search(r"\bREJECTED\b", output_text, re.IGNORECASE)
     approved_pos = approved_match.start() if approved_match else -1
     rejected_pos = rejected_match.start() if rejected_match else -1
 
-    # Neither marker found
     if approved_pos == -1 and rejected_pos == -1:
         return (Verdict.REJECTED, "Verdict could not be parsed")
 
-    # Determine which marker comes first
-    # If APPROVED found and (REJECTED not found OR APPROVED comes first)
     if approved_pos != -1 and (rejected_pos == -1 or approved_pos < rejected_pos):
         return (Verdict.APPROVED, "")
 
-    # REJECTED marker found first (or only REJECTED found)
-    # Extract feedback from text following the REJECTED marker
-    # Skip past "REJECTED" keyword (8 characters)
-    feedback_start = rejected_pos + len("REJECTED")
+    feedback_start = rejected_match.end()
     feedback = output_text[feedback_start:].strip()
 
     return (Verdict.REJECTED, feedback)
@@ -326,10 +317,12 @@ def write_cycle_file(
         # It's already a string, ensure lowercase
         data["verdict"] = str(verdict_value).lower()
 
-    # Write JSON with proper formatting (2-space indent for readability)
-    output_file.write_text(
+    # Atomic write: write to temp file then rename to avoid partial reads
+    tmp_file = output_file.with_suffix(".tmp")
+    tmp_file.write_text(
         json.dumps(data, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    tmp_file.rename(output_file)
 
     logger.debug("Wrote review cycle file: %s", output_file)

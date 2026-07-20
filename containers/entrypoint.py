@@ -1029,7 +1029,8 @@ def main():
 
         if review_md_path:
             logger.info(f"Found review.md at {review_md_path}, starting review loop")
-            if not asyncio.run(
+            # run_review_loop always returns True (exhaustion proceeds to PR per BR-005)
+            asyncio.run(
                 run_review_loop(
                     workspace=workspace,
                     task_key=task_key,
@@ -1040,9 +1041,7 @@ def main():
                     review_md_path=review_md_path,
                     previous_task_keys=previous_task_keys,
                 )
-            ):
-                logger.error("Review loop failed")
-                sys.exit(EXIT_TASK_FAILED)
+            )
         else:
             logger.info(f"No review.md found for skill {skill_name}, skipping review loop")
     else:

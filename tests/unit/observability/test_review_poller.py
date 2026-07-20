@@ -142,6 +142,22 @@ class TestReviewCyclePollerInit:
         )
         assert poller.review_cycle_dir == Path("/workspace/.forge/implement_task")
 
+
+class TestBuildCycleDir:
+    """Tests for build_cycle_dir static method."""
+
+    def test_with_task_key_and_skill_name(self):
+        """Test with task_key + skill_name returns reviews path."""
+        result = ReviewCyclePoller.build_cycle_dir(
+            Path("/workspace"), "AISOS-2126", "implement-task", "implement_task"
+        )
+        assert result == Path("/workspace/.forge/reviews/AISOS-2126__implement-task")
+
+    def test_without_task_key_falls_back_to_step_name(self):
+        """Test without task_key falls back to step_name path."""
+        result = ReviewCyclePoller.build_cycle_dir(Path("/workspace"), "", "", "implement_task")
+        assert result == Path("/workspace/.forge/implement_task")
+
     def test_poll_interval_from_settings(self, mock_settings):
         """Test poll_interval reads from settings."""
         mock_settings.auto_review_poll_interval = 10.0

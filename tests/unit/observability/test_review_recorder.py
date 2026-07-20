@@ -451,6 +451,29 @@ class TestReviewCycleRecorderRecordFile:
         assert result is None
         assert any("Failed to create directory" in record.message for record in caplog.records)
 
+    def test_record_file_copy2_oserror_returns_none(self, tmp_path, caplog):
+        """Test that shutil.copy2 failure returns None and logs error."""
+        recording_dir = tmp_path / "recordings"
+        recorder = ReviewCycleRecorder(
+            step_name="test_step",
+            mode="copy",
+            recording_dir=recording_dir,
+        )
+
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        source_file = source_dir / "review_cycle_1.json"
+        source_file.write_text('{"cycle": 1}')
+
+        with (
+            patch("shutil.copy2", side_effect=OSError("Permission denied")),
+            caplog.at_level(logging.ERROR),
+        ):
+            result = recorder.record_file(source_file)
+
+        assert result is None
+        assert any("Failed to copy file" in record.message for record in caplog.records)
+
 
 # ---------------------------------------------------------------------------
 # Settings configuration tests
