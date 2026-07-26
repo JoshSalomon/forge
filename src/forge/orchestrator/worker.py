@@ -62,6 +62,7 @@ async def _report_new_workflow_error(result: dict, error_before_invoke: str | No
 
 _PRD_GATE_NODES = ("prd_approval_gate", "generate_prd", "regenerate_prd")
 _SPEC_GATE_NODES = ("spec_approval_gate", "generate_spec", "regenerate_spec")
+_REVIEW_GATES = ("human_review_gate", "review_response_gate")
 
 _FRESH_INVOKE_NODES = (
     "ci_evaluator",
@@ -1046,12 +1047,13 @@ class OrchestratorWorker:
                             f"Spec PR feedback for {message.ticket_key}: {comment_body[:100]}..."
                         )
 
-        # GitHub pull_request_review events — handled when at human_review_gate.
+        # GitHub pull_request_review events — handled when paused at human_review_gate or review_response_gate.
         # A review submission is the primary signal for the human review stage.
         if (
             message.source == EventSource.GITHUB
             and "pull_request_review" in message.event_type
-            and current_node == "human_review_gate"
+            and current_node in _REVIEW_GATES
+            and current_state.get("is_paused", True)
         ):
             review = payload.get("review", {})
             review_state = review.get("state", "").lower()
@@ -1107,7 +1109,7 @@ class OrchestratorWorker:
             message.source == EventSource.GITHUB
             and "pull_request" in message.event_type
             and payload.get("pull_request", {}).get("merged") is True
-            and current_node == "human_review_gate"
+            and current_node in _REVIEW_GATES
         ):
             is_approved = True
             pr_merged = True
@@ -1234,6 +1236,8 @@ class OrchestratorWorker:
             updated_state["is_paused"] = False
             updated_state["revision_requested"] = True
             updated_state["feedback_comment"] = feedback
+            if current_node == "review_response_gate":
+                updated_state["contested_comments"] = []
             if comment_ticket_key and comment_ticket_type == "epic":
                 updated_state["current_epic_key"] = comment_ticket_key
                 updated_state["current_task_key"] = None
@@ -1298,6 +1302,7 @@ class OrchestratorWorker:
                 "attempt_ci_fix",
                 "human_review_gate",
                 "wait_for_ci_gate",
+                "review_response_gate",
             )
             if (
                 not current_state.get("is_paused", True)
@@ -1384,6 +1389,7 @@ class OrchestratorWorker:
             "regenerate_epic_tasks": "the tasks",
             "update_single_task": "the task",
             "human_review_gate": "the implementation review",
+            "review_response_gate": "the implementation review",
         }
         return node_to_stage.get(current_node, "the current workflow stage")
 
