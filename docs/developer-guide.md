@@ -707,11 +707,19 @@ uv run python devtools/patch_checkpoint.py AISOS-376 \
 
 ### forge:retry label
 
-Add the `forge:retry` label to a Jira ticket to resume a blocked workflow. Forge will:
+Add the `forge:retry` label to a Jira ticket to resume a blocked workflow, or to reset and return to the human review gate when paused at `review_response_gate`. Forge will:
+
+For blocked workflows:
 - Clear `last_error`
 - Clear `is_blocked`
 - Reset `ci_fix_attempts` to 0
 - Resume from the node that failed
+
+For workflows paused at `review_response_gate` (due to contested comments):
+- Transition `current_node` back to `human_review_gate`
+- Clear `contested_comments`, `feedback_comment`, `revision_requested`, and other review state
+- Reset `is_paused` and `is_blocked` to `False`
+- Set `force_fresh_invoke` to `True` to await a fresh human review
 
 ### Worker logs
 

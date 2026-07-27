@@ -409,6 +409,56 @@ class TestQuestionDetection:
         assert result["feedback_comment"] == "Regeneration requested via retry."
 
     @pytest.mark.asyncio
+    async def test_retry_at_review_response_gate_transitions_to_human_review_gate(
+        self, worker: OrchestratorWorker, base_message: QueueMessage, base_state: dict
+    ):
+        state = {
+            **base_state,
+            "current_node": "review_response_gate",
+            "is_paused": True,
+            "is_blocked": True,
+            "retry_count": 2,
+            "last_error": "some error",
+            "auto_retry_cap_notified": True,
+            "contested_comments": [{"text": "Objection: renaming breaks the public API"}],
+            "revision_requested": True,
+            "feedback_comment": "Changes requested",
+        }
+        payload = {
+            **base_message.payload,
+            "changelog": {
+                "items": [
+                    {
+                        "field": "labels",
+                        "fromString": "forge:managed",
+                        "toString": "forge:managed forge:retry",
+                    }
+                ]
+            },
+        }
+        message = QueueMessage(
+            message_id=base_message.message_id,
+            event_id=base_message.event_id,
+            source=base_message.source,
+            event_type="jira:issue_updated",
+            ticket_key=base_message.ticket_key,
+            payload=payload,
+        )
+
+        result = await worker._handle_resume_event(message, state)
+
+        assert result["current_node"] == "human_review_gate"
+        assert result["is_paused"] is False
+        assert result["contested_comments"] == []
+        assert result["revision_requested"] is False
+        assert result["feedback_comment"] is None
+        assert result["context"]["force_fresh_invoke"] is True
+        assert result["is_blocked"] is False
+        assert result["retry_count"] == 0
+        assert result["last_error"] is None
+        assert result["auto_retry_cap_notified"] is False
+
+    @pytest.mark.asyncio
     async def test_prd_label_change_to_approved_sets_approved_flag(
         self, worker: OrchestratorWorker, base_message: QueueMessage, base_state: dict
     ):
@@ -1291,7 +1341,9 @@ class TestHandleResumeEventReviewGates:
             "ticket_key": "TEST-123",
             "current_node": "review_response_gate",
             "is_paused": True,
-            "contested_comments": [{"text": "Objection: the suggested refactor conflicts with the spec"}],
+            "contested_comments": [
+                {"text": "Objection: the suggested refactor conflicts with the spec"}
+            ],
             "context": {},
         }
         message = QueueMessage(

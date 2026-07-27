@@ -43,7 +43,7 @@ Standalone Tasks and Epics can be processed with the standard `forge:managed` la
 | `forge:managed:task` | Identity preservation label used during Task Takeover transitions. |
 | `forge:managed:task-takeover` | Identity preservation label used during Task Takeover transitions. |
 | `forge:blocked` | Set by Forge when a stage fails. Forge posts a comment with the error. |
-| `forge:retry` | Add this to resume from the exact node that failed. Forge removes it after resuming. |
+| `forge:retry` | Add this to resume from the exact node that failed, or to transition from `review_response_gate` back to `human_review_gate` (clearing contested review comments). Forge removes it after resuming. |
 | `forge:yolo` | Auto-approve supported planning gates. Human PR review still remains a gate. |
 | `repo:<owner>/<repo>` | Identifies repositories selected for planning and implementation. |
 
@@ -60,6 +60,8 @@ Standalone Tasks and Epics can be processed with the standard `forge:managed` la
 **Informational comments:** Comments without a recognized prefix (`!`, `?`, `@forge ask`, `>option`) are ignored by the workflow — use them for team discussion without triggering Forge.
 
 **Handling failures:** When `forge:blocked` appears, read the Forge comment for the error. Fix the underlying issue if needed, then add `forge:retry`.
+
+**Resetting contested reviews:** If the workflow is paused at `review_response_gate` due to contested comments, adding `forge:retry` will transition the workflow back to `human_review_gate`, clearing the contested comments and resetting the review state to await a fresh review.
 
 !!! warning "Don't remove `forge:managed`"
     Removing `forge:managed` won't stop an in-progress workflow. It only prevents new workflows from starting on the ticket.

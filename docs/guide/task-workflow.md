@@ -147,6 +147,10 @@ Forge pauses at the human review gate after CI passes. Merge the PR when satisfi
 
 If changes are requested in GitHub review, Forge routes to the review implementation node, applies the requested changes, returns to CI, and then pauses for review again.
 
+If the agent classifies any review comments as *contested* (e.g., if they contradict the specification or introduce technical issues), it will post its objections on the PR and pause at `review_response_gate`. To resolve this, you can:
+- **Confirm the request:** Reply on the PR to confirm the change (e.g., "please implement as requested"), and Forge will proceed with the implementation.
+- **Reset/Withdraw:** Add the `forge:retry` label to the Jira ticket to clear the contested comments and transition the workflow back to `human_review_gate` to await a fresh review.
+
 When the PR is merged, Forge marks the Task workflow complete.
 
 ## Comment Syntax

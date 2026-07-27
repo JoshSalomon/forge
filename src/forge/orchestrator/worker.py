@@ -1170,6 +1170,24 @@ class OrchestratorWorker:
                     **updated_state.get("context", {}),
                     "force_fresh_invoke": True,
                 }
+            elif current_node == "review_response_gate":
+                logger.info(
+                    f"Retry at review_response_gate — transitioning back to human_review_gate "
+                    f"and clearing review state for {message.ticket_key}"
+                )
+                updated_state["is_paused"] = False
+                updated_state["is_blocked"] = False
+                updated_state["last_error"] = None
+                updated_state["auto_retry_cap_notified"] = False
+                updated_state["revision_requested"] = False
+                updated_state["feedback_comment"] = None
+                updated_state["contested_comments"] = []
+                updated_state["retry_count"] = 0
+                updated_state["current_node"] = "human_review_gate"
+                updated_state["context"] = {
+                    **updated_state.get("context", {}),
+                    "force_fresh_invoke": True,
+                }
             elif is_paused_at_gate:
                 logger.info(
                     f"Retry at approval gate {current_node} — triggering regeneration "
