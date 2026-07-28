@@ -31,6 +31,10 @@ from forge.utils.redaction import redact_secrets
 from forge.workflow.nodes.error_handler import notify_error
 from forge.workflow.registry import create_default_router
 from forge.workflow.router import WorkflowRouter
+from forge.workflow.utils.automated_review_triage import (
+    is_bot_sender,
+    triage_automated_review,
+)
 from forge.workflow.utils.comment_classifier import CommentType, classify_comment
 from forge.workflow.utils.jira_status import post_status_comment
 
@@ -63,6 +67,7 @@ async def _report_new_workflow_error(result: dict, error_before_invoke: str | No
 _PRD_GATE_NODES = ("prd_approval_gate", "generate_prd", "regenerate_prd")
 _SPEC_GATE_NODES = ("spec_approval_gate", "generate_spec", "regenerate_spec")
 _REVIEW_GATES = ("human_review_gate", "review_response_gate")
+_MAX_AUTOMATED_REVIEW_REVISIONS = 3
 
 _FRESH_INVOKE_NODES = (
     "ci_evaluator",
@@ -465,6 +470,7 @@ class OrchestratorWorker:
         is_yolo = False
         pr_merged = False
         feedback = None
+        automated_review_revision_pending = None
 
         current_node = current_state.get("current_node", "")
 
@@ -877,6 +883,7 @@ class OrchestratorWorker:
 
             elif "pull_request" in event and payload.get("pull_request", {}).get("merged") is True:
                 is_approved = True
+                pr_merged = True
                 logger.info(f"PRD PR merged for {message.ticket_key}")
                 jira = JiraClient()
                 try:
@@ -973,6 +980,7 @@ class OrchestratorWorker:
 
             elif "pull_request" in event and payload.get("pull_request", {}).get("merged") is True:
                 is_approved = True
+                pr_merged = True
                 logger.info(f"Spec PR merged for {message.ticket_key}")
                 jira = JiraClient()
                 try:
@@ -1046,6 +1054,61 @@ class OrchestratorWorker:
                         logger.info(
                             f"Spec PR feedback for {message.ticket_key}: {comment_body[:100]}..."
                         )
+
+        # Automated proposal reviewers often publish detailed suggestions even when
+        # their overall verdict is satisfied. Semantically triage the complete review
+        # before treating it as a revision request. Only a satisfied verdict stops;
+        # ambiguous results retain the original feedback and revise within the cap.
+        is_prd_review = self._is_prd_pr_event(message, current_state) and current_node in (
+            _PRD_GATE_NODES
+        )
+        is_spec_review = self._is_spec_pr_event(message, current_state) and current_node in (
+            _SPEC_GATE_NODES
+        )
+        if (
+            is_rejected
+            and feedback
+            and (is_prd_review or is_spec_review)
+            and is_bot_sender(payload)
+        ):
+            review = payload.get("review", {})
+            review_state = review.get("state", "comment")
+            review_author = payload.get("sender", {}).get("login") or review.get("user", {}).get(
+                "login", "unknown bot"
+            )
+            artifact_type = "PRD" if is_prd_review else "specification"
+            artifact_content = current_state.get(
+                "prd_content" if is_prd_review else "spec_content", ""
+            )
+            decision = await triage_automated_review(
+                artifact_type=artifact_type,
+                artifact_content=artifact_content,
+                review_state=review_state,
+                review_author=review_author,
+                review_content=feedback,
+                ticket_key=message.ticket_key,
+            )
+            logger.info(
+                "Automated %s review triage for %s: %s (%s)",
+                artifact_type,
+                message.ticket_key,
+                decision.verdict,
+                decision.reason,
+            )
+            if decision.verdict == "satisfied":
+                return current_state
+
+            previous_count = current_state.get("automated_review_revision_count", 0)
+            if previous_count >= _MAX_AUTOMATED_REVIEW_REVISIONS:
+                logger.warning(
+                    "Automated review revision cap (%d) reached for %s; awaiting human review",
+                    _MAX_AUTOMATED_REVIEW_REVISIONS,
+                    message.ticket_key,
+                )
+                return current_state
+            automated_review_revision_pending = True
+            if decision.verdict == "blocking":
+                feedback = decision.blocking_feedback
 
         # GitHub pull_request_review events — handled when paused at human_review_gate or review_response_gate.
         # A review submission is the primary signal for the human review stage.
@@ -1244,6 +1307,11 @@ class OrchestratorWorker:
             updated_state["last_error"] = None
             if pr_merged:
                 updated_state["pr_merged"] = True
+                if is_prd_review:
+                    # Specification review is a separate artifact cycle and must
+                    # receive its own automated revision budget.
+                    updated_state["automated_review_revision_count"] = 0
+                    updated_state["automated_review_revision_pending"] = False
         elif is_question:
             # Unpause so answer_question node runs, it will re-pause after answering
             updated_state["is_paused"] = False
@@ -1260,6 +1328,13 @@ class OrchestratorWorker:
             updated_state["is_paused"] = False
             updated_state["revision_requested"] = True
             updated_state["feedback_comment"] = feedback
+            if automated_review_revision_pending is not None:
+                updated_state["automated_review_revision_pending"] = True
+            elif is_prd_review or is_spec_review:
+                # A human-requested proposal revision starts a fresh automated
+                # review cycle after that revision is published.
+                updated_state["automated_review_revision_count"] = 0
+                updated_state["automated_review_revision_pending"] = False
             if current_node == "review_response_gate":
                 updated_state["contested_comments"] = []
             if comment_ticket_key and comment_ticket_type == "epic":
