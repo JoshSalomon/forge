@@ -547,6 +547,52 @@ class TestRunReviewLoop:
             cycle_data = json.loads(cycle_file.read_text())
             assert cycle_data["verdict"] == "rejected"
 
+    @pytest.mark.asyncio
+    async def test_worker_retry_failure_writes_exhaustion_cycle(self, tmp_path: Path):
+        """Test that worker retry failure writes a synthetic exhaustion cycle file."""
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).parents[3] / "containers"))
+
+        review_md = tmp_path / "review.md"
+        review_md.write_text("---\nmax_retries: 2\n---\nReview")
+
+        with (
+            patch("entrypoint.run_reviewer_agent") as mock_reviewer,
+            patch("entrypoint.run_worker_with_feedback") as mock_worker,
+        ):
+            mock_reviewer.return_value = "REJECTED: bad code"
+            mock_worker.return_value = False  # Worker retry fails
+
+            from entrypoint import run_review_loop
+
+            result = await run_review_loop(
+                workspace=tmp_path,
+                task_key="TEST-456",
+                task_summary="Test",
+                task_description="Desc",
+                guardrails="",
+                skill_name="test-skill",
+                review_md_path=review_md,
+            )
+
+            assert result is True
+
+            # A synthetic exhaustion cycle should have been written
+            review_dir = tmp_path / ".forge" / "reviews" / "TEST-456__test-skill"
+            cycle_files = list(review_dir.glob("review_cycle_*.json"))
+            assert len(cycle_files) >= 2  # original rejection + synthetic exhaustion
+
+            # Find the synthetic one (cycle == max_cycles)
+            exhaustion_cycles = [
+                json.loads(f.read_text())
+                for f in cycle_files
+                if json.loads(f.read_text())["cycle"] == json.loads(f.read_text())["max_cycles"]
+            ]
+            assert len(exhaustion_cycles) >= 1
+            assert exhaustion_cycles[0]["verdict"] == "rejected"
+            assert "Worker retry failed" in exhaustion_cycles[0]["feedback"]
+
 
 # ---------------------------------------------------------------------------
 # Test main function review loop integration

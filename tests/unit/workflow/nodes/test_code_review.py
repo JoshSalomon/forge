@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from forge.observability.review_poller import ReviewCycleData
+from forge.sandbox.runner import ContainerResult
 from tests.fixtures.workflow_states import make_workflow_state
 
 FIX_COMMITS = (
@@ -35,7 +37,7 @@ class TestRunPostChangeReview:
              patch("forge.workflow.nodes.code_review.GitOperations", return_value=git_mock), \
              patch("forge.workflow.nodes.code_review.Workspace"), \
              patch("forge.workflow.nodes.code_review.load_prompt", return_value="prompt"):
-            result = await run_post_change_review(
+            committed, _ = await run_post_change_review(
                 workspace_path="/tmp/ws",
                 ticket_key="TEST-123",
                 current_repo="org/repo",
@@ -43,7 +45,7 @@ class TestRunPostChangeReview:
                 label="ci-fix-1",
             )
 
-        assert result is True
+        assert committed is True
         git_mock.stage_all.assert_called_once()
         git_mock.commit.assert_called_once()
         assert "ci-fix-1" in git_mock.commit.call_args[0][0]
@@ -63,14 +65,14 @@ class TestRunPostChangeReview:
              patch("forge.workflow.nodes.code_review.GitOperations", return_value=git_mock), \
              patch("forge.workflow.nodes.code_review.Workspace"), \
              patch("forge.workflow.nodes.code_review.load_prompt", return_value="prompt"):
-            result = await run_post_change_review(
+            committed, _ = await run_post_change_review(
                 workspace_path="/tmp/ws",
                 ticket_key="TEST-123",
                 current_repo="org/repo",
                 branch_name="forge/test-123",
             )
 
-        assert result is False
+        assert committed is False
         git_mock.commit.assert_not_called()
 
     @pytest.mark.asyncio
@@ -83,14 +85,66 @@ class TestRunPostChangeReview:
 
         with patch("forge.workflow.nodes.code_review.ContainerRunner", return_value=runner_mock), \
              patch("forge.workflow.nodes.code_review.load_prompt", return_value="prompt"):
-            result = await run_post_change_review(
+            committed, result = await run_post_change_review(
                 workspace_path="/tmp/ws",
                 ticket_key="TEST-123",
                 current_repo="org/repo",
                 branch_name="forge/test-123",
             )
 
-        assert result is False
+        assert committed is False
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_container_result_for_exhaustion_propagation(self):
+        """run_post_change_review must return ContainerResult so callers can merge exhaustion.
+
+        P2.2: when the post-change review skill exhausts retries, the exhaustion
+        data was silently dropped because the utility returned only a bool. Callers
+        (ci_evaluator, implement_review) need the ContainerResult to call
+        merge_review_exhaustion on it.
+        """
+        from forge.workflow.nodes.code_review import run_post_change_review
+
+        exhausted_result = ContainerResult(
+            success=True,
+            exit_code=0,
+            stdout="",
+            stderr="",
+            review_cycles=[
+                ReviewCycleData(
+                    cycle=1,
+                    max_cycles=1,
+                    verdict="rejected",
+                    feedback="auto-review exhausted",
+                    skill="review-code",
+                    elapsed_seconds=5.0,
+                    timestamp="",
+                )
+            ],
+        )
+
+        git_mock = MagicMock()
+        git_mock.has_uncommitted_changes.return_value = False
+        runner_mock = MagicMock()
+        runner_mock.run = AsyncMock(return_value=exhausted_result)
+
+        with (
+            patch("forge.workflow.nodes.code_review.ContainerRunner", return_value=runner_mock),
+            patch("forge.workflow.nodes.code_review.GitOperations", return_value=git_mock),
+            patch("forge.workflow.nodes.code_review.Workspace"),
+            patch("forge.workflow.nodes.code_review.load_prompt", return_value="prompt"),
+        ):
+            committed, container_result = await run_post_change_review(
+                workspace_path="/tmp/ws",
+                ticket_key="TEST-123",
+                current_repo="org/repo",
+                branch_name="forge/test-123",
+            )
+
+        assert committed is False
+        assert container_result is not None, "ContainerResult must be returned for exhaustion propagation"
+        assert container_result.review_exhausted is True
 
 
 # ── sync_pr_description ───────────────────────────────────────────────────────

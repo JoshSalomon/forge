@@ -56,5 +56,6 @@ def merge_review_exhaustion(
     exhaustion = collect_review_exhaustion(container_result, task_key, step_name)
     if exhaustion:
         key, data = exhaustion
-        return {**state, "review_exhaustion_report": {key: data}}
+        existing = state.get("review_exhaustion_report") or {}
+        return {**state, "review_exhaustion_report": {**existing, key: data}}
     return state

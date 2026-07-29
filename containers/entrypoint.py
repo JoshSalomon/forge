@@ -870,6 +870,24 @@ async def run_review_loop(
             )
             if not worker_success:
                 logger.error(f"Worker retry failed on cycle {cycle}")
+                # Write a synthetic final cycle so the orchestrator sees
+                # exhaustion and surfaces it in the PR body (BR-005).
+                # Use cycle=max_retries so review_exhausted triggers and
+                # the file number is unique (not overwriting the real cycle).
+                write_cycle_file(
+                    workspace,
+                    task_key,
+                    skill_name,
+                    ReviewCycleData(
+                        cycle=max_retries,
+                        max_cycles=max_retries,
+                        verdict=Verdict.REJECTED,
+                        feedback=f"Worker retry failed after review rejection. Original feedback: {feedback}",
+                        skill=skill_name,
+                        elapsed_seconds=0.0,
+                        timestamp=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    ),
+                )
                 break
 
     # Max retries exhausted - exit with success (BR-005)

@@ -532,6 +532,18 @@ class ContainerRunner:
         if not step_name:
             return None, None, None
 
+        # Clear any review cycle files from a prior run before polling starts.
+        # Without this, the poller marks stale filenames as processed; when the
+        # new container writes the same filenames, the sweep deduplicates them
+        # away and the new run's data is silently dropped.
+        cycle_dir = ReviewCyclePoller.build_cycle_dir(
+            workspace_path, task_key, skill_name, step_name
+        )
+        if cycle_dir.exists():
+            for stale_file in cycle_dir.glob("review_cycle_*.json"):
+                stale_file.unlink()
+                logger.debug("Cleared stale review cycle file: %s", stale_file)
+
         poller = ReviewCyclePoller(
             workspace_path=workspace_path,
             step_name=step_name,

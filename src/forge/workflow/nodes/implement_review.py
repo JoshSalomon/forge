@@ -340,7 +340,7 @@ async def implement_review(state: WorkflowState) -> WorkflowState:
 
         if unpushed:
             # Run post-change review before pushing (only when there are commits)
-            await run_post_change_review(
+            _, review_result = await run_post_change_review(
                 workspace_path=workspace_path,
                 ticket_key=ticket_key,
                 current_repo=current_repo,
@@ -349,6 +349,8 @@ async def implement_review(state: WorkflowState) -> WorkflowState:
                 guardrails=state.get("context", {}).get("guardrails", ""),
                 label="review-impl",
             )
+            if review_result is not None:
+                state = merge_review_exhaustion(state, review_result, ticket_key, "code_review")
 
             if fork_owner and fork_repo:
                 git.push_to_fork(force=False)

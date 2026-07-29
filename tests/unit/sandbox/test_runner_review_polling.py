@@ -987,16 +987,8 @@ class TestSweepIntegrationWithRun:
         runner.settings.auto_review_poll_interval = 1.0
         runner.settings.auto_review_record_polled_files = "log"
 
-        mock_process = MagicMock()
-        mock_process.communicate = AsyncMock(return_value=(b"output", b""))
-        mock_process.returncode = 0
-
         step_name = "implement_task"
-
-        # Create a file that simulates being written just before container exit
-        # (not caught by async polling)
         cycle_dir = tmp_path / ".forge" / step_name
-        cycle_dir.mkdir(parents=True)
         cycle_data = {
             "cycle": 1,
             "max_cycles": 3,
@@ -1006,8 +998,18 @@ class TestSweepIntegrationWithRun:
             "elapsed_seconds": 1.0,
             "timestamp": "2024-01-15T10:30:00Z",
         }
-        cycle_file = cycle_dir / "review_cycle_1.json"
-        cycle_file.write_text(json.dumps(cycle_data))
+
+        mock_process = MagicMock()
+
+        async def write_file_then_exit():
+            # Write the file during the run (simulates container writing just
+            # before exit — after our stale-file clearing has already run).
+            cycle_dir.mkdir(parents=True, exist_ok=True)
+            (cycle_dir / "review_cycle_1.json").write_text(json.dumps(cycle_data))
+            return b"output", b""
+
+        mock_process.communicate = AsyncMock(side_effect=write_file_then_exit)
+        mock_process.returncode = 0
 
         mock_poller_class = MagicMock()
         mock_poller_class.build_cycle_dir = ReviewCyclePoller.build_cycle_dir
@@ -1182,3 +1184,154 @@ class TestBuildContainerResult:
             )
 
         assert sweep_called is True
+
+
+# ---------------------------------------------------------------------------
+# Stale review files from prior run (P1.2 fix)
+# ---------------------------------------------------------------------------
+
+
+class TestStaleReviewFilesCleared:
+    """Tests that review cycle files from a prior run are cleared before polling.
+
+    Scenario: workflow retries a task. The .forge/reviews/{task}__{skill}/
+    directory already contains review_cycle_*.json files from the previous
+    attempt. Without clearing, the poller marks those paths as processed;
+    when the new container writes the same filenames, the sweep deduplicates
+    them away — silently dropping the new run's exhaustion data.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stale_files_are_cleared_before_polling_starts(self, tmp_path: Path):
+        """Review cycle directory is cleared before a new run's poller starts."""
+        import json
+
+        runner = _runner_without_init()
+        runner.settings = MagicMock()
+        runner.settings.container_image = "test:latest"
+        runner.settings.container_timeout = 60
+        runner.settings.container_memory = "1g"
+        runner.settings.container_cpus = "1"
+        runner.settings.container_keep = False
+        runner.settings.auto_review_poll_interval = 1.0
+        runner.settings.auto_review_record_polled_files = None
+
+        # Pre-create stale review cycle files from a prior run
+        review_dir = tmp_path / ".forge" / "reviews" / "TASK-1__implement-task"
+        review_dir.mkdir(parents=True)
+        stale_file = review_dir / "review_cycle_1.json"
+        stale_file.write_text(
+            json.dumps(
+                {
+                    "cycle": 1,
+                    "max_cycles": 2,
+                    "verdict": "rejected",
+                    "feedback": "stale feedback from prior run",
+                    "skill": "implement-task",
+                    "elapsed_seconds": 5.0,
+                    "timestamp": "2024-01-01T00:00:00Z",
+                }
+            )
+        )
+        assert stale_file.exists()
+
+        mock_process = MagicMock()
+        mock_process.communicate = AsyncMock(return_value=(b"output", b""))
+        mock_process.returncode = 0
+
+        with (
+            patch.object(runner, "_build_container_name", return_value="test-container"),
+            patch.object(runner, "_build_podman_command", return_value=["podman", "run"]),
+            patch(
+                "forge.sandbox.runner.asyncio.create_subprocess_exec",
+                return_value=mock_process,
+            ),
+        ):
+            await runner.run(
+                workspace_path=tmp_path,
+                task_summary="Test task",
+                task_description="Test description",
+                step_name="implement_task",
+                task_key="TASK-1",
+                skill_name="implement-task",
+            )
+
+        # Stale file should have been cleared before polling started
+        assert not stale_file.exists(), (
+            "Stale review_cycle_1.json from prior run should be deleted before new polling"
+        )
+
+    @pytest.mark.asyncio
+    async def test_new_run_cycles_collected_after_stale_cleared(self, tmp_path: Path):
+        """New run's review cycles are collected even when filenames match prior run."""
+        import json
+
+        runner = _runner_without_init()
+        runner.settings = MagicMock()
+        runner.settings.container_image = "test:latest"
+        runner.settings.container_timeout = 60
+        runner.settings.container_memory = "1g"
+        runner.settings.container_cpus = "1"
+        runner.settings.container_keep = False
+        runner.settings.auto_review_poll_interval = 0.05
+        runner.settings.auto_review_record_polled_files = None
+
+        review_dir = tmp_path / ".forge" / "reviews" / "TASK-2__implement-task"
+        review_dir.mkdir(parents=True)
+
+        # Write a stale file with old data
+        stale_data = {
+            "cycle": 1,
+            "max_cycles": 2,
+            "verdict": "rejected",
+            "feedback": "OLD feedback",
+            "skill": "implement-task",
+            "elapsed_seconds": 5.0,
+            "timestamp": "2024-01-01T00:00:00Z",
+        }
+        (review_dir / "review_cycle_1.json").write_text(json.dumps(stale_data))
+
+        # New data the container will write (same filename, fresh content)
+        new_data = {
+            "cycle": 1,
+            "max_cycles": 2,
+            "verdict": "rejected",
+            "feedback": "NEW feedback from current run",
+            "skill": "implement-task",
+            "elapsed_seconds": 8.0,
+            "timestamp": "2024-06-01T00:00:00Z",
+        }
+
+        mock_process = MagicMock()
+
+        async def write_new_cycle_then_exit():
+            """Simulate container writing a new cycle file then exiting."""
+            await asyncio.sleep(0.1)
+            (review_dir / "review_cycle_1.json").write_text(json.dumps(new_data))
+            return b"output", b""
+
+        mock_process.communicate = AsyncMock(side_effect=write_new_cycle_then_exit)
+        mock_process.returncode = 0
+
+        with (
+            patch.object(runner, "_build_container_name", return_value="test-container"),
+            patch.object(runner, "_build_podman_command", return_value=["podman", "run"]),
+            patch(
+                "forge.sandbox.runner.asyncio.create_subprocess_exec",
+                return_value=mock_process,
+            ),
+        ):
+            result = await runner.run(
+                workspace_path=tmp_path,
+                task_summary="Test task",
+                task_description="Test description",
+                step_name="implement_task",
+                task_key="TASK-2",
+                skill_name="implement-task",
+            )
+
+        # The result should contain the NEW cycle, not the stale one
+        assert len(result.review_cycles) == 1
+        assert result.review_cycles[0].feedback == "NEW feedback from current run", (
+            f"Got stale feedback: {result.review_cycles[0].feedback}"
+        )

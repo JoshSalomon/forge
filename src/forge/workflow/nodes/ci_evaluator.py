@@ -388,7 +388,7 @@ async def attempt_ci_fix(state: WorkflowState) -> WorkflowState:
             logger.warning(f"Container made no changes for {ticket_key} (attempt {attempt})")
         else:
             # Only run the expensive review pass when the fix actually changed code
-            await run_post_change_review(
+            _, review_result = await run_post_change_review(
                 workspace_path=str(workspace_path),
                 ticket_key=ticket_key,
                 current_repo=state.get("current_repo", ""),
@@ -397,6 +397,8 @@ async def attempt_ci_fix(state: WorkflowState) -> WorkflowState:
                 guardrails=state.get("context", {}).get("guardrails", ""),
                 label=f"ci-fix-{attempt}",
             )
+            if review_result is not None:
+                state = merge_review_exhaustion(state, review_result, ticket_key, "code_review")
 
             # Push all commits (CI fix + any review corrections)
             if fork_owner and fork_repo:

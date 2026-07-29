@@ -337,3 +337,46 @@ class TestMergeReviewExhaustion:
         assert "review_exhaustion_report" in merged
         # Original state is not mutated
         assert "review_exhaustion_report" not in state
+
+    def test_second_call_preserves_first_exhaustion_entry(self):
+        """Two merge_review_exhaustion calls in the same node must not overwrite each other.
+
+        This is the P2.1 bug: merge_review_exhaustion sets
+        state['review_exhaustion_report'] = {key: data}, replacing any
+        prior entry. When a single node calls it twice (e.g., ci_evaluator
+        for analyze_ci then fix_ci), the second call silently drops the first.
+        """
+        def _exhausted_result(task_key: str, step_name: str) -> ContainerResult:
+            return ContainerResult(
+                success=True,
+                exit_code=0,
+                stdout="",
+                stderr="",
+                review_cycles=[
+                    ReviewCycleData(
+                        cycle=1,
+                        max_cycles=1,
+                        verdict="rejected",
+                        feedback=f"feedback from {step_name}",
+                        skill="implement-task",
+                        elapsed_seconds=1.0,
+                        timestamp="",
+                    ),
+                ],
+            )
+
+        state: dict = {}
+
+        # First call: analyze_ci step exhausted
+        state = merge_review_exhaustion(state, _exhausted_result("T-1", "analyze_ci"), "T-1", "analyze_ci")
+        assert "T-1__analyze_ci" in state["review_exhaustion_report"]
+
+        # Second call: fix_ci step also exhausted
+        state = merge_review_exhaustion(state, _exhausted_result("T-1", "fix_ci"), "T-1", "fix_ci")
+
+        # Both entries must survive
+        assert "T-1__analyze_ci" in state["review_exhaustion_report"], (
+            "First exhaustion entry was overwritten by second call"
+        )
+        assert "T-1__fix_ci" in state["review_exhaustion_report"]
+        assert len(state["review_exhaustion_report"]) == 2
