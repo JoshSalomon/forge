@@ -532,18 +532,6 @@ class ContainerRunner:
         if not step_name:
             return None, None, None
 
-        # Clear any review cycle files from a prior run before polling starts.
-        # Without this, the poller marks stale filenames as processed; when the
-        # new container writes the same filenames, the sweep deduplicates them
-        # away and the new run's data is silently dropped.
-        cycle_dir = ReviewCyclePoller.build_cycle_dir(
-            workspace_path, task_key, skill_name, step_name
-        )
-        if cycle_dir.exists():
-            for stale_file in cycle_dir.glob("review_cycle_*.json"):
-                stale_file.unlink()
-                logger.debug("Cleared stale review cycle file: %s", stale_file)
-
         poller = ReviewCyclePoller(
             workspace_path=workspace_path,
             step_name=step_name,
@@ -568,6 +556,32 @@ class ContainerRunner:
         )
         logger.debug(f"Started review polling for step: {step_name}")
         return poller, recorder, polling_task
+
+    @staticmethod
+    def _clear_stale_review_cycles(
+        workspace_path: Path,
+        step_name: str | None,
+        task_key: str,
+        skill_name: str,
+    ) -> None:
+        """Remove review artifacts from an earlier execution.
+
+        This runs before the container is launched so files produced by the
+        current execution cannot be mistaken for stale artifacts and deleted.
+        A disabled review, missing directory, or empty directory is a no-op.
+        """
+        if not step_name:
+            return
+
+        cycle_dir = ReviewCyclePoller.build_cycle_dir(
+            workspace_path, task_key, skill_name, step_name
+        )
+        if not cycle_dir.is_dir():
+            return
+
+        for stale_file in cycle_dir.glob("review_cycle_*.json"):
+            stale_file.unlink()
+            logger.debug("Cleared stale review cycle file: %s", stale_file)
 
     async def _finalize_review_polling(
         self,
@@ -760,6 +774,15 @@ class ContainerRunner:
 
             logger.info(f"Starting container {container_name} for task: {task_summary}")
             logger.debug(f"Command: {' '.join(cmd)}")
+
+            # Clear artifacts from a prior execution before the container can
+            # write review cycles for this execution.
+            self._clear_stale_review_cycles(
+                workspace_path,
+                step_name,
+                task_key or "",
+                skill_name or "",
+            )
 
             # Run container
             process = await asyncio.create_subprocess_exec(

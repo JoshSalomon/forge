@@ -1201,9 +1201,29 @@ class TestStaleReviewFilesCleared:
     them away — silently dropping the new run's exhaustion data.
     """
 
+    def test_first_run_without_cycle_directory_is_no_op(self, tmp_path: Path):
+        """Cleanup succeeds when no prior review directory exists."""
+        ContainerRunner._clear_stale_review_cycles(
+            tmp_path, "implement_task", "TASK-1", "implement-task"
+        )
+
+        assert not (tmp_path / ".forge" / "reviews" / "TASK-1__implement-task").exists()
+
+    def test_existing_empty_cycle_directory_is_no_op(self, tmp_path: Path):
+        """Cleanup leaves an existing directory with no cycle files intact."""
+        review_dir = tmp_path / ".forge" / "reviews" / "TASK-1__implement-task"
+        review_dir.mkdir(parents=True)
+
+        ContainerRunner._clear_stale_review_cycles(
+            tmp_path, "implement_task", "TASK-1", "implement-task"
+        )
+
+        assert review_dir.is_dir()
+        assert list(review_dir.iterdir()) == []
+
     @pytest.mark.asyncio
-    async def test_stale_files_are_cleared_before_polling_starts(self, tmp_path: Path):
-        """Review cycle directory is cleared before a new run's poller starts."""
+    async def test_stale_files_are_cleared_before_container_starts(self, tmp_path: Path):
+        """Review cycle files are cleared before the container process is launched."""
         import json
 
         runner = _runner_without_init()
@@ -1239,12 +1259,16 @@ class TestStaleReviewFilesCleared:
         mock_process.communicate = AsyncMock(return_value=(b"output", b""))
         mock_process.returncode = 0
 
+        async def create_process(*_args, **_kwargs):
+            assert not stale_file.exists(), "stale file still existed at container launch"
+            return mock_process
+
         with (
             patch.object(runner, "_build_container_name", return_value="test-container"),
             patch.object(runner, "_build_podman_command", return_value=["podman", "run"]),
             patch(
                 "forge.sandbox.runner.asyncio.create_subprocess_exec",
-                return_value=mock_process,
+                side_effect=create_process,
             ),
         ):
             await runner.run(
@@ -1256,7 +1280,7 @@ class TestStaleReviewFilesCleared:
                 skill_name="implement-task",
             )
 
-        # Stale file should have been cleared before polling started
+        # Stale file should remain absent after the run.
         assert not stale_file.exists(), (
             "Stale review_cycle_1.json from prior run should be deleted before new polling"
         )
