@@ -9,21 +9,23 @@ if TYPE_CHECKING:
 
 
 def collect_review_exhaustion(
-    container_result: ContainerResult,
+    container_result: ContainerResult | None,
     task_key: str,
     step_name: str,
 ) -> tuple[str, dict[str, Any]] | None:
     """Build exhaustion report entry if review cycles exhausted.
 
     Args:
-        container_result: Result from container execution.
+        container_result: Result from container execution, or None on error.
         task_key: Jira task key (e.g., "AISOS-2053").
         step_name: Workflow step name (e.g., "implement_task").
 
     Returns:
         Tuple of (key, data) to merge into state['review_exhaustion_report'],
-        or None if review passed or no review ran.
+        or None if review passed, no review ran, or result is None.
     """
+    if container_result is None:
+        return None
     if not container_result.review_exhausted:
         return None
 
@@ -45,7 +47,7 @@ def collect_review_exhaustion(
 
 def merge_review_exhaustion(
     state: dict[str, Any],
-    container_result: ContainerResult,
+    container_result: ContainerResult | None,
     task_key: str,
     step_name: str,
 ) -> dict[str, Any]:
