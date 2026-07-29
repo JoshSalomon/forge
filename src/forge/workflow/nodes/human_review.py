@@ -20,10 +20,16 @@ def human_review_gate(state: WorkflowState) -> WorkflowState:
         state: Current workflow state.
 
     Returns:
-        State with is_paused=True.
+        State with is_paused=True, unless PR is already merged.
     """
     ticket_key = state["ticket_key"]
     pr_urls = state.get("pr_urls", [])
+
+    if state.get("pr_merged"):
+        logger.info(f"Human review gate: PR already merged for {ticket_key}, skipping pause")
+        return update_state_timestamp(
+            {**state, "current_node": "human_review_gate", "is_paused": False}
+        )
 
     logger.info(f"Human review gate: pausing for {ticket_key} ({len(pr_urls)} PRs)")
 
