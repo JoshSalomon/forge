@@ -18,6 +18,12 @@ nav = [
   ]},
   {"Developer Guide" = [
     {"Overview" = "developer-guide.md"},
+    {"Architecture" = [
+      {"Overview" = "architecture/index.md"},
+      {"System & Components" = "architecture/overview.md"},
+      {"Internals" = "architecture/internals.md"},
+      {"Reference" = "architecture/reference.md"},
+    ]},
     {"Local Setup" = "dev/setup.md"},
     {"Testing" = "dev/testing.md"},
     {"Contributing" = "dev/contributing.md"},
