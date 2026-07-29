@@ -115,6 +115,8 @@ async def run_review_container(
     repo_name: str,
     config: ContainerConfig | None = None,
     previous_task_keys: list[str] | None = None,
+    step_name: str | None = None,
+    skill_name: str | None = None,
 ) -> tuple[ContainerResult, str]:
     """Execute a review container and return its result and combined output."""
     # Never allow a failed retry to reuse an earlier attempt's verdict. The
@@ -138,6 +140,10 @@ async def run_review_container(
         kwargs["config"] = config
     if previous_task_keys is not None:
         kwargs["previous_task_keys"] = previous_task_keys
+    if step_name is not None:
+        kwargs["step_name"] = step_name
+    if skill_name is not None:
+        kwargs["skill_name"] = skill_name
     result = await runner.run(**kwargs)
     output = collect_review_output(
         workspace_path,

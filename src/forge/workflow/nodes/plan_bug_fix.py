@@ -15,7 +15,7 @@ from forge.models.workflow import ForgeLabel
 from forge.prompts import load_prompt
 from forge.sandbox import ContainerRunner
 from forge.workflow.bug.state import BugState
-from forge.workflow.utils import set_paused, update_state_timestamp
+from forge.workflow.utils import merge_review_exhaustion, set_paused, update_state_timestamp
 from forge.workflow.utils.jira_status import post_status_comment
 
 logger = logging.getLogger(__name__)
@@ -141,7 +141,11 @@ async def _run_plan_container(
                 task_description=task_description,
                 ticket_key=ticket_key,
                 task_key=f"{ticket_key}-plan",
+                step_name="plan_bug_fix",
+                skill_name="plan-bug-fix",
             )
+
+            state = merge_review_exhaustion(state, result, ticket_key, "plan_bug_fix")
 
             if not result.success:
                 raise RuntimeError(

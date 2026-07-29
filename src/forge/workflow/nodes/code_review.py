@@ -16,6 +16,7 @@ from forge.integrations.github.client import GitHubClient
 from forge.integrations.jira.client import JiraClient
 from forge.prompts import load_prompt
 from forge.sandbox import ContainerRunner
+from forge.sandbox.runner import ContainerResult
 from forge.workflow.utils.jira_status import post_status_comment
 from forge.workspace.git_ops import GitOperations
 from forge.workspace.manager import Workspace
@@ -31,7 +32,7 @@ async def run_post_change_review(
     spec_content: str = "",
     guardrails: str = "",
     label: str = "post-change",
-) -> bool:
+) -> tuple[bool, ContainerResult | None]:
     """Run the local-review container skill after a code-changing step.
 
     Mirrors what local_reviewer.py does: runs the review in a container,
@@ -48,7 +49,9 @@ async def run_post_change_review(
         label: Short label for log messages (e.g. "ci-fix", "post-change").
 
     Returns:
-        True if the review committed any fixes, False otherwise.
+        Tuple of (committed, container_result) where committed is True if the
+        review committed any fixes, and container_result is the ContainerResult
+        (or None on error) for callers to propagate review exhaustion data.
     """
     settings = get_settings()
     try:
@@ -60,13 +63,15 @@ async def run_post_change_review(
         )
 
         runner = ContainerRunner(settings)
-        await runner.run(
+        result = await runner.run(
             workspace_path=Path(workspace_path),
             task_summary=f"Post-{label} code review",
             task_description=task_description,
             ticket_key=ticket_key,
             task_key=f"{ticket_key}-review-{label}",
             repo_name=current_repo,
+            step_name="code_review",
+            skill_name="review-code",
         )
 
         git = GitOperations(
@@ -82,14 +87,14 @@ async def run_post_change_review(
             git.stage_all()
             git.commit(f"[{ticket_key}] fix: address issues found in {label} review")
             logger.info(f"Committed {label} review fixes for {ticket_key}")
-            return True
+            return True, result
 
         logger.info(f"Post-{label} review: no fixes needed for {ticket_key}")
-        return False
+        return False, result
 
     except Exception as e:
         logger.warning(f"Post-{label} review failed (non-fatal): {e}")
-        return False
+        return False, None
 
 
 async def sync_pr_description(

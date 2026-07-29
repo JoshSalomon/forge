@@ -13,6 +13,7 @@ to implement tasks with full tool access.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -21,11 +22,38 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from forge.api.routes.metrics import (
+    observe_review_duration,
+    record_review_cycle,
+    record_review_verdict,
+)
 from forge.config import Settings, get_settings
+from forge.observability import (
+    ReviewCycleData,
+    ReviewCyclePoller,
+    ReviewCycleRecorder,
+)
 from forge.prompts import load_prompt
 from forge.skills.resolver import resolve_skill_paths
 
 logger = logging.getLogger(__name__)
+
+
+def _process_cycle(
+    cycle: ReviewCycleData,
+    step_name: str,
+    recorder: "ReviewCycleRecorder",
+    collected_cycles: list[ReviewCycleData],
+) -> None:
+    """Record a review cycle: append, log via recorder, emit Prometheus metrics."""
+    collected_cycles.append(cycle)
+    recorder.record(cycle)
+    if cycle.file_path:
+        recorder.record_file(Path(cycle.file_path))
+    record_review_cycle(cycle.skill, step_name)
+    record_review_verdict(cycle.skill, step_name, cycle.verdict)
+    observe_review_duration(cycle.skill, step_name, cycle.elapsed_seconds)
+
 
 # Default container image (can be overridden via CONTAINER_IMAGE env var)
 # Use localhost/ prefix to avoid podman short-name resolution prompts
@@ -48,11 +76,20 @@ class ContainerResult:
     stderr: str
     tests_passed: bool | None = None  # None if tests were skipped
     error_message: str | None = None
+    review_cycles: list[ReviewCycleData] = field(default_factory=list)
 
     @property
     def tests_failed(self) -> bool:
         """Check if tests specifically failed."""
         return self.exit_code == EXIT_TESTS_FAILED
+
+    @property
+    def review_exhausted(self) -> bool:
+        """Check if the review loop exhausted all retries without approval."""
+        if not self.review_cycles:
+            return False
+        last = self.review_cycles[-1]
+        return last.verdict == "rejected" and last.cycle >= last.max_cycles
 
 
 @dataclass
@@ -366,6 +403,313 @@ class ContainerRunner:
             process.kill()
             await process.wait()
 
+    def _sweep_review_cycles(
+        self,
+        workspace_path: Path,
+        step_name: str,
+        processed_files: set[str],
+        collected_cycles: list[ReviewCycleData],
+        recorder: ReviewCycleRecorder,
+        task_key: str = "",
+        skill_name: str = "",
+    ) -> None:
+        """Synchronous post-execution sweep for missed review cycle files.
+
+        This method scans for any review_cycle_*.json files that may have been
+        missed during async polling, especially if the container exits quickly
+        after writing.
+
+        Args:
+            workspace_path: Path to the workspace root.
+            step_name: Name of the step for metrics.
+            processed_files: Set of file paths already processed by the poller.
+            collected_cycles: List to append newly found cycles to.
+            recorder: Recorder for logging/copying detected cycles.
+            task_key: Jira task key for directory naming.
+            skill_name: Skill name for directory naming.
+        """
+        cycle_dir = ReviewCyclePoller.build_cycle_dir(
+            workspace_path, task_key, skill_name, step_name
+        )
+        if not cycle_dir.exists():
+            return
+
+        # Find all review cycle files
+        all_files = sorted(cycle_dir.glob("review_cycle_*.json"))
+
+        missed_count = 0
+        for file_path in all_files:
+            file_key = str(file_path)
+
+            # Skip files already processed by the async poller
+            if file_key in processed_files:
+                continue
+
+            # This file was missed during polling - parse and collect it
+            try:
+                content = file_path.read_text(encoding="utf-8")
+                if not content.strip():
+                    logger.warning("Empty review cycle file during sweep: %s", file_path)
+                    continue
+
+                data = json.loads(content)
+                cycle_data = ReviewCycleData.from_dict(data, file_path=file_key)
+                missed_count += 1
+                _process_cycle(cycle_data, step_name, recorder, collected_cycles)
+                logger.debug(
+                    "Sweep caught review cycle %d/%d for %s: %s",
+                    cycle_data.cycle,
+                    cycle_data.max_cycles,
+                    step_name,
+                    cycle_data.verdict,
+                )
+
+            except json.JSONDecodeError as e:
+                logger.warning("Failed to parse review cycle file %s: %s", file_path, e)
+            except (KeyError, TypeError) as e:
+                logger.warning("Invalid review cycle data in %s: %s", file_path, e)
+            except OSError as e:
+                logger.warning("Error reading review cycle file %s: %s", file_path, e)
+
+        if missed_count > 0:
+            logger.warning(
+                "Sweep caught %d review cycle file(s) missed during async polling for step %s",
+                missed_count,
+                step_name,
+            )
+
+    async def _poll_review_cycles(
+        self,
+        poller: ReviewCyclePoller,
+        recorder: ReviewCycleRecorder,
+        collected_cycles: list[ReviewCycleData],
+    ) -> None:
+        """Background task to poll for review cycle files during container execution.
+
+        This task polls the workspace for review_cycle_*.json files and:
+        - Collects detected ReviewCycleData into the provided list
+        - Records cycles via the recorder (log or copy mode)
+        - Emits Prometheus metrics for observability
+
+        Args:
+            poller: The ReviewCyclePoller instance to use for polling.
+            recorder: The ReviewCycleRecorder for recording cycles.
+            collected_cycles: List to aggregate detected cycles into.
+        """
+
+        def on_cycles(new_cycles: list[ReviewCycleData]) -> None:
+            for cycle in new_cycles:
+                _process_cycle(cycle, poller.step_name, recorder, collected_cycles)
+
+        try:
+            await poller.run_loop(on_cycles)
+        except asyncio.CancelledError:
+            logger.debug("Review polling task cancelled")
+            raise
+
+    async def _start_review_polling(
+        self,
+        workspace_path: Path,
+        step_name: str | None,
+        task_key: str,
+        skill_name: str,
+        collected_cycles: list[ReviewCycleData],
+    ) -> tuple[ReviewCyclePoller | None, ReviewCycleRecorder | None, asyncio.Task | None]:
+        """Create review poller, recorder, and start background polling task.
+
+        Args:
+            workspace_path: Path to the workspace root.
+            step_name: Workflow step name for organizing review files.
+                If not provided, polling is disabled and (None, None, None) is returned.
+            task_key: Jira task key for directory naming.
+            skill_name: Skill name for directory naming.
+            collected_cycles: List to aggregate detected cycles into.
+
+        Returns:
+            Tuple of (poller, recorder, polling_task), or (None, None, None)
+            if step_name is not provided.
+        """
+        if not step_name:
+            return None, None, None
+
+        poller = ReviewCyclePoller(
+            workspace_path=workspace_path,
+            step_name=step_name,
+            task_key=task_key,
+            skill_name=skill_name,
+            settings=self.settings,
+        )
+        record_mode = self.settings.auto_review_record_polled_files
+        if record_mode == "copy":
+            logger.warning(
+                "Review recording mode 'copy' is not yet supported "
+                "(no recording_dir configured), falling back to 'log'"
+            )
+            record_mode = "log"
+        recorder = ReviewCycleRecorder(
+            step_name=step_name,
+            mode=record_mode,
+            recording_dir=None,
+        )
+        polling_task = asyncio.create_task(
+            self._poll_review_cycles(poller, recorder, collected_cycles)
+        )
+        logger.debug(f"Started review polling for step: {step_name}")
+        return poller, recorder, polling_task
+
+    @staticmethod
+    def _clear_stale_review_cycles(
+        workspace_path: Path,
+        step_name: str | None,
+        task_key: str,
+        skill_name: str,
+    ) -> None:
+        """Remove review artifacts from an earlier execution.
+
+        This runs before the container is launched so files produced by the
+        current execution cannot be mistaken for stale artifacts and deleted.
+        A disabled review, missing directory, or empty directory is a no-op.
+        """
+        if not step_name:
+            return
+
+        cycle_dir = ReviewCyclePoller.build_cycle_dir(
+            workspace_path, task_key, skill_name, step_name
+        )
+        if not cycle_dir.is_dir():
+            return
+
+        for stale_file in cycle_dir.glob("review_cycle_*.json"):
+            stale_file.unlink()
+            logger.debug("Cleared stale review cycle file: %s", stale_file)
+
+    async def _finalize_review_polling(
+        self,
+        poller: ReviewCyclePoller | None,
+        recorder: ReviewCycleRecorder | None,
+        polling_task: asyncio.Task | None,
+        workspace_path: Path,
+        step_name: str | None,
+        task_key: str,
+        skill_name: str,
+        collected_cycles: list[ReviewCycleData],
+    ) -> None:
+        """Stop review poller, cancel polling task, and sweep for missed files.
+
+        Args:
+            poller: The ReviewCyclePoller instance, or None if polling was disabled.
+            recorder: The ReviewCycleRecorder instance, or None if polling was disabled.
+            polling_task: The background polling asyncio.Task, or None if polling was disabled.
+            workspace_path: Path to the workspace root.
+            step_name: Workflow step name for organizing review files.
+            task_key: Jira task key for directory naming.
+            skill_name: Skill name for directory naming.
+            collected_cycles: List to aggregate detected cycles into.
+        """
+        if not polling_task or not poller or not recorder or not step_name:
+            return
+
+        # Stop the poller
+        poller.stop()
+        # Cancel the polling task
+        polling_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await polling_task
+        logger.debug("Review polling task stopped")
+
+        # Do one final async poll to catch any remaining files
+        final_cycles = await poller.poll_once()
+        for cycle in final_cycles:
+            _process_cycle(cycle, poller.step_name, recorder, collected_cycles)
+
+        # Synchronous sweep for any files missed during async polling
+        # This catches files written just before container exit that may
+        # not have been detected by the async poller
+        self._sweep_review_cycles(
+            workspace_path=workspace_path,
+            step_name=step_name,
+            processed_files=poller._processed_files,
+            collected_cycles=collected_cycles,
+            recorder=recorder,
+            task_key=task_key,
+            skill_name=skill_name,
+        )
+
+    def _build_container_result(
+        self,
+        exit_code: int,
+        stdout_str: str,
+        stderr_str: str,
+        collected_cycles: list[ReviewCycleData],
+        container_name: str,
+    ) -> ContainerResult:
+        """Map container exit code to a ContainerResult.
+
+        Handles logging of container output at appropriate levels and
+        emits the container_keep debugging warning when applicable.
+
+        Args:
+            exit_code: Process exit code.
+            stdout_str: Decoded container stdout.
+            stderr_str: Decoded container stderr.
+            collected_cycles: Review cycles collected during execution.
+            container_name: Container name for log messages.
+
+        Returns:
+            ContainerResult reflecting the exit status.
+        """
+        logger.info(f"Container exited with code {exit_code}")
+
+        # Log container output
+        if exit_code != EXIT_SUCCESS:
+            # Failure: stderr at INFO, stdout at DEBUG
+            if stderr_str:
+                logger.info(f"Container stderr:\n{stderr_str}")
+            if stdout_str:
+                logger.debug(f"Container stdout:\n{stdout_str}")
+            if self.settings.container_keep:
+                logger.warning(
+                    f"Container kept for debugging (FORGE_CONTAINER_KEEP=true): "
+                    f"{container_name}\n"
+                    f"  Inspect logs:      podman logs {container_name}\n"
+                    f"  Enter filesystem:  podman export {container_name} | tar -xC /tmp/{container_name}\n"
+                    f"  Remove when done:  podman rm {container_name}"
+                )
+        else:
+            # Success: stderr at DEBUG only
+            if stderr_str:
+                logger.debug(f"Container stderr:\n{stderr_str}")
+
+        # Determine result
+        if exit_code == EXIT_SUCCESS:
+            return ContainerResult(
+                success=True,
+                exit_code=exit_code,
+                stdout=stdout_str,
+                stderr=stderr_str,
+                tests_passed=True,
+                review_cycles=collected_cycles,
+            )
+        elif exit_code == EXIT_TESTS_FAILED:
+            return ContainerResult(
+                success=False,
+                exit_code=exit_code,
+                stdout=stdout_str,
+                stderr=stderr_str,
+                tests_passed=False,
+                error_message="Tests failed after max retries",
+                review_cycles=collected_cycles,
+            )
+        else:
+            return ContainerResult(
+                success=False,
+                exit_code=exit_code,
+                stdout=stdout_str,
+                stderr=stderr_str,
+                error_message=f"Task failed with exit code {exit_code}",
+                review_cycles=collected_cycles,
+            )
+
     async def run(
         self,
         workspace_path: Path,
@@ -377,6 +721,8 @@ class ContainerRunner:
         repo_name: str | None = None,
         previous_task_keys: list[str] | None = None,
         trace_context: dict[str, Any] | None = None,
+        step_name: str | None = None,
+        skill_name: str | None = None,
     ) -> ContainerResult:
         """Run a task in a container sandbox.
 
@@ -390,9 +736,12 @@ class ContainerRunner:
             repo_name: Repository name (e.g., "owner/repo") for container naming.
             previous_task_keys: List of previously implemented task keys for handoff context.
             trace_context: Workflow fields forwarded to Langfuse only.
+            step_name: Workflow step name (e.g., "implement_task", "local_review")
+                for organizing review cycle files under .forge/{step-name}/.
+                If not provided, review polling is disabled.
 
         Returns:
-            ContainerResult with execution status and logs.
+            ContainerResult with execution status, logs, and review_cycles.
         """
         config = config or self._default_config()
 
@@ -406,8 +755,15 @@ class ContainerRunner:
             "description": task_description,
             "previous_task_keys": previous_task_keys or [],
             "trace_context": trace_context or {},
+            "skill_name": skill_name or "",
         }
         task_file.write_text(json.dumps(task_data, indent=2))
+
+        # List to collect review cycles detected during execution
+        collected_cycles: list[ReviewCycleData] = []
+        poller: ReviewCyclePoller | None = None
+        recorder: ReviewCycleRecorder | None = None
+        polling_task: asyncio.Task | None = None
 
         try:
             # Build container name and command
@@ -419,11 +775,29 @@ class ContainerRunner:
             logger.info(f"Starting container {container_name} for task: {task_summary}")
             logger.debug(f"Command: {' '.join(cmd)}")
 
+            # Clear artifacts from a prior execution before the container can
+            # write review cycles for this execution.
+            self._clear_stale_review_cycles(
+                workspace_path,
+                step_name,
+                task_key or "",
+                skill_name or "",
+            )
+
             # Run container
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+            )
+
+            # Start review polling background task if step_name is provided
+            poller, recorder, polling_task = await self._start_review_polling(
+                workspace_path,
+                step_name,
+                task_key or "",
+                skill_name or "",
+                collected_cycles,
             )
 
             try:
@@ -440,64 +814,31 @@ class ContainerRunner:
                     stdout="",
                     stderr="Container execution timed out",
                     error_message="Timeout exceeded",
+                    review_cycles=collected_cycles,
                 )
             except asyncio.CancelledError:
                 logger.warning(f"Container execution cancelled, stopping {container_name}")
                 await self._stop_timed_out_container(container_name, process)
                 raise  # Re-raise CancelledError
+            finally:
+                await self._finalize_review_polling(
+                    poller,
+                    recorder,
+                    polling_task,
+                    workspace_path,
+                    step_name,
+                    task_key or "",
+                    skill_name or "",
+                    collected_cycles,
+                )
 
             exit_code = process.returncode or 0
             stdout_str = stdout.decode("utf-8", errors="replace")
             stderr_str = stderr.decode("utf-8", errors="replace")
 
-            logger.info(f"Container exited with code {exit_code}")
-
-            # Log container output
-            if exit_code != EXIT_SUCCESS:
-                # Failure: stderr at INFO, stdout at DEBUG
-                if stderr_str:
-                    logger.info(f"Container stderr:\n{stderr_str}")
-                if stdout_str:
-                    logger.debug(f"Container stdout:\n{stdout_str}")
-                if self.settings.container_keep:
-                    logger.warning(
-                        f"Container kept for debugging (FORGE_CONTAINER_KEEP=true): "
-                        f"{container_name}\n"
-                        f"  Inspect logs:      podman logs {container_name}\n"
-                        f"  Enter filesystem:  podman export {container_name} | tar -xC /tmp/{container_name}\n"
-                        f"  Remove when done:  podman rm {container_name}"
-                    )
-            else:
-                # Success: stderr at DEBUG only
-                if stderr_str:
-                    logger.debug(f"Container stderr:\n{stderr_str}")
-
-            # Determine result
-            if exit_code == EXIT_SUCCESS:
-                return ContainerResult(
-                    success=True,
-                    exit_code=exit_code,
-                    stdout=stdout_str,
-                    stderr=stderr_str,
-                    tests_passed=True,
-                )
-            elif exit_code == EXIT_TESTS_FAILED:
-                return ContainerResult(
-                    success=False,
-                    exit_code=exit_code,
-                    stdout=stdout_str,
-                    stderr=stderr_str,
-                    tests_passed=False,
-                    error_message="Tests failed after max retries",
-                )
-            else:
-                return ContainerResult(
-                    success=False,
-                    exit_code=exit_code,
-                    stdout=stdout_str,
-                    stderr=stderr_str,
-                    error_message=f"Task failed with exit code {exit_code}",
-                )
+            return self._build_container_result(
+                exit_code, stdout_str, stderr_str, collected_cycles, container_name
+            )
 
         finally:
             # Cleanup task file

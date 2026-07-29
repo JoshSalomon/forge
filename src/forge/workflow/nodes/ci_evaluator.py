@@ -17,7 +17,7 @@ from forge.workflow.feature.state import FeatureState as WorkflowState
 from forge.workflow.nodes.code_review import run_post_change_review, sync_pr_description
 from forge.workflow.nodes.error_handler import notify_error
 from forge.workflow.nodes.workspace_setup import prepare_workspace
-from forge.workflow.utils import update_state_timestamp
+from forge.workflow.utils import merge_review_exhaustion, update_state_timestamp
 from forge.workflow.utils.jira_status import (
     post_status_comment,
     remove_implementing_label,
@@ -315,14 +315,17 @@ async def attempt_ci_fix(state: WorkflowState) -> WorkflowState:
         )
 
         runner = ContainerRunner(settings)
-        await runner.run(
+        result = await runner.run(
             workspace_path=Path(workspace_path),
             task_summary=f"Analyze CI failures (attempt {attempt})",
             task_description=analysis_prompt,
             ticket_key=ticket_key,
             task_key=f"{ticket_key}-ci-analyze",
             repo_name=state.get("current_repo", ""),
+            step_name="analyze_ci",
+            skill_name="analyze-ci",
         )
+        state = merge_review_exhaustion(state, result, ticket_key, "analyze_ci")
 
         if not fix_plan_file.exists():
             logger.warning(f"No fix plan written for {ticket_key} — skipping fix phase")
@@ -343,14 +346,17 @@ async def attempt_ci_fix(state: WorkflowState) -> WorkflowState:
         fix_prompt = load_prompt("fix-ci", fix_plan=fix_plan)
 
         runner = ContainerRunner(settings)
-        await runner.run(
+        result = await runner.run(
             workspace_path=Path(workspace_path),
             task_summary=f"Apply CI fix plan (attempt {attempt})",
             task_description=fix_prompt,
             ticket_key=ticket_key,
             task_key=f"{ticket_key}-ci-fix",
             repo_name=state.get("current_repo", ""),
+            step_name="fix_ci",
+            skill_name="fix-ci",
         )
+        state = merge_review_exhaustion(state, result, ticket_key, "fix_ci")
 
         workspace = Workspace(
             path=Path(workspace_path),
@@ -382,7 +388,7 @@ async def attempt_ci_fix(state: WorkflowState) -> WorkflowState:
             logger.warning(f"Container made no changes for {ticket_key} (attempt {attempt})")
         else:
             # Only run the expensive review pass when the fix actually changed code
-            await run_post_change_review(
+            _, review_result = await run_post_change_review(
                 workspace_path=str(workspace_path),
                 ticket_key=ticket_key,
                 current_repo=state.get("current_repo", ""),
@@ -391,6 +397,8 @@ async def attempt_ci_fix(state: WorkflowState) -> WorkflowState:
                 guardrails=state.get("context", {}).get("guardrails", ""),
                 label=f"ci-fix-{attempt}",
             )
+            if review_result is not None:
+                state = merge_review_exhaustion(state, review_result, ticket_key, "code_review")
 
             # Push all commits (CI fix + any review corrections)
             if fork_owner and fork_repo:

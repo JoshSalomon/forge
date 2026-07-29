@@ -21,7 +21,7 @@ from forge.workflow.nodes.review_utils import (
     run_review_container,
 )
 from forge.workflow.nodes.workspace_setup import prepare_workspace
-from forge.workflow.utils import update_state_timestamp
+from forge.workflow.utils import merge_review_exhaustion, update_state_timestamp
 from forge.workflow.utils.jira_status import post_status_comment
 from forge.workspace.git_ops import GitOperations
 
@@ -175,15 +175,19 @@ async def _run_bug_review(state: WorkflowState, git: GitOperations) -> WorkflowS
 
     try:
         runner = ContainerRunner(settings)
-        _, output = await run_review_container(
+        result, output = await run_review_container(
             runner,
             workspace_path=Path(workspace_path),
             task_summary="Qualitative bug review — root cause and test coverage",
+            step_name="local_review",
+            skill_name="local-review-bug",
             task_description=task_description,
             ticket_key=ticket_key,
             task_key=f"{ticket_key}-qualreview",
             repo_name=current_repo,
         )
+
+        state = merge_review_exhaustion(state, result, ticket_key, "local_review")
 
         if git.has_uncommitted_changes():
             git.stage_all()
@@ -331,7 +335,7 @@ async def _run_feature_review(state: WorkflowState, git: GitOperations) -> Workf
 
     try:
         runner = ContainerRunner(settings)
-        _, output = await run_review_container(
+        result, output = await run_review_container(
             runner,
             workspace_path=Path(workspace_path),
             task_summary="Local code review — fix breaking issues",
@@ -339,7 +343,11 @@ async def _run_feature_review(state: WorkflowState, git: GitOperations) -> Workf
             ticket_key=ticket_key,
             task_key=f"{ticket_key}-review",
             repo_name=current_repo,
+            step_name="local_review",
+            skill_name="local-code-review",
         )
+
+        state = merge_review_exhaustion(state, result, ticket_key, "local_review")
 
         if git.has_uncommitted_changes():
             git.stage_all()

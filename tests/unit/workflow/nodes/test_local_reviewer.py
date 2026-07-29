@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from forge.models.workflow import TicketType
+from forge.observability.review_poller import ReviewCycleData
 from forge.workflow.nodes.local_reviewer import (
     _parse_bug_verdict,
     local_review_changes,
@@ -65,6 +66,8 @@ def _make_mock_runner(stdout="verdict: adequate\n\nfeedback: Looks good."):
             result.exit_code = 0
             result.stdout = stdout
             result.stderr = ""
+            result.review_cycles = []
+            result.review_exhausted = False
             return result
 
     return _FakeRunner()
@@ -139,6 +142,8 @@ class TestLocalReviewBug:
                 result.exit_code = 0
                 result.stdout = "verdict: adequate\n\nfeedback: Good."
                 result.stderr = ""
+                result.review_cycles = []
+                result.review_exhausted = False
                 return result
 
         mock_git = _make_mock_git()
@@ -352,6 +357,8 @@ class TestLocalReviewFeature:
                 result.exit_code = 0
                 result.stdout = "No issues found."
                 result.stderr = ""
+                result.review_cycles = []
+                result.review_exhausted = False
                 return result
 
         mock_git = _make_mock_git()
@@ -386,3 +393,177 @@ class TestLocalReviewFeature:
             "qualitative_retry_count" not in result or result.get("qualitative_retry_count") is None
         )
         assert "local_review_verdict" not in result or result.get("local_review_verdict") is None
+
+
+class TestLocalReviewStepName:
+    """Tests for step_name propagation to ContainerRunner."""
+
+    @pytest.mark.asyncio
+    async def test_bug_review_passes_step_name_local_review(self, base_bug_review_state):
+        """Bug qualitative review passes step_name='local_review' to ContainerRunner."""
+        captured_kwargs = []
+
+        class _CapturingRunner:
+            async def run(self, **kwargs):
+                captured_kwargs.append(kwargs)
+                result = MagicMock()
+                result.success = True
+                result.exit_code = 0
+                result.stdout = "verdict: adequate\n\nfeedback: Good."
+                result.stderr = ""
+                result.review_cycles = []
+                result.review_exhausted = False
+                return result
+
+        mock_git = _make_mock_git()
+
+        with (
+            patch(
+                "forge.workflow.nodes.local_reviewer.ContainerRunner",
+                return_value=_CapturingRunner(),
+            ),
+            patch("forge.workflow.nodes.local_reviewer.GitOperations", return_value=mock_git),
+        ):
+            await local_review_changes(base_bug_review_state)
+
+        assert captured_kwargs, "runner.run was not called"
+        assert captured_kwargs[0].get("step_name") == "local_review"
+
+    @pytest.mark.asyncio
+    async def test_feature_review_passes_step_name_local_review(self, base_feature_review_state):
+        """Feature review passes step_name='local_review' to ContainerRunner."""
+        captured_kwargs = []
+
+        class _CapturingRunner:
+            async def run(self, **kwargs):
+                captured_kwargs.append(kwargs)
+                result = MagicMock()
+                result.success = True
+                result.exit_code = 0
+                result.stdout = "No issues found."
+                result.stderr = ""
+                result.review_cycles = []
+                result.review_exhausted = False
+                return result
+
+        mock_git = _make_mock_git()
+
+        with (
+            patch(
+                "forge.workflow.nodes.local_reviewer.ContainerRunner",
+                return_value=_CapturingRunner(),
+            ),
+            patch("forge.workflow.nodes.local_reviewer.GitOperations", return_value=mock_git),
+        ):
+            await local_review_changes(base_feature_review_state)
+
+        assert captured_kwargs, "runner.run was not called"
+        assert captured_kwargs[0].get("step_name") == "local_review"
+
+
+class TestMergeReviewExhaustionIntegration:
+    """Tests that review_exhaustion_report is populated when review cycles are exhausted."""
+
+    @pytest.mark.asyncio
+    async def test_bug_review_populates_exhaustion_report(self, base_bug_review_state):
+        """Bug review with exhausted cycles populates review_exhaustion_report in state."""
+        exhausted_cycles = [
+            ReviewCycleData(
+                cycle=1,
+                max_cycles=2,
+                verdict="rejected",
+                feedback="Tests missing for edge case.",
+                skill="local-review-bug",
+                elapsed_seconds=12.5,
+                timestamp="2026-07-16T10:00:00Z",
+            ),
+            ReviewCycleData(
+                cycle=2,
+                max_cycles=2,
+                verdict="rejected",
+                feedback="Still missing edge case coverage.",
+                skill="local-review-bug",
+                elapsed_seconds=14.0,
+                timestamp="2026-07-16T10:01:00Z",
+            ),
+        ]
+
+        class _ExhaustedRunner:
+            async def run(self, **_kwargs):
+                result = MagicMock()
+                result.success = True
+                result.exit_code = 0
+                result.stdout = "verdict: adequate\n\nfeedback: Good."
+                result.stderr = ""
+                result.review_cycles = exhausted_cycles
+                result.review_exhausted = True
+                return result
+
+        mock_git = _make_mock_git()
+
+        with (
+            patch(
+                "forge.workflow.nodes.local_reviewer.ContainerRunner",
+                return_value=_ExhaustedRunner(),
+            ),
+            patch("forge.workflow.nodes.local_reviewer.GitOperations", return_value=mock_git),
+        ):
+            result = await local_review_changes(base_bug_review_state)
+
+        report = result.get("review_exhaustion_report", {})
+        assert "BUG-42__local_review" in report
+        entry = report["BUG-42__local_review"]
+        assert entry["task_key"] == "BUG-42"
+        assert entry["step_name"] == "local_review"
+
+    @pytest.mark.asyncio
+    async def test_feature_review_populates_exhaustion_report(self, base_feature_review_state):
+        """Feature review with exhausted cycles populates review_exhaustion_report in state."""
+        exhausted_cycles = [
+            ReviewCycleData(
+                cycle=1,
+                max_cycles=2,
+                verdict="rejected",
+                feedback="Breaking issue not resolved.",
+                skill="local-code-review",
+                elapsed_seconds=10.0,
+                timestamp="2026-07-16T11:00:00Z",
+            ),
+            ReviewCycleData(
+                cycle=2,
+                max_cycles=2,
+                verdict="rejected",
+                feedback="Breaking issue persists after retry.",
+                skill="local-code-review",
+                elapsed_seconds=11.0,
+                timestamp="2026-07-16T11:01:00Z",
+            ),
+        ]
+
+        class _ExhaustedRunner:
+            async def run(self, **_kwargs):
+                result = MagicMock()
+                result.success = True
+                result.exit_code = 0
+                result.stdout = "No issues found."
+                result.stderr = ""
+                result.review_cycles = exhausted_cycles
+                result.review_exhausted = True
+                return result
+
+        mock_git = _make_mock_git()
+
+        with (
+            patch(
+                "forge.workflow.nodes.local_reviewer.ContainerRunner",
+                return_value=_ExhaustedRunner(),
+            ),
+            patch("forge.workflow.nodes.local_reviewer.GitOperations", return_value=mock_git),
+        ):
+            result = await local_review_changes(base_feature_review_state)
+
+        report = result.get("review_exhaustion_report", {})
+        assert "FEAT-10__local_review" in report
+        entry = report["FEAT-10__local_review"]
+        assert entry["task_key"] == "FEAT-10"
+        assert entry["step_name"] == "local_review"

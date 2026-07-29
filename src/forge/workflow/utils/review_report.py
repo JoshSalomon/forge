@@ -1,0 +1,63 @@
+"""Review exhaustion reporting utility."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from forge.sandbox.runner import ContainerResult
+
+
+def collect_review_exhaustion(
+    container_result: ContainerResult | None,
+    task_key: str,
+    step_name: str,
+) -> tuple[str, dict[str, Any]] | None:
+    """Build exhaustion report entry if review cycles exhausted.
+
+    Args:
+        container_result: Result from container execution, or None on error.
+        task_key: Jira task key (e.g., "AISOS-2053").
+        step_name: Workflow step name (e.g., "implement_task").
+
+    Returns:
+        Tuple of (key, data) to merge into state['review_exhaustion_report'],
+        or None if review passed, no review ran, or result is None.
+    """
+    if container_result is None:
+        return None
+    if not container_result.review_exhausted:
+        return None
+
+    cycles = container_result.review_cycles
+    last_cycle = cycles[-1]
+    key = f"{task_key}__{step_name}"
+    data = {
+        "task_key": task_key,
+        "step_name": step_name,
+        "skill": last_cycle.skill,
+        "max_retries": last_cycle.max_cycles,
+        "final_feedback": last_cycle.feedback,
+        "cycles": [
+            {"cycle": c.cycle, "verdict": c.verdict, "feedback": c.feedback} for c in cycles
+        ],
+    }
+    return key, data
+
+
+def merge_review_exhaustion(
+    state: dict[str, Any],
+    container_result: ContainerResult | None,
+    task_key: str,
+    step_name: str,
+) -> dict[str, Any]:
+    """Merge review exhaustion data into state if review cycles were exhausted.
+
+    Returns the state unchanged if review passed or no review ran.
+    """
+    exhaustion = collect_review_exhaustion(container_result, task_key, step_name)
+    if exhaustion:
+        key, data = exhaustion
+        existing = state.get("review_exhaustion_report") or {}
+        return {**state, "review_exhaustion_report": {**existing, key: data}}
+    return state

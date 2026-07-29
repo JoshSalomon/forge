@@ -25,7 +25,7 @@ from forge.workflow.nodes.git_persistence import (
     push_to_fork_with_retry,
 )
 from forge.workflow.nodes.workspace_setup import prepare_workspace
-from forge.workflow.utils import update_state_timestamp
+from forge.workflow.utils import merge_review_exhaustion, update_state_timestamp
 from forge.workflow.utils.jira_status import post_status_comment
 from forge.workspace.git_ops import GitOperations
 
@@ -207,6 +207,8 @@ async def implement_task(state: WorkflowState) -> WorkflowState:
             ticket_key=ticket_key,
             task_key=current_task,
             repo_name=current_repo,
+            step_name="implement_task",
+            skill_name="implement-task",
             previous_task_keys=implemented_tasks,
             trace_context=_build_implementation_trace_context(
                 state,
@@ -214,6 +216,9 @@ async def implement_task(state: WorkflowState) -> WorkflowState:
                 current_repo=current_repo,
             ),
         )
+
+        # Collect review exhaustion data (if auto-review ran and exhausted)
+        state = merge_review_exhaustion(state, result, current_task, "implement_task")
 
         if result.success:
             logger.info(f"Container completed successfully for {current_task}")
