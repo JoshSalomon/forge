@@ -8,7 +8,7 @@ Skills can be installed in two modes:
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class SkillEntry(BaseModel):
@@ -24,6 +24,13 @@ class SkillEntry(BaseModel):
 
     source: str
     """Git URL of the repository containing the skill(s)."""
+
+    @field_validator("source")
+    @classmethod
+    def _validate_source_protocol(cls, v: str) -> str:
+        if not v.startswith(("https://", "git@")):
+            raise ValueError(f"Skill source must use https:// or git@ protocol, got: {v!r}")
+        return v
 
     ref: str | None = None
     """Optional tag, branch, or commit SHA to check out. Defaults to the

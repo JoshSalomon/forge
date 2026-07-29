@@ -61,6 +61,7 @@ class TestResolveRefShaSuccess:
         mock_exec.assert_called_once_with(
             "git",
             "ls-remote",
+            "--",
             REPO_URL,
             "main",
             stdout=asyncio.subprocess.PIPE,
@@ -242,6 +243,7 @@ class TestCloneSkillPackageSuccess:
             "1",
             "--branch",
             "main",
+            "--",
             REPO_URL,
             str(tmp_path),
             stdout=asyncio.subprocess.PIPE,

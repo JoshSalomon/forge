@@ -235,7 +235,7 @@ async def receive_jira_webhook(
         record_webhook_failed(source="jira", event_type="unknown", error_type="validation_error")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail="Invalid webhook payload",
         )
     except Exception as e:
         span.set_attribute("error", True)

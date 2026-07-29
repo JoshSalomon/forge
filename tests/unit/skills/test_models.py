@@ -44,13 +44,25 @@ class TestSkillEntrySource:
         errors = exc_info.value.errors()
         assert any(e["loc"] == ("source",) for e in errors)
 
-    def test_source_accepts_any_string(self):
+    def test_source_accepts_https_url(self):
         entry = SkillEntry(source=REPO_URL, path="skills/")
         assert entry.source == REPO_URL
 
     def test_source_accepts_ssh_url(self):
         entry = SkillEntry(source="git@github.com:example/skills.git", path="skills/")
         assert entry.source == "git@github.com:example/skills.git"
+
+    def test_source_rejects_http(self):
+        with pytest.raises(ValidationError):
+            SkillEntry(source="http://evil.com/repo.git", path="skills/")
+
+    def test_source_rejects_file_protocol(self):
+        with pytest.raises(ValidationError):
+            SkillEntry(source="file:///etc/passwd", path="skills/")
+
+    def test_source_rejects_dash_prefix(self):
+        with pytest.raises(ValidationError):
+            SkillEntry(source="--upload-pack=/tmp/evil.sh", path="skills/")
 
 
 # ---------------------------------------------------------------------------

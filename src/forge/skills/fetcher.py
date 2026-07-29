@@ -58,7 +58,7 @@ async def resolve_ref_sha(
         RefResolutionError: When the subprocess cannot be started, times out,
             or exits with a non-zero return code.
     """
-    cmd = ("git", "ls-remote", source_url, ref)
+    cmd = ("git", "ls-remote", "--", source_url, ref)
     logger.debug("Running: %s", " ".join(cmd))
 
     try:
@@ -222,6 +222,9 @@ async def _clone_into(
     """
     use_shallow = ref is not None and not _looks_like_commit_sha(ref)
 
+    if ref is not None and ref.startswith("-"):
+        raise CloneError(f"Invalid ref {ref!r}: must not start with '-'")
+
     if use_shallow:
         rc, stderr = await _run_git(
             "clone",
@@ -229,6 +232,7 @@ async def _clone_into(
             "1",
             "--branch",
             ref,
+            "--",
             source_url,
             temp_dir,
             timeout=timeout,
@@ -248,14 +252,14 @@ async def _clone_into(
         shutil.rmtree(temp_dir, ignore_errors=True)
 
     # Full clone (into the same temp_dir path).
-    rc, stderr = await _run_git("clone", source_url, temp_dir, timeout=timeout)
+    rc, stderr = await _run_git("clone", "--", source_url, temp_dir, timeout=timeout)
     if rc != 0:
         raise CloneError(f"git clone failed (rc={rc}) for {source_url!r}: {stderr}")
 
     logger.info("Full clone succeeded for %s", source_url)
 
     if ref is not None:
-        rc, stderr = await _run_git("-C", temp_dir, "checkout", ref, timeout=timeout)
+        rc, stderr = await _run_git("-C", temp_dir, "checkout", "--", ref, timeout=timeout)
         if rc != 0:
             raise CloneError(f"git checkout {ref!r} failed (rc={rc}) in {temp_dir!r}: {stderr}")
         logger.info("Checked out ref %r in %s", ref, temp_dir)

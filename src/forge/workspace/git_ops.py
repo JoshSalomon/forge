@@ -268,7 +268,7 @@ class GitOperations:
         Returns:
             True if the branch exists on the remote.
         """
-        result = self._run_git("ls-remote", "--heads", remote, branch_name, check=False)
+        result = self._run_git("ls-remote", "--heads", "--", remote, branch_name, check=False)
         return bool(result.stdout.strip())
 
     def check_for_conflicts(self, target_branch: str = "main") -> tuple[bool, list[str]]:
@@ -288,7 +288,7 @@ class GitOperations:
 
         # Check if remote branch exists
         result = self._run_git(
-            "ls-remote", "--heads", "origin", self.workspace.branch_name, check=False
+            "ls-remote", "--heads", "--", "origin", self.workspace.branch_name, check=False
         )
 
         if not result.stdout.strip():

@@ -7,6 +7,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from forge.utils.validation import validate_ticket_key
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,6 +58,7 @@ class WorkspaceManager:
         Returns:
             Created Workspace instance.
         """
+        ticket_key = validate_ticket_key(ticket_key)
         branch = branch_name or f"forge/{ticket_key.lower()}"
 
         # Create workspace in temp directory

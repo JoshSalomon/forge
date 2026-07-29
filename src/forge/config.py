@@ -255,6 +255,10 @@ class Settings(BaseSettings):
         default="skills/",
         description="Base directory for skill resolution. The resolver finds skills/default/ and skills/{project}/ under this path.",
     )
+    disable_openapi_docs: bool = Field(
+        default=False,
+        description="Disable /docs, /redoc, and /openapi.json endpoints",
+    )
     container_langchain_verbose: bool = Field(
         default=False,
         description="Enable LangChain verbose/debug logging in container",
