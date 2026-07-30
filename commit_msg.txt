@@ -1,0 +1,9 @@
+[AISOS-2294-review-review-impl] Post-review-impl code review and original comment update
+
+Detailed description:
+- Implemented SC-002 requirement to update the original review comment in Jira when a draft is updated via commands or revision feedback.
+- Created DraftManager.format_review_comment to cleanly format epic/story and task draft comments.
+- Modified OrchestratorWorker to fetch ticket comments, locate the original draft review comment, and edit it in-place.
+- Added comprehensive unit tests in tests/unit/orchestrator/test_worker.py to assert the comment edits.
+
+Closes: AISOS-2294-review-review-impl
