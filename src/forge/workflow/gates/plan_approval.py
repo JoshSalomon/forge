@@ -104,60 +104,16 @@ async def route_plan_approval(state: WorkflowState) -> str:
 
     # Handle standard (non-YOLO) approval draft ticket provisioning
     if not state.get("epic_keys"):
-        ticket_key = state["ticket_key"]
         from forge.integrations.jira.client import JiraClient
-        from forge.models.workflow import ForgeLabel
-        from forge.workflow.utils.draft_manager import FORGE_STORIES_DRAFT_FILENAME, DraftManager
 
         jira = JiraClient()
         try:
-            logger.info(f"Downloading plan draft for {ticket_key}")
-            draft = await DraftManager.get_draft_attachment(
-                jira, ticket_key, FORGE_STORIES_DRAFT_FILENAME
-            )
-            if not draft:
-                raise ValueError(
-                    f"Approved draft {FORGE_STORIES_DRAFT_FILENAME} not found on {ticket_key}"
-                )
-
-            parent_issue = await jira.get_issue(ticket_key)
-            project_key = parent_issue.project_key
-
-            epic_keys = []
-            for item in draft.items:
-                if item.excluded:
-                    logger.info(f"Skipping excluded plan item {item.id}: {item.summary}")
-                    continue
-
-                labels = [
-                    ForgeLabel.FORGE_MANAGED.value,
-                    f"forge:parent:{ticket_key}",
-                ]
-                if item.repo and "/" in item.repo:
-                    labels.append(f"repo:{item.repo}")
-
-                epic_key = await jira.create_epic(
-                    project_key=project_key,
-                    summary=item.summary,
-                    description=item.description,
-                    parent_key=ticket_key,
-                    labels=labels,
-                )
-                epic_keys.append(epic_key)
-
+            epic_keys = await provision_epics_from_draft(state, jira)
             # Store the newly created keys
             state["epic_keys"] = epic_keys
-
-            # Delete the draft only after 100% successful ticket creation
-            await DraftManager.delete_draft_attachment(
-                jira, ticket_key, FORGE_STORIES_DRAFT_FILENAME
-            )
-            logger.info(
-                f"Successfully provisioned {len(epic_keys)} Epics for {ticket_key} and deleted draft"
-            )
         except Exception as e:
             logger.error(
-                f"Failed ticket provisioning during plan approval for {ticket_key}: {e}",
+                f"Failed ticket provisioning during plan approval for {state['ticket_key']}: {e}",
                 exc_info=True,
             )
             raise
@@ -168,3 +124,55 @@ async def route_plan_approval(state: WorkflowState) -> str:
     logger.info(f"Epics approved for {state['ticket_key']}, proceeding to task generation")
     record_approval("plan")
     return "generate_tasks"
+
+
+async def provision_epics_from_draft(state: Any, jira: Any) -> list[str]:
+    """Provision Epics from the plan draft attachment on Jira.
+
+    Args:
+        state: The workflow state dictionary.
+        jira: An active JiraClient instance.
+
+    Returns:
+        List of created Epic ticket keys.
+    """
+    ticket_key = state["ticket_key"]
+    from forge.models.workflow import ForgeLabel
+    from forge.workflow.utils.draft_manager import FORGE_STORIES_DRAFT_FILENAME, DraftManager
+
+    logger.info(f"Downloading plan draft for {ticket_key}")
+    draft = await DraftManager.get_draft_attachment(jira, ticket_key, FORGE_STORIES_DRAFT_FILENAME)
+    if not draft:
+        raise ValueError(f"Approved draft {FORGE_STORIES_DRAFT_FILENAME} not found on {ticket_key}")
+
+    parent_issue = await jira.get_issue(ticket_key)
+    project_key = parent_issue.project_key
+
+    epic_keys = []
+    for item in draft.items:
+        if item.excluded:
+            logger.info(f"Skipping excluded plan item {item.id}: {item.summary}")
+            continue
+
+        labels = [
+            ForgeLabel.FORGE_MANAGED.value,
+            f"forge:parent:{ticket_key}",
+        ]
+        if item.repo and "/" in item.repo:
+            labels.append(f"repo:{item.repo}")
+
+        epic_key = await jira.create_epic(
+            project_key=project_key,
+            summary=item.summary,
+            description=item.description,
+            parent_key=ticket_key,
+            labels=labels,
+        )
+        epic_keys.append(epic_key)
+
+    # Delete the draft only after 100% successful ticket creation
+    await DraftManager.delete_draft_attachment(jira, ticket_key, FORGE_STORIES_DRAFT_FILENAME)
+    logger.info(
+        f"Successfully provisioned {len(epic_keys)} Epics for {ticket_key} and deleted draft"
+    )
+    return epic_keys
