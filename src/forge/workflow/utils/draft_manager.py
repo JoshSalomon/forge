@@ -31,8 +31,6 @@ class DraftManager:
         Raises:
             ValueError: If a validation check fails.
         """
-        from pydantic import ValidationError
-
         from forge.models.draft import DraftItem
 
         if target_item is not None:
@@ -337,7 +335,7 @@ class DraftManager:
             phase_action = "decomposition"
             item_label = "Plan"
             approval_label = ForgeLabel.PLAN_APPROVED.value
-            filename = "forge-stories-draft.json"
+            filename = FORGE_STORIES_DRAFT_FILENAME
         else:
             phase_title = "Tasks"
             noun_plural = "tasks"
@@ -345,7 +343,7 @@ class DraftManager:
             phase_action = "implementation"
             item_label = "Description"
             approval_label = ForgeLabel.TASK_APPROVED.value
-            filename = "forge-tasks-draft.json"
+            filename = FORGE_TASKS_DRAFT_FILENAME
 
         header = f"### 📋 Proposed {phase_title} Draft\n\nThe following {phase_title} have been proposed for {phase_action}:\n\n"
         table = "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
