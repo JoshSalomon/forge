@@ -633,6 +633,7 @@ class JiraClient:
         """
         adf_content = self._text_to_adf(body)
 
+        # Edit the comment using request_with_retry to handle transient rate limits robustly
         response = await self._request_with_retry(
             "PUT",
             f"/issue/{issue_key}/comment/{comment_id}",

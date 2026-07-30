@@ -273,6 +273,7 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
                 )
         else:
             # Draft Review Flow (YOLO is inactive)
+            # Empty-draft guard to prevent proceeding without draft epics
             if not epics_data:
                 return cast(
                     WorkflowState,

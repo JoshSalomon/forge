@@ -1006,6 +1006,7 @@ class OrchestratorWorker:
                 if current_state.get("is_paused") and current_node in _PENDING_APPROVAL_GATES:
                     parsed_cmd = parse_comment_command(comment_body)
                     is_forge_cmd = parsed_cmd is not None
+                    # Revision comment check allows leading whitespace for consistency with the comment classifier
                     is_revision_comment = bool(re.match(r"^\s*!", comment_body))
 
                     if is_forge_cmd or is_revision_comment:
