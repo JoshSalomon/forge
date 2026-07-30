@@ -1333,6 +1333,91 @@ NOTE: No repositories configured. Use REPO: unknown for now."""
         logger.info(f"Generated answer ({len(result)} chars)")
         return result.strip() if result else ""
 
+    async def revise_draft_with_feedback(
+        self,
+        draft_content: str,
+        feedback: str,
+        context: dict[str, Any] | None = None,
+    ) -> str:
+        """Revise draft content based on user feedback.
+
+        Uses the 'revision-draft' prompt template to guide the LLM to output
+        the revised draft JSON.
+
+        Args:
+            draft_content: The current draft JSON content.
+            feedback: Natural language feedback.
+            context: Optional context from the workflow state.
+
+        Returns:
+            The updated draft JSON string.
+        """
+        from langchain_core.output_parsers import StrOutputParser
+        from langchain_core.prompts import PromptTemplate
+
+        # Format context into a readable string/JSON
+        context_str = json.dumps(context, indent=2) if context else "None provided"
+
+        # Load the prompt template using project's load_prompt
+        prompt_text = load_prompt(
+            "revision-draft",
+            draft_content=draft_content,
+            feedback=feedback,
+            context=context_str,
+        )
+
+        model = self._create_model()
+        prompt_template = PromptTemplate.from_template("{prompt_text}")
+        chain = prompt_template | model | StrOutputParser()
+
+        logger.info("Revising draft using direct LangChain model chain")
+        response = await chain.ainvoke({"prompt_text": prompt_text})
+
+        # Strip preamble/narration and validate as JSON
+        cleaned_text = response.strip()
+
+        # Check markdown code blocks first
+        pattern = r"```(?:json)?\s*([\s\S]*?)\s*```"
+        match = re.search(pattern, cleaned_text)
+        if match:
+            cleaned_text = match.group(1).strip()
+        else:
+            # If no code block, look for the JSON object/list boundary
+            # Find the first occurrence of '{' or '[' and the last of '}' or ']'
+            start_brace = cleaned_text.find("{")
+            start_bracket = cleaned_text.find("[")
+
+            # Determine which starts first
+            start_idx = -1
+            if start_brace != -1 and start_bracket != -1:
+                start_idx = min(start_brace, start_bracket)
+            elif start_brace != -1:
+                start_idx = start_brace
+            elif start_bracket != -1:
+                start_idx = start_bracket
+
+            if start_idx != -1:
+                # Find the last brace or bracket
+                end_brace = cleaned_text.rfind("}")
+                end_bracket = cleaned_text.rfind("]")
+                end_idx = max(end_brace, end_bracket)
+
+                if end_idx > start_idx:
+                    cleaned_text = cleaned_text[start_idx : end_idx + 1].strip()
+
+        try:
+            parsed_json = json.loads(cleaned_text)
+            validated_json_str = json.dumps(parsed_json, indent=2)
+            logger.info(
+                f"Successfully revised draft and validated JSON ({len(validated_json_str)} chars)"
+            )
+            return validated_json_str
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse LLM response as valid JSON: {e}\nResponse: {response}")
+            raise ValueError(
+                f"Failed to parse LLM response as valid JSON: {e}\nResponse: {response}"
+            )
+
     async def close(self) -> None:
         """Close the agent and cleanup resources."""
         pass
