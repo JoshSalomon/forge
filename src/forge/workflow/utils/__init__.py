@@ -98,7 +98,7 @@ def set_error(state: dict[str, Any], error: str) -> dict[str, Any]:
     }
 
 
-def check_yolo_mode(state: dict[str, Any], labels: list[str] | None = None) -> bool:
+def check_yolo_mode(state: Any, labels: list[str] | None = None) -> bool:
     """Check if YOLO mode is enabled based on labels, global settings, or state.
 
     The three components are:
