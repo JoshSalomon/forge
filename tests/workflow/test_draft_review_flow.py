@@ -17,6 +17,7 @@ from forge.workflow.gates.plan_approval import provision_epics_from_draft, route
 from forge.workflow.gates.task_approval import provision_tasks_from_draft, route_task_approval
 from forge.workflow.nodes.epic_decomposition import decompose_epics
 from forge.workflow.nodes.task_generation import generate_tasks
+from forge.workflow.utils.draft_manager import DraftManager
 
 
 @pytest.fixture
@@ -123,7 +124,9 @@ class TestYoloBypassPath:
             ),
             patch("forge.workflow.nodes.epic_decomposition.JiraClient") as MockJira,
             patch("forge.workflow.nodes.epic_decomposition.ForgeAgent") as MockAgent,
-            patch("forge.workflow.nodes.epic_decomposition.DraftManager") as MockDraftManager,
+            patch(
+                "forge.workflow.nodes.epic_decomposition.DraftManager", wraps=DraftManager
+            ) as MockDraftManager,
             patch("forge.workflow.nodes.epic_decomposition.post_qa_summary_if_needed"),
             patch("forge.workflow.nodes.epic_decomposition.post_status_comment"),
         ):
@@ -180,7 +183,9 @@ class TestYoloBypassPath:
             patch("forge.workflow.nodes.task_generation.get_settings", return_value=mock_settings),
             patch("forge.workflow.nodes.task_generation.JiraClient") as MockJira,
             patch("forge.workflow.nodes.task_generation.ForgeAgent") as MockAgent,
-            patch("forge.workflow.nodes.task_generation.DraftManager") as MockDraftManager,
+            patch(
+                "forge.workflow.nodes.task_generation.DraftManager", wraps=DraftManager
+            ) as MockDraftManager,
             patch("forge.workflow.nodes.task_generation.post_status_comment"),
             patch(
                 "forge.workflow.nodes.task_generation._generate_tasks_for_epic",
@@ -245,7 +250,9 @@ class TestDraftAttachmentCreationAndCleanup:
             ),
             patch("forge.workflow.nodes.epic_decomposition.JiraClient") as MockJira,
             patch("forge.workflow.nodes.epic_decomposition.ForgeAgent") as MockAgent,
-            patch("forge.workflow.nodes.epic_decomposition.DraftManager") as MockDraftManager,
+            patch(
+                "forge.workflow.nodes.epic_decomposition.DraftManager", wraps=DraftManager
+            ) as MockDraftManager,
             patch("forge.workflow.nodes.epic_decomposition.post_qa_summary_if_needed"),
             patch("forge.workflow.nodes.epic_decomposition.post_status_comment"),
         ):
@@ -309,7 +316,9 @@ class TestDraftAttachmentCreationAndCleanup:
             patch("forge.workflow.nodes.task_generation.get_settings", return_value=mock_settings),
             patch("forge.workflow.nodes.task_generation.JiraClient") as MockJira,
             patch("forge.workflow.nodes.task_generation.ForgeAgent") as MockAgent,
-            patch("forge.workflow.nodes.task_generation.DraftManager") as MockDraftManager,
+            patch(
+                "forge.workflow.nodes.task_generation.DraftManager", wraps=DraftManager
+            ) as MockDraftManager,
             patch("forge.workflow.nodes.task_generation.post_status_comment"),
             patch(
                 "forge.workflow.nodes.task_generation._generate_tasks_for_epic",
@@ -382,7 +391,9 @@ class TestTruncationFallbackBoundaries:
             ),
             patch("forge.workflow.nodes.epic_decomposition.JiraClient") as MockJira,
             patch("forge.workflow.nodes.epic_decomposition.ForgeAgent") as MockAgent,
-            patch("forge.workflow.nodes.epic_decomposition.DraftManager") as MockDraftManager,
+            patch(
+                "forge.workflow.nodes.epic_decomposition.DraftManager", wraps=DraftManager
+            ) as MockDraftManager,
             patch("forge.workflow.nodes.epic_decomposition.post_qa_summary_if_needed"),
             patch("forge.workflow.nodes.epic_decomposition.post_status_comment"),
         ):
@@ -433,7 +444,9 @@ class TestTruncationFallbackBoundaries:
             patch("forge.workflow.nodes.task_generation.get_settings", return_value=mock_settings),
             patch("forge.workflow.nodes.task_generation.JiraClient") as MockJira,
             patch("forge.workflow.nodes.task_generation.ForgeAgent") as MockAgent,
-            patch("forge.workflow.nodes.task_generation.DraftManager") as MockDraftManager,
+            patch(
+                "forge.workflow.nodes.task_generation.DraftManager", wraps=DraftManager
+            ) as MockDraftManager,
             patch("forge.workflow.nodes.task_generation.post_status_comment"),
             patch(
                 "forge.workflow.nodes.task_generation._generate_tasks_for_epic",
@@ -484,7 +497,9 @@ class TestTruncationFallbackBoundaries:
             ),
             patch("forge.workflow.nodes.epic_decomposition.JiraClient") as MockJira,
             patch("forge.workflow.nodes.epic_decomposition.ForgeAgent") as MockAgent,
-            patch("forge.workflow.nodes.epic_decomposition.DraftManager") as MockDraftManager,
+            patch(
+                "forge.workflow.nodes.epic_decomposition.DraftManager", wraps=DraftManager
+            ) as MockDraftManager,
             patch("forge.workflow.nodes.epic_decomposition.post_qa_summary_if_needed"),
             patch("forge.workflow.nodes.epic_decomposition.post_status_comment"),
         ):
