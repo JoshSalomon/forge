@@ -85,7 +85,6 @@ class JiraClient:
                 ),
                 headers={
                     "Accept": "application/json",
-                    "Content-Type": "application/json",
                 },
                 timeout=30.0,
             )
@@ -119,43 +118,34 @@ class JiraClient:
         client = await self._get_client()
         backoff = INITIAL_BACKOFF_SECONDS
 
-        has_ct = "Content-Type" in client.headers
-        removed_ct = None
-        if "files" in kwargs and has_ct:
-            removed_ct = client.headers.pop("Content-Type")
-
-        try:
-            for attempt in range(MAX_RETRIES):
-                response = await client.request(method, url, **kwargs)
-
-                if response.status_code != 429:
-                    return response
-
-                # Rate limited - apply exponential backoff
-                retry_after = response.headers.get("Retry-After")
-                if retry_after:
-                    try:
-                        wait_time = float(retry_after)
-                    except ValueError:
-                        wait_time = backoff
-                else:
-                    wait_time = backoff
-
-                wait_time = min(wait_time, MAX_BACKOFF_SECONDS)
-
-                logger.warning(
-                    f"Jira rate limited (attempt {attempt + 1}/{MAX_RETRIES}). "
-                    f"Waiting {wait_time:.1f}s before retry."
-                )
-                await asyncio.sleep(wait_time)
-                backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
-
-            # Final attempt
+        for attempt in range(MAX_RETRIES):
             response = await client.request(method, url, **kwargs)
-            return response
-        finally:
-            if removed_ct is not None:
-                client.headers["Content-Type"] = removed_ct
+
+            if response.status_code != 429:
+                return response
+
+            # Rate limited - apply exponential backoff
+            retry_after = response.headers.get("Retry-After")
+            if retry_after:
+                try:
+                    wait_time = float(retry_after)
+                except ValueError:
+                    wait_time = backoff
+            else:
+                wait_time = backoff
+
+            wait_time = min(wait_time, MAX_BACKOFF_SECONDS)
+
+            logger.warning(
+                f"Jira rate limited (attempt {attempt + 1}/{MAX_RETRIES}). "
+                f"Waiting {wait_time:.1f}s before retry."
+            )
+            await asyncio.sleep(wait_time)
+            backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
+
+        # Final attempt
+        response = await client.request(method, url, **kwargs)
+        return response
 
     async def get_issue(self, issue_key: str) -> JiraIssue:
         """Fetch a Jira issue by key.

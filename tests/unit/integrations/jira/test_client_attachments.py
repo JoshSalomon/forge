@@ -125,9 +125,7 @@ class TestJiraClientAttachments:
 
         with patch.object(mock_client, "_get_client") as mock_get_client:
             mock_http = AsyncMock()
-            # We want to check that the client's default Content-Type is temporarily removed
-            # during request execution and restored after.
-            mock_http.headers = httpx.Headers({"Content-Type": "application/json"})
+            mock_http.headers = httpx.Headers()
             mock_http.request = AsyncMock(return_value=mock_response)
             mock_get_client.return_value = mock_http
 
@@ -146,6 +144,3 @@ class TestJiraClientAttachments:
         assert args[1] == "/issue/TEST-123/attachments"
         assert kwargs["headers"]["X-Atlassian-Token"] == "no-check"
         assert kwargs["files"] == {"file": ("test-file.json", file_content, "application/json")}
-
-        # Assert client's Content-Type header was restored
-        assert mock_http.headers.get("Content-Type") == "application/json"
