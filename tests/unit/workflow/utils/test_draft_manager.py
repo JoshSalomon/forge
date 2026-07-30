@@ -1,7 +1,8 @@
-# mypy: ignore-errors
+# mypy: disallow-untyped-decorators=False
 """Tests for DraftManager utility class."""
 
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -22,9 +23,10 @@ from forge.workflow.utils.draft_manager import (
         ("tasks", FORGE_TASKS_DRAFT_FILENAME),
     ]
 )
-def draft_config(request) -> tuple[str, str]:
+def draft_config(request: pytest.FixtureRequest) -> tuple[str, str]:
     """Return a tuple of (phase, filename) representing draft configurations."""
-    return request.param
+    val: tuple[str, str] = request.param
+    return val
 
 
 @pytest.fixture
@@ -60,14 +62,12 @@ class TestDraftManager:
         """Should successfully upload draft when no prior matching attachment exists."""
         _, filename = draft_config
         mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.list_attachments = AsyncMock(return_value=[])
+        mock_jira.delete_attachments_by_name = AsyncMock(return_value=0)
         mock_jira.add_attachment = AsyncMock()
-        mock_jira.delete_attachment = AsyncMock()
 
         await DraftManager.save_draft_attachment(mock_jira, "PROJ-123", sample_draft, filename)
 
-        mock_jira.list_attachments.assert_called_once_with("PROJ-123")
-        mock_jira.delete_attachment.assert_not_called()
+        mock_jira.delete_attachments_by_name.assert_called_once_with("PROJ-123", filename)
 
         # Verify serialized content passed to add_attachment
         expected_bytes = sample_draft.model_dump_json().encode("utf-8")
@@ -80,60 +80,24 @@ class TestDraftManager:
         """Should delete existing matching attachment before uploading new draft."""
         _, filename = draft_config
         mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.list_attachments = AsyncMock(
-            return_value=[
-                {"id": "att-111", "filename": "unrelated.json", "content_url": "http://url1"},
-                {
-                    "id": "att-222",
-                    "filename": filename,
-                    "content_url": "http://url2",
-                },
-                {
-                    "id": "att-333",
-                    "filename": filename,
-                    "content_url": "http://url3",
-                },
-            ]
-        )
-        mock_jira.delete_attachment = AsyncMock()
+        mock_jira.delete_attachments_by_name = AsyncMock(return_value=2)
         mock_jira.add_attachment = AsyncMock()
 
         await DraftManager.save_draft_attachment(mock_jira, "PROJ-123", sample_draft, filename)
 
-        mock_jira.list_attachments.assert_called_once_with("PROJ-123")
-        # Ensure it deletes both matching attachments (single-file constraint)
-        assert mock_jira.delete_attachment.call_count == 2
-        mock_jira.delete_attachment.assert_any_call("att-222")
-        mock_jira.delete_attachment.assert_any_call("att-333")
+        mock_jira.delete_attachments_by_name.assert_called_once_with("PROJ-123", filename)
 
         expected_bytes = sample_draft.model_dump_json().encode("utf-8")
         mock_jira.add_attachment.assert_called_once_with("PROJ-123", filename, expected_bytes)
 
     @pytest.mark.asyncio
-    async def test_save_draft_attachment_failure_to_list(
-        self, draft_config: tuple[str, str], sample_draft: ForgeDecompositionDraft
-    ) -> None:
-        """Should propagate list_attachments exception."""
-        _, filename = draft_config
-        mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.list_attachments = AsyncMock(side_effect=Exception("API Error"))
-
-        with pytest.raises(Exception, match="API Error"):
-            await DraftManager.save_draft_attachment(
-                mock_jira, "PROJ-123", sample_draft, filename
-            )
-
-    @pytest.mark.asyncio
     async def test_save_draft_attachment_failure_to_delete(
         self, draft_config: tuple[str, str], sample_draft: ForgeDecompositionDraft
     ) -> None:
-        """Should propagate delete_attachment exception."""
+        """Should propagate delete_attachments_by_name exception."""
         _, filename = draft_config
         mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.list_attachments = AsyncMock(
-            return_value=[{"id": "att-123", "filename": filename}]
-        )
-        mock_jira.delete_attachment = AsyncMock(side_effect=Exception("Delete Error"))
+        mock_jira.delete_attachments_by_name = AsyncMock(side_effect=Exception("Delete Error"))
 
         with pytest.raises(Exception, match="Delete Error"):
             await DraftManager.save_draft_attachment(
@@ -147,7 +111,7 @@ class TestDraftManager:
         """Should propagate add_attachment exception."""
         _, filename = draft_config
         mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.list_attachments = AsyncMock(return_value=[])
+        mock_jira.delete_attachments_by_name = AsyncMock(return_value=0)
         mock_jira.add_attachment = AsyncMock(side_effect=Exception("Upload Error"))
 
         with pytest.raises(Exception, match="Upload Error"):
@@ -318,40 +282,30 @@ class TestDraftManager:
         """Should delete all matching attachments if found."""
         _, filename = draft_config
         mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.list_attachments = AsyncMock(
-            return_value=[
-                {
-                    "id": "att-111",
-                    "filename": filename,
-                    "content_url": "http://url1",
-                },
-                {"id": "att-222", "filename": "other.json", "content_url": "http://url2"},
-                {
-                    "id": "att-333",
-                    "filename": filename,
-                    "content_url": "http://url3",
-                },
-            ]
-        )
-        mock_jira.delete_attachment = AsyncMock()
+        mock_jira.delete_attachments_by_name = AsyncMock(return_value=2)
 
         await DraftManager.delete_draft_attachment(mock_jira, "PROJ-123", filename)
 
-        mock_jira.list_attachments.assert_called_once_with("PROJ-123")
-        assert mock_jira.delete_attachment.call_count == 2
-        mock_jira.delete_attachment.assert_any_call("att-111")
-        mock_jira.delete_attachment.assert_any_call("att-333")
+        mock_jira.delete_attachments_by_name.assert_called_once_with("PROJ-123", filename)
 
     @pytest.mark.asyncio
     async def test_delete_draft_attachment_not_found(self, draft_config: tuple[str, str]) -> None:
         """Should do nothing and succeed if no matching attachment found."""
         _, filename = draft_config
         mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.list_attachments = AsyncMock(return_value=[])
-        mock_jira.delete_attachment = AsyncMock()
+        mock_jira.delete_attachments_by_name = AsyncMock(return_value=0)
 
         await DraftManager.delete_draft_attachment(mock_jira, "PROJ-123", filename)
 
-        mock_jira.list_attachments.assert_called_once_with("PROJ-123")
-        mock_jira.delete_attachment.assert_not_called()
+        mock_jira.delete_attachments_by_name.assert_called_once_with("PROJ-123", filename)
+
+    @pytest.mark.asyncio
+    async def test_delete_draft_attachment_failure(self, draft_config: tuple[str, str]) -> None:
+        """Should propagate delete_attachments_by_name exception."""
+        _, filename = draft_config
+        mock_jira = MagicMock(spec=JiraClient)
+        mock_jira.delete_attachments_by_name = AsyncMock(side_effect=Exception("Delete Error"))
+
+        with pytest.raises(Exception, match="Delete Error"):
+            await DraftManager.delete_draft_attachment(mock_jira, "PROJ-123", filename)
 

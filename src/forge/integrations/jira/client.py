@@ -410,14 +410,16 @@ class JiraClient:
         self,
         issue_key: str,
         filename: str,
-        content: bytes,
+        content: str | bytes,
+        content_type: str = "text/markdown",
     ) -> dict[str, Any]:
         """Add an attachment to a Jira issue.
 
         Args:
             issue_key: The Jira issue key.
             filename: Name for the attachment file.
-            content: File content as bytes.
+            content: File content as string or bytes.
+            content_type: The content type of the file.
 
         Returns:
             The attachment metadata from Jira API.
@@ -425,10 +427,13 @@ class JiraClient:
         if isinstance(content, str):
             content = content.encode("utf-8")
 
+        if content_type == "text/markdown" and filename.endswith(".json"):
+            content_type = "application/json"
+
         headers = {
             "X-Atlassian-Token": "no-check",
         }
-        files = {"file": (filename, content, "application/json")}
+        files = {"file": (filename, content, content_type)}
 
         response = await self._request_with_retry(
             "POST",

@@ -34,34 +34,17 @@ class DraftManager:
             draft: The draft model to save.
             filename: The target filename.
         """
-        # 1. Scan for existing attachments
+        # 1. Delete any matching filename to enforce the single-file constraint (BR-002/BR-004)
         try:
-            attachments = await jira_client.list_attachments(issue_key)
+            await jira_client.delete_attachments_by_name(issue_key, filename)
         except Exception as e:
             logger.error(
-                f"Failed to list attachments on {issue_key} before saving draft: {e}",
+                f"Failed to delete existing draft attachment '{filename}' on {issue_key} to enforce single-file constraint: {e}",
                 exc_info=True,
             )
             raise
 
-        # 2. Delete any matching filename to enforce the single-file constraint (BR-002/BR-004)
-        for attachment in attachments:
-            if attachment.get("filename") == filename:
-                attachment_id = attachment.get("id")
-                if attachment_id:
-                    try:
-                        logger.info(
-                            f"Deleting existing draft attachment '{filename}' (ID: {attachment_id}) on {issue_key} to enforce single-file constraint."
-                        )
-                        await jira_client.delete_attachment(attachment_id)
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to delete existing draft attachment {attachment_id} ({filename}) on {issue_key}: {e}",
-                            exc_info=True,
-                        )
-                        raise
-
-        # 3. Serialize and upload
+        # 2. Serialize and upload
         try:
             content_json = draft.model_dump_json()
             content_bytes = content_json.encode("utf-8")
@@ -162,31 +145,10 @@ class DraftManager:
             filename: The target filename to delete.
         """
         try:
-            attachments = await jira_client.list_attachments(issue_key)
+            await jira_client.delete_attachments_by_name(issue_key, filename)
         except Exception as e:
             logger.error(
-                f"Failed to list attachments for {issue_key} during deletion: {e}",
+                f"Failed to delete draft attachments named '{filename}' on {issue_key}: {e}",
                 exc_info=True,
             )
             raise
-
-        deleted_any = False
-        for attachment in attachments:
-            if attachment.get("filename") == filename:
-                attachment_id = attachment.get("id")
-                if attachment_id:
-                    try:
-                        logger.info(
-                            f"Deleting attachment {attachment_id} ({filename}) on {issue_key}."
-                        )
-                        await jira_client.delete_attachment(attachment_id)
-                        deleted_any = True
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to delete attachment {attachment_id} ({filename}) on {issue_key}: {e}",
-                            exc_info=True,
-                        )
-                        raise
-
-        if not deleted_any:
-            logger.debug(f"No draft attachment '{filename}' found to delete on {issue_key}")
