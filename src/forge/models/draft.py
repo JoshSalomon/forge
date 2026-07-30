@@ -24,6 +24,9 @@ class DraftItem(BaseModel):
     acceptance_criteria: list[str]
     """List of acceptance criteria for this item."""
 
+    excluded: bool = False
+    """Whether this item should be excluded from ticket creation."""
+
 
 class ForgeDecompositionDraft(BaseModel):
     """Represents the wrapper of all draft items and execution metadata."""

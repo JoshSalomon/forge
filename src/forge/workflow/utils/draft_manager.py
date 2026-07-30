@@ -1,6 +1,7 @@
 """Utility for managing draft CRUD operations on Jira parent tickets as attachments."""
 
 import logging
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -18,6 +19,143 @@ class DraftManager:
 
     FORGE_STORIES_DRAFT_FILENAME = FORGE_STORIES_DRAFT_FILENAME
     FORGE_TASKS_DRAFT_FILENAME = FORGE_TASKS_DRAFT_FILENAME
+
+    @staticmethod
+    def apply_draft_modification(
+        draft_json: list[dict[str, Any]],
+        parsed_command: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Apply a direct mutation on a list of draft story or task JSON objects based on the command type.
+
+        Args:
+            draft_json: The current list of draft item dictionaries.
+            parsed_command: The parsed comment command dictionary.
+
+        Returns:
+            The mutated list of draft item dictionaries.
+
+        Raises:
+            ValueError: If the command contains an error, the target ID is missing/not found,
+                        or strict type validation fails.
+        """
+        if "error" in parsed_command:
+            raise ValueError(f"Invalid command parameters: {parsed_command['error']}")
+
+        command = parsed_command.get("command")
+        if not command:
+            raise ValueError("Command type is missing in parsed command.")
+
+        import copy
+
+        mutated_list = copy.deepcopy(draft_json)
+
+        if command == "remove":
+            target_id = parsed_command.get("id")
+            if target_id is None:
+                raise ValueError("Missing ID for removal.")
+
+            # Find and remove item
+            found = False
+            for i, item in enumerate(mutated_list):
+                if item.get("id") == target_id:
+                    mutated_list.pop(i)
+                    found = True
+                    break
+
+            if not found:
+                raise ValueError(f"Item with ID {target_id} not found for removal.")
+
+            # Re-sequence remaining items
+            for idx, item in enumerate(mutated_list):
+                item["id"] = idx + 1
+
+        elif command == "add":
+            next_id = len(mutated_list) + 1
+            params = parsed_command.get("params", {})
+
+            # Strict type validation
+            allowed_fields = {"summary", "description", "repo", "acceptance_criteria", "excluded"}
+            for k, v in params.items():
+                if k not in allowed_fields:
+                    raise ValueError(f"Unknown field '{k}' for draft item.")
+                if k in {"summary", "description", "repo"} and not isinstance(v, str):
+                    raise ValueError(f"Field '{k}' must be a string, got {type(v).__name__}.")
+                if k == "acceptance_criteria" and (
+                    not isinstance(v, list) or not all(isinstance(x, str) for x in v)
+                ):
+                    raise ValueError("Field 'acceptance_criteria' must be a list of strings.")
+                if k == "excluded" and not isinstance(v, bool):
+                    raise ValueError("Field 'excluded' must be a boolean.")
+
+            # Build the new item using parsed parameters with defaults
+            new_item = {
+                "id": next_id,
+                "summary": params.get("summary", ""),
+                "description": params.get("description", ""),
+                "repo": params.get("repo", ""),
+                "acceptance_criteria": params.get("acceptance_criteria", []),
+                "excluded": params.get("excluded", False),
+            }
+
+            mutated_list.append(new_item)
+
+        elif command == "update":
+            target_id = parsed_command.get("id")
+            if target_id is None:
+                raise ValueError("Missing ID for update.")
+
+            # Find the item
+            target_item = None
+            for item in mutated_list:
+                if item.get("id") == target_id:
+                    target_item = item
+                    break
+
+            if not target_item:
+                raise ValueError(f"Item with ID {target_id} not found for update.")
+
+            params = parsed_command.get("params", {})
+
+            # Strict type validation
+            allowed_fields = {"summary", "description", "repo", "acceptance_criteria", "excluded"}
+            for k, v in params.items():
+                if k not in allowed_fields:
+                    raise ValueError(f"Unknown field '{k}' for draft item.")
+                if k in {"summary", "description", "repo"} and not isinstance(v, str):
+                    raise ValueError(f"Field '{k}' must be a string, got {type(v).__name__}.")
+                if k == "acceptance_criteria" and (
+                    not isinstance(v, list) or not all(isinstance(x, str) for x in v)
+                ):
+                    raise ValueError("Field 'acceptance_criteria' must be a list of strings.")
+                if k == "excluded" and not isinstance(v, bool):
+                    raise ValueError("Field 'excluded' must be a boolean.")
+
+            # Apply updates
+            for k, v in params.items():
+                target_item[k] = v
+
+        elif command == "exclude":
+            target_id = parsed_command.get("id")
+            if target_id is None:
+                raise ValueError("Missing ID for exclude command.")
+
+            # Find the item
+            target_item = None
+            for item in mutated_list:
+                if item.get("id") == target_id:
+                    target_item = item
+                    break
+
+            if not target_item:
+                raise ValueError(f"Item with ID {target_id} not found for exclude.")
+
+            # Flip the excluded boolean key
+            target_item["excluded"] = not target_item.get("excluded", False)
+
+        else:
+            raise ValueError(f"Unsupported modification command type: '{command}'")
+
+        return mutated_list
 
     @staticmethod
     async def save_draft_attachment(
