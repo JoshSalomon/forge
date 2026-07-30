@@ -17,6 +17,7 @@ def base_state():
         "qa_history": [],
         "generation_context": {},
         "retry_count": 0,
+        "yolo_mode": True,
     }
 
 
@@ -115,7 +116,9 @@ class TestDecomposeEpicsRepoResolution:
             patch("forge.workflow.nodes.epic_decomposition.JiraClient") as MockJira,
             patch("forge.workflow.nodes.epic_decomposition.ForgeAgent") as MockAgent,
             patch("forge.workflow.nodes.epic_decomposition.post_qa_summary_if_needed"),
-            patch("forge.workflow.nodes.epic_decomposition.get_settings", return_value=mock_settings),
+            patch(
+                "forge.workflow.nodes.epic_decomposition.get_settings", return_value=mock_settings
+            ),
         ):
             mock_jira = AsyncMock()
             MockJira.return_value = mock_jira
@@ -136,9 +139,7 @@ class TestDecomposeEpicsRepoResolution:
         assert "forge.repos" in comment_text
         assert "forge:retry" in comment_text
 
-        mock_jira.set_workflow_label.assert_called_once_with(
-            "MYPROJ-1", ForgeLabel.BLOCKED
-        )
+        mock_jira.set_workflow_label.assert_called_once_with("MYPROJ-1", ForgeLabel.BLOCKED)
 
         assert result["last_error"]
         assert result["current_node"] == "decompose_epics"
@@ -153,7 +154,9 @@ class TestDecomposeEpicsRepoResolution:
             patch("forge.workflow.nodes.epic_decomposition.JiraClient") as MockJira,
             patch("forge.workflow.nodes.epic_decomposition.ForgeAgent") as MockAgent,
             patch("forge.workflow.nodes.epic_decomposition.post_qa_summary_if_needed"),
-            patch("forge.workflow.nodes.epic_decomposition.get_settings", return_value=mock_settings),
+            patch(
+                "forge.workflow.nodes.epic_decomposition.get_settings", return_value=mock_settings
+            ),
         ):
             mock_jira = AsyncMock()
             MockJira.return_value = mock_jira
@@ -171,9 +174,7 @@ class TestDecomposeEpicsRepoResolution:
 
             result = await decompose_epics(base_state)
 
-        mock_jira.set_workflow_label.assert_called_once_with(
-            "MYPROJ-1", ForgeLabel.BLOCKED
-        )
+        mock_jira.set_workflow_label.assert_called_once_with("MYPROJ-1", ForgeLabel.BLOCKED)
         assert result["last_error"]
 
 
@@ -255,3 +256,153 @@ class TestEpicRevisionState:
         assert result["current_node"] == "plan_approval_gate"
         assert result["revision_requested"] is False
         assert result["feedback_comment"] is None
+
+
+class TestDecomposeEpicsDraftReview:
+    """Tests for the non-YOLO draft review gate flow in decompose_epics."""
+
+    @pytest.mark.asyncio
+    async def test_decompose_epics_draft_review_flow_success(
+        self, base_state, mock_issue, mock_epics_data
+    ):
+        """When yolo_mode is False, decomposes epics into a draft JSON, deletes old attachments, saves new one, posts comment, and pauses."""
+        state = {**base_state, "yolo_mode": False}
+
+        with (
+            patch("forge.workflow.nodes.epic_decomposition.JiraClient") as MockJira,
+            patch("forge.workflow.nodes.epic_decomposition.ForgeAgent") as MockAgent,
+            patch("forge.workflow.nodes.epic_decomposition.DraftManager") as MockDraftManager,
+            patch("forge.workflow.nodes.epic_decomposition.post_qa_summary_if_needed"),
+        ):
+            mock_jira = AsyncMock()
+            MockJira.return_value = mock_jira
+            mock_jira.get_issue = AsyncMock(return_value=mock_issue)
+            mock_jira.get_labels = AsyncMock(return_value=[])
+            mock_jira.get_project_repos = AsyncMock(return_value=["acme/backend"])
+            mock_jira.set_workflow_label = AsyncMock()
+            mock_jira.add_comment = AsyncMock()
+
+            mock_agent = AsyncMock()
+            MockAgent.return_value = mock_agent
+            mock_agent.generate_epics = AsyncMock(return_value=mock_epics_data)
+
+            MockDraftManager.delete_draft_attachment = AsyncMock()
+            MockDraftManager.save_draft_attachment = AsyncMock()
+
+            result = await decompose_epics(state)
+
+        # 1. Verify DraftManager deleted any existing forge-stories-draft.json first
+        MockDraftManager.delete_draft_attachment.assert_called_once_with(
+            mock_jira, "MYPROJ-1", "forge-stories-draft.json"
+        )
+
+        # 2. Verify DraftManager saved the new draft
+        MockDraftManager.save_draft_attachment.assert_called_once()
+        saved_draft = MockDraftManager.save_draft_attachment.call_args[0][2]
+        assert saved_draft.parent_key == "MYPROJ-1"
+        assert saved_draft.phase == "stories"
+        assert len(saved_draft.items) == 1
+        assert saved_draft.items[0].summary == "Epic One"
+        assert saved_draft.items[0].description == "Do stuff."
+        assert saved_draft.items[0].repo == "acme/backend"
+
+        # 3. Verify formatted comment posted
+        assert mock_jira.add_comment.call_count == 2
+        comment_text = mock_jira.add_comment.call_args_list[1][0][1]
+        assert "### 📋 Proposed Epics Draft" in comment_text
+        assert "Epic One" in comment_text
+        assert "acme/backend" in comment_text
+
+        # 4. Verify workflow label updated to PLAN_PENDING
+        mock_jira.set_workflow_label.assert_called_once_with("MYPROJ-1", ForgeLabel.PLAN_PENDING)
+
+        # 5. Verify state transitions to plan_approval_gate and pauses
+        assert result["current_node"] == "plan_approval_gate"
+        assert result["is_paused"] is True
+        assert result["epic_keys"] == []
+
+    @pytest.mark.asyncio
+    async def test_decompose_epics_draft_review_truncation_limits(self, base_state, mock_issue):
+        """When the item list has > 15 elements, comment falls back to a condensed table."""
+        state = {**base_state, "yolo_mode": False}
+
+        # Mock 16 items
+        many_epics_data = [
+            {"summary": f"Epic {i}", "plan": f"Plan {i}", "repo": f"repo-{i}"} for i in range(1, 17)
+        ]
+
+        with (
+            patch("forge.workflow.nodes.epic_decomposition.JiraClient") as MockJira,
+            patch("forge.workflow.nodes.epic_decomposition.ForgeAgent") as MockAgent,
+            patch("forge.workflow.nodes.epic_decomposition.DraftManager") as MockDraftManager,
+            patch("forge.workflow.nodes.epic_decomposition.post_qa_summary_if_needed"),
+        ):
+            mock_jira = AsyncMock()
+            MockJira.return_value = mock_jira
+            mock_jira.get_issue = AsyncMock(return_value=mock_issue)
+            mock_jira.get_labels = AsyncMock(return_value=[])
+            mock_jira.get_project_repos = AsyncMock(return_value=["acme/backend"])
+            mock_jira.set_workflow_label = AsyncMock()
+            mock_jira.add_comment = AsyncMock()
+
+            mock_agent = AsyncMock()
+            MockAgent.return_value = mock_agent
+            mock_agent.generate_epics = AsyncMock(return_value=many_epics_data)
+
+            MockDraftManager.delete_draft_attachment = AsyncMock()
+            MockDraftManager.save_draft_attachment = AsyncMock()
+
+            await decompose_epics(state)
+
+        # Verify comment is in condensed table format
+        assert mock_jira.add_comment.call_count == 2
+        comment_text = mock_jira.add_comment.call_args_list[1][0][1]
+        assert "### 📋 Proposed Epics Draft (Condensed)" in comment_text
+        assert "Warning" in comment_text
+        assert "forge-stories-draft.json" in comment_text
+        # Condensed table should only show IDs, summaries, and target repos
+        # Detailed descriptions/plans (like Plan 1) should NOT be in the comment
+        assert "Plan 1" not in comment_text
+        assert "Epic 1" in comment_text
+        assert "repo-1" in comment_text
+
+    @pytest.mark.asyncio
+    async def test_decompose_epics_draft_review_truncation_characters(self, base_state, mock_issue):
+        """When comment exceeds 32,767 characters, comment falls back to a condensed table."""
+        state = {**base_state, "yolo_mode": False}
+
+        # Mock huge description to exceed character limit
+        huge_epics_data = [{"summary": "Epic One", "plan": "A" * 35000, "repo": "acme/backend"}]
+
+        with (
+            patch("forge.workflow.nodes.epic_decomposition.JiraClient") as MockJira,
+            patch("forge.workflow.nodes.epic_decomposition.ForgeAgent") as MockAgent,
+            patch("forge.workflow.nodes.epic_decomposition.DraftManager") as MockDraftManager,
+            patch("forge.workflow.nodes.epic_decomposition.post_qa_summary_if_needed"),
+        ):
+            mock_jira = AsyncMock()
+            MockJira.return_value = mock_jira
+            mock_jira.get_issue = AsyncMock(return_value=mock_issue)
+            mock_jira.get_labels = AsyncMock(return_value=[])
+            mock_jira.get_project_repos = AsyncMock(return_value=["acme/backend"])
+            mock_jira.set_workflow_label = AsyncMock()
+            mock_jira.add_comment = AsyncMock()
+
+            mock_agent = AsyncMock()
+            MockAgent.return_value = mock_agent
+            mock_agent.generate_epics = AsyncMock(return_value=huge_epics_data)
+
+            MockDraftManager.delete_draft_attachment = AsyncMock()
+            MockDraftManager.save_draft_attachment = AsyncMock()
+
+            await decompose_epics(state)
+
+        # Verify comment is in condensed table format due to length
+        assert mock_jira.add_comment.call_count == 2
+        comment_text = mock_jira.add_comment.call_args_list[1][0][1]
+        assert "### 📋 Proposed Epics Draft (Condensed)" in comment_text
+        assert "Warning" in comment_text
+        assert "forge-stories-draft.json" in comment_text
+        assert "A" * 35000 not in comment_text
+        assert "Epic One" in comment_text
+        assert "acme/backend" in comment_text
