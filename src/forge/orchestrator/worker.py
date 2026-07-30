@@ -1006,7 +1006,7 @@ class OrchestratorWorker:
                 if current_state.get("is_paused") and current_node in _PENDING_APPROVAL_GATES:
                     parsed_cmd = parse_comment_command(comment_body)
                     is_forge_cmd = parsed_cmd is not None
-                    is_revision_comment = comment_body.startswith("!")
+                    is_revision_comment = bool(re.match(r"^\s*!", comment_body))
 
                     if is_forge_cmd or is_revision_comment:
                         filename = (

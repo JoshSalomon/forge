@@ -631,10 +631,10 @@ class JiraClient:
         Returns:
             The updated JiraComment.
         """
-        client = await self._get_client()
         adf_content = self._text_to_adf(body)
 
-        response = await client.put(
+        response = await self._request_with_retry(
+            "PUT",
             f"/issue/{issue_key}/comment/{comment_id}",
             json={"body": adf_content},
         )

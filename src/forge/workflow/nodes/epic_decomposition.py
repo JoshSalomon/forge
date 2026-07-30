@@ -273,6 +273,17 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
                 )
         else:
             # Draft Review Flow (YOLO is inactive)
+            if not epics_data:
+                return cast(
+                    WorkflowState,
+                    {
+                        **state,
+                        "last_error": "Failed to generate any draft Epics",
+                        "current_node": "decompose_epics",
+                        "retry_count": state.get("retry_count", 0) + 1,
+                    },
+                )
+
             # Prior to saving, check for existing forge-stories-draft.json attachments
             # and delete them using DraftManager/JiraClient to prevent duplicate file accumulation.
             try:
