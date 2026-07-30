@@ -466,12 +466,14 @@ class JiraClient:
 
         result = []
         for att in attachments:
-            result.append({
-                "id": att.get("id"),
-                "filename": att.get("filename"),
-                "content": att.get("content"),
-                "content_url": att.get("content"),
-            })
+            result.append(
+                {
+                    "id": att.get("id"),
+                    "filename": att.get("filename"),
+                    "content": att.get("content"),
+                    "content_url": att.get("content"),
+                }
+            )
         logger.debug(f"Found {len(result)} attachments on {issue_key}")
         return result
 
@@ -482,7 +484,7 @@ class JiraClient:
             issue_key: The Jira issue key.
 
         Returns:
-            List of attachment metadata dicts with 'id', 'filename', 'size', etc.
+            List of attachment metadata dicts with 'id', 'filename', etc.
         """
         return await self.list_attachments(issue_key)
 

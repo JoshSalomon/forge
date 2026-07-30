@@ -32,6 +32,35 @@ _SINGLE_PAIR_PATTERN = re.compile(
 )
 
 
+def _parse_key_values(args_text: str) -> dict[str, str]:
+    """Parse key-value pairs from argument text.
+
+    Args:
+        args_text: The text to parse.
+
+    Returns:
+        A dictionary of parsed parameters.
+
+    Raises:
+        ValueError: If parameters are malformed.
+    """
+    pos = 0
+    params = {}
+    while pos < len(args_text):
+        m = _SINGLE_PAIR_PATTERN.match(args_text, pos)
+        if not m:
+            raise ValueError(f"Malformed parameters or trailing junk near: '{args_text[pos:]}'")
+        key = m.group(1)
+        val = (
+            m.group(2)
+            if m.group(2) is not None
+            else (m.group(3) if m.group(3) is not None else m.group(4))
+        )
+        params[key] = val
+        pos = m.end()
+    return params
+
+
 def parse_comment_command(comment_text: str) -> dict[str, Any] | None:
     """Parse a /forge comment command and extract its parameters.
 
@@ -91,23 +120,13 @@ def parse_comment_command(comment_text: str) -> dict[str, Any] | None:
                 "command": "add",
                 "error": "Missing key-value parameters for add command",
             }
-        pos = 0
-        params = {}
-        while pos < len(args_text):
-            m = _SINGLE_PAIR_PATTERN.match(args_text, pos)
-            if not m:
-                return {
-                    "command": "add",
-                    "error": f"Malformed parameters or trailing junk near: '{args_text[pos:]}'",
-                }
-            key = m.group(1)
-            val = (
-                m.group(2)
-                if m.group(2) is not None
-                else (m.group(3) if m.group(3) is not None else m.group(4))
-            )
-            params[key] = val
-            pos = m.end()
+        try:
+            params = _parse_key_values(args_text)
+        except ValueError as e:
+            return {
+                "command": "add",
+                "error": str(e),
+            }
         return {"command": "add", "params": params}
 
     if cmd_name == "update":
@@ -132,22 +151,13 @@ def parse_comment_command(comment_text: str) -> dict[str, Any] | None:
         params_text = (id_match.group(2) or "").strip()
         params = {}
         if params_text:
-            pos = 0
-            while pos < len(params_text):
-                m = _SINGLE_PAIR_PATTERN.match(params_text, pos)
-                if not m:
-                    return {
-                        "command": "update",
-                        "error": f"Malformed parameters or trailing junk near: '{params_text[pos:]}'",
-                    }
-                key = m.group(1)
-                val = (
-                    m.group(2)
-                    if m.group(2) is not None
-                    else (m.group(3) if m.group(3) is not None else m.group(4))
-                )
-                params[key] = val
-                pos = m.end()
+            try:
+                params = _parse_key_values(params_text)
+            except ValueError as e:
+                return {
+                    "command": "update",
+                    "error": str(e),
+                }
         return {"command": "update", "id": id_val, "params": params}
 
     return None
