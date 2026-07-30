@@ -123,11 +123,16 @@ podman rm $(podman ps -a --filter name=forge- -q)
 
 ## Jira Comment Syntax
 
-| Prefix | Effect |
-|--------|--------|
-| `!` | Revision request — triggers regeneration with feedback |
+| Prefix / Command | Effect |
+|------------------|--------|
+| `!` | Revision request — triggers regeneration/revision with feedback |
 | `?` or `@forge ask` | Question — triggers Q&A answer |
 | `>option N` | RCA option selection (RCA Option Gate only) |
+| `/forge approve` | Approve draft (Epic plan or Tasks) to provision tickets |
+| `/forge remove ID` | Remove proposed draft item by ID and re-sequence |
+| `/forge exclude ID` | Toggle exclusion of proposed draft item by ID |
+| `/forge update ID key=val` | Update fields (`summary`, `description`, `repo`) of proposed draft item |
+| `/forge add key=val` | Add a new proposed item to draft |
 | _(no prefix)_ | Informational — workflow ignores it |
 
 ## GitHub PR Comment Commands
