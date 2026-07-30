@@ -9,7 +9,7 @@ import signal
 import sys
 import uuid
 from dataclasses import replace as dataclass_replace
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -1063,8 +1063,6 @@ class OrchestratorWorker:
                                             draft_json, parsed_cmd
                                         )
 
-                                        from datetime import datetime
-
                                         updated_items = [
                                             DraftItem.model_validate(item) for item in mutated_json
                                         ]
@@ -1082,38 +1080,9 @@ class OrchestratorWorker:
                                         )
 
                                         # Update the original review comment with the new breakdown (SC-002)
-                                        try:
-                                            comments_list = await jira.get_comments(
-                                                message.ticket_key
-                                            )
-                                            target_prefix = (
-                                                "### 📋 Proposed Epics Draft"
-                                                if original_draft.phase == "stories"
-                                                else "### 📋 Proposed Tasks Draft"
-                                            )
-                                            review_comment_id = None
-                                            for c in reversed(comments_list):
-                                                if c.body.startswith(target_prefix):
-                                                    review_comment_id = c.id
-                                                    break
-                                            if review_comment_id:
-                                                new_comment_body = (
-                                                    DraftManager.format_review_comment(
-                                                        updated_draft
-                                                    )
-                                                )
-                                                await jira.edit_comment(
-                                                    message.ticket_key,
-                                                    review_comment_id,
-                                                    new_comment_body,
-                                                )
-                                                logger.info(
-                                                    f"Edited original review comment {review_comment_id}"
-                                                )
-                                        except Exception as c_err:
-                                            logger.warning(
-                                                f"Could not update original review comment: {c_err}"
-                                            )
+                                        await self._update_original_review_comment(
+                                            jira, message.ticket_key, updated_draft
+                                        )
 
                                         comment_id = comment.get("id") if comment else None
                                         if comment_id:
@@ -1155,34 +1124,9 @@ class OrchestratorWorker:
                                     )
 
                                     # Update the original review comment with the new breakdown (SC-002)
-                                    try:
-                                        comments_list = await jira.get_comments(message.ticket_key)
-                                        target_prefix = (
-                                            "### 📋 Proposed Epics Draft"
-                                            if original_draft.phase == "stories"
-                                            else "### 📋 Proposed Tasks Draft"
-                                        )
-                                        review_comment_id = None
-                                        for c in reversed(comments_list):
-                                            if c.body.startswith(target_prefix):
-                                                review_comment_id = c.id
-                                                break
-                                        if review_comment_id:
-                                            new_comment_body = DraftManager.format_review_comment(
-                                                updated_draft
-                                            )
-                                            await jira.edit_comment(
-                                                message.ticket_key,
-                                                review_comment_id,
-                                                new_comment_body,
-                                            )
-                                            logger.info(
-                                                f"Edited original review comment {review_comment_id}"
-                                            )
-                                    except Exception as c_err:
-                                        logger.warning(
-                                            f"Could not update original review comment: {c_err}"
-                                        )
+                                    await self._update_original_review_comment(
+                                        jira, message.ticket_key, updated_draft
+                                    )
 
                                     comment_id = comment.get("id") if comment else None
                                     if comment_id:
@@ -2408,6 +2352,39 @@ class OrchestratorWorker:
                 await jira.close()
         except Exception as e:
             logger.warning(f"Failed to post rebase feedback: {e}")
+
+    async def _update_original_review_comment(
+        self, jira: JiraClient, ticket_key: str, draft: ForgeDecompositionDraft
+    ) -> None:
+        """Update the original review comment with the new breakdown (SC-002).
+
+        Args:
+            jira: The Jira client.
+            ticket_key: The Jira ticket key.
+            draft: The updated draft decomposition.
+        """
+        try:
+            comments_list = await jira.get_comments(ticket_key)
+            target_prefix = (
+                "### 📋 Proposed Epics Draft"
+                if draft.phase == "stories"
+                else "### 📋 Proposed Tasks Draft"
+            )
+            review_comment_id = None
+            for c in reversed(comments_list):
+                if c.body.startswith(target_prefix):
+                    review_comment_id = c.id
+                    break
+            if review_comment_id:
+                new_comment_body = DraftManager.format_review_comment(draft)
+                await jira.edit_comment(
+                    ticket_key,
+                    review_comment_id,
+                    new_comment_body,
+                )
+                logger.info(f"Edited original review comment {review_comment_id}")
+        except Exception as c_err:
+            logger.warning(f"Could not update original review comment: {c_err}")
 
     async def _post_terminal_error_comment(self, ticket_key: str, error: str) -> None:
         """Post a comment explaining how to retry a terminal error.

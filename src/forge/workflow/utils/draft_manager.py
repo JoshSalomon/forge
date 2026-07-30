@@ -304,89 +304,61 @@ class DraftManager:
 
         items = draft.items
         if draft.phase == "stories":
-            header = "### 📋 Proposed Epics Draft\n\nThe following Epics have been proposed for decomposition:\n\n"
-            table = "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
+            phase_title = "Epics"
+            noun_plural = "epics"
+            noun_singular = "epic"
+            phase_action = "decomposition"
+            item_label = "Plan"
+            approval_label = ForgeLabel.PLAN_APPROVED.value
+            filename = "forge-stories-draft.json"
+        else:
+            phase_title = "Tasks"
+            noun_plural = "tasks"
+            noun_singular = "task"
+            phase_action = "implementation"
+            item_label = "Description"
+            approval_label = ForgeLabel.TASK_APPROVED.value
+            filename = "forge-tasks-draft.json"
+
+        header = f"### 📋 Proposed {phase_title} Draft\n\nThe following {phase_title} have been proposed for {phase_action}:\n\n"
+        table = "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
+        for item in items:
+            table += f"| {item.id} | {item.summary} | {item.repo or 'unknown'} |\n"
+        table += "\n---\n\n"
+
+        details = ""
+        for item in items:
+            details += f"#### {item.id}. {item.summary} (Repo: {item.repo or 'unknown'})\n"
+            if item.description:
+                details += f"**{item_label}:**\n{item.description}\n\n"
+            else:
+                details += "\n"
+
+        footer = (
+            "## 🤖 Forge interaction options\n\n"
+            f"- ✅ **Approve:** comment `/forge approve` or add `{approval_label}` to continue.\n"
+            f"- ♻️ **Revise all {noun_plural}:** add a comment starting with `!` on this ticket.\n"
+            f"- 🔧 **Revise a single {noun_singular}:** add a comment starting with `!` on the {phase_title.rstrip('s')}.\n"
+            "- ❓ **Ask a question:** add a Jira comment starting with `?`."
+        )
+
+        full_comment = header + table + details + footer
+
+        if len(full_comment) > 32767 or len(items) > 15:
+            condensed_table = "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
             for item in items:
-                table += f"| {item.id} | {item.summary} | {item.repo or 'unknown'} |\n"
-            table += "\n---\n\n"
-
-            details = ""
-            for item in items:
-                details += f"#### {item.id}. {item.summary} (Repo: {item.repo or 'unknown'})\n"
-                if item.description:
-                    details += f"**Plan:**\n{item.description}\n\n"
-                else:
-                    details += "\n"
-
-            footer = (
-                "## 🤖 Forge interaction options\n\n"
-                f"- ✅ **Approve:** comment `/forge approve` or add `{ForgeLabel.PLAN_APPROVED.value}` to continue.\n"
-                "- ♻️ **Revise all epics:** add a comment starting with `!` on this ticket.\n"
-                "- 🔧 **Revise a single epic:** add a comment starting with `!` on the Epic.\n"
-                "- ❓ **Ask a question:** add a Jira comment starting with `?`."
-            )
-
-            full_comment = header + table + details + footer
-
-            if len(full_comment) > 32767 or len(items) > 15:
-                condensed_table = "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
-                for item in items:
-                    condensed_table += (
-                        f"| {item.id} | {item.summary} | {item.repo or 'unknown'} |\n"
-                    )
-
-                condensed_comment = (
-                    "### 📋 Proposed Epics Draft (Condensed)\n\n"
-                    "⚠️ **Warning:** The proposed plan exceeds character or size limits for detailed display in a comment. "
-                    "Please refer to the attached `forge-stories-draft.json` for full implementation plan details.\n\n"
-                    + condensed_table
-                    + "\n"
-                    + footer
+                condensed_table += (
+                    f"| {item.id} | {item.summary} | {item.repo or 'unknown'} |\n"
                 )
-                return condensed_comment
 
-            return full_comment
-
-        else:  # phase == "tasks"
-            header = "### 📋 Proposed Tasks Draft\n\nThe following Tasks have been proposed for implementation:\n\n"
-            table = "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
-            for item in items:
-                table += f"| {item.id} | {item.summary} | {item.repo or 'unknown'} |\n"
-            table += "\n---\n\n"
-
-            details = ""
-            for item in items:
-                details += f"#### {item.id}. {item.summary} (Repo: {item.repo or 'unknown'})\n"
-                if item.description:
-                    details += f"**Description:**\n{item.description}\n\n"
-                else:
-                    details += "\n"
-
-            footer = (
-                "## 🤖 Forge interaction options\n\n"
-                f"- ✅ **Approve:** comment `/forge approve` or add `{ForgeLabel.TASK_APPROVED.value}` to continue.\n"
-                "- ♻️ **Revise all tasks:** add a comment starting with `!` on this ticket.\n"
-                "- 🔧 **Revise a single task:** add a comment starting with `!` on the Task.\n"
-                "- ❓ **Ask a question:** add a Jira comment starting with `?`."
+            condensed_comment = (
+                f"### 📋 Proposed {phase_title} Draft (Condensed)\n\n"
+                "⚠️ **Warning:** The proposed plan exceeds character or size limits for detailed display in a comment. "
+                f"Please refer to the attached `{filename}` for full implementation plan details.\n\n"
+                + condensed_table
+                + "\n"
+                + footer
             )
+            return condensed_comment
 
-            full_comment = header + table + details + footer
-
-            if len(full_comment) > 32767 or len(items) > 15:
-                condensed_table = "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
-                for item in items:
-                    condensed_table += (
-                        f"| {item.id} | {item.summary} | {item.repo or 'unknown'} |\n"
-                    )
-
-                condensed_comment = (
-                    "### 📋 Proposed Tasks Draft (Condensed)\n\n"
-                    "⚠️ **Warning:** The proposed plan exceeds character or size limits for detailed display in a comment. "
-                    "Please refer to the attached `forge-tasks-draft.json` for full implementation plan details.\n\n"
-                    + condensed_table
-                    + "\n"
-                    + footer
-                )
-                return condensed_comment
-
-            return full_comment
+        return full_comment
