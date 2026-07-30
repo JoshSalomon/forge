@@ -13,6 +13,7 @@ from forge.workflow.nodes.task_generation import (
     regenerate_all_tasks,
     regenerate_epic_tasks,
 )
+from forge.workflow.utils.draft_manager import DraftManager
 
 
 @pytest.fixture
@@ -622,6 +623,7 @@ class TestTaskGenerationDraftReview:
 
             MockDraftManager.delete_draft_attachment = AsyncMock()
             MockDraftManager.save_draft_attachment = AsyncMock()
+            MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
             result = await generate_tasks(state)
 
@@ -690,6 +692,7 @@ class TestTaskGenerationDraftReview:
 
             MockDraftManager.delete_draft_attachment = AsyncMock()
             MockDraftManager.save_draft_attachment = AsyncMock()
+            MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
             await generate_tasks(state)
 
@@ -740,6 +743,7 @@ class TestTaskGenerationDraftReview:
 
             MockDraftManager.delete_draft_attachment = AsyncMock()
             MockDraftManager.save_draft_attachment = AsyncMock()
+            MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
             await generate_tasks(state)
 

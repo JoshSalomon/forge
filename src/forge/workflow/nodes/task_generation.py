@@ -346,59 +346,7 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
 
             # Format Markdown review comment outlining proposed tasks
             # Implement BR-003 Truncation Boundary
-            def format_review_comment(items: list[dict[str, Any]]) -> str:
-                header = "### 📋 Proposed Tasks Draft\n\nThe following Tasks have been proposed for implementation:\n\n"
-
-                table = "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
-                for idx, item in enumerate(items, start=1):
-                    summary = item.get("summary", "Untitled Task")
-                    repo = item.get("repo", "unknown")
-                    table += f"| {idx} | {summary} | {repo} |\n"
-                table += "\n---\n\n"
-
-                details = ""
-                for idx, item in enumerate(items, start=1):
-                    summary = item.get("summary", "Untitled Task")
-                    repo = item.get("repo", "unknown")
-                    description = item.get("description", "")
-                    details += f"#### {idx}. {summary} (Repo: {repo})\n"
-                    if description:
-                        details += f"**Description:**\n{description}\n\n"
-                    else:
-                        details += "\n"
-
-                footer = (
-                    "## 🤖 Forge interaction options\n\n"
-                    f"- ✅ **Approve:** comment `/forge approve` or add `{ForgeLabel.TASK_APPROVED.value}` to continue.\n"
-                    "- ♻️ **Revise all tasks:** add a comment starting with `!` on this ticket.\n"
-                    "- 🔧 **Revise a single task:** add a comment starting with `!` on the Task.\n"
-                    "- ❓ **Ask a question:** add a Jira comment starting with `?`."
-                )
-
-                full_comment = header + table + details + footer
-
-                if len(full_comment) > 32767 or len(items) > 15:
-                    condensed_table = (
-                        "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
-                    )
-                    for idx, item in enumerate(items, start=1):
-                        summary = item.get("summary", "Untitled Task")
-                        repo = item.get("repo", "unknown")
-                        condensed_table += f"| {idx} | {summary} | {repo} |\n"
-
-                    condensed_comment = (
-                        "### 📋 Proposed Tasks Draft (Condensed)\n\n"
-                        "⚠️ **Warning:** The proposed plan exceeds character or size limits for detailed display in a comment. "
-                        "Please refer to the attached `forge-tasks-draft.json` for full implementation plan details.\n\n"
-                        + condensed_table
-                        + "\n"
-                        + footer
-                    )
-                    return condensed_comment
-
-                return full_comment
-
-            comment_body = format_review_comment(proposed_tasks_list)
+            comment_body = DraftManager.format_review_comment(draft)
 
             # Post the review comment to the parent Jira ticket
             await jira.add_comment(ticket_key, comment_body)

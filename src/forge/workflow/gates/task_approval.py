@@ -126,6 +126,8 @@ async def route_task_approval(state: WorkflowState) -> str:
         return END
 
     # Handle standard (non-YOLO) approval draft ticket provisioning
+    # Note on split ownership: The gate nodes handle YOLO/autonomous paths where no manual comment or webhook
+    # is processed (so we must provision here), while the worker handles manual/human comment webhook triggers.
     if not state.get("task_keys"):
         from forge.integrations.jira.client import JiraClient
 

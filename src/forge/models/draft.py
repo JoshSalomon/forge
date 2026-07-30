@@ -9,6 +9,8 @@ from pydantic import BaseModel, model_validator
 class DraftItem(BaseModel):
     """Represents an individual proposed Story or Task inside a draft."""
 
+    model_config = {"extra": "forbid"}
+
     id: int
     """Local sequential ID, e.g., 1, 2, 3."""
 

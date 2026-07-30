@@ -147,7 +147,7 @@ class TestDraftManager:
     async def test_get_draft_attachment_success_alternate_url_key(
         self, draft_config: tuple[str, str], sample_draft: ForgeDecompositionDraft
     ) -> None:
-        """Should download using 'content' key if 'content_url' is missing."""
+        """Should download using 'content_url' key."""
         _, filename = draft_config
         mock_jira = MagicMock(spec=JiraClient)
         mock_jira.get_attachments = AsyncMock(
@@ -155,7 +155,7 @@ class TestDraftManager:
                 {
                     "id": "att-222",
                     "filename": filename,
-                    "content": "http://url2-alt",
+                    "content_url": "http://url2-alt",
                 },
             ]
         )

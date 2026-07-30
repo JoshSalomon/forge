@@ -19,36 +19,63 @@ class DraftManager:
     """Manages draft CRUD operations on Jira parent tickets as attachments."""
 
     @staticmethod
-    def _validate_item_params(params: dict[str, Any]) -> None:
+    def _validate_item_params(
+        params: dict[str, Any], target_item: dict[str, Any] | None = None
+    ) -> None:
         """Validate the fields in draft item parameters strictly.
 
         Args:
             params: The parameters dictionary.
+            target_item: Optional target item dictionary to merge with (for update command).
 
         Raises:
             ValueError: If a validation check fails.
         """
-        allowed_fields = {
-            "summary",
-            "description",
-            "repo",
-            "acceptance_criteria",
-            "excluded",
-            "epic_key",
-        }
-        for k, v in params.items():
-            if k not in allowed_fields:
-                raise ValueError(f"Unknown field '{k}' for draft item.")
-            if k in {"summary", "description", "repo"} and not isinstance(v, str):
-                raise ValueError(f"Field '{k}' must be a string, got {type(v).__name__}.")
-            if k == "epic_key" and v is not None and not isinstance(v, str):
-                raise ValueError("Field 'epic_key' must be a string or None.")
-            if k == "acceptance_criteria" and (
-                not isinstance(v, list) or not all(isinstance(x, str) for x in v)
-            ):
-                raise ValueError("Field 'acceptance_criteria' must be a list of strings.")
-            if k == "excluded" and not isinstance(v, bool):
-                raise ValueError("Field 'excluded' must be a boolean.")
+        from pydantic import ValidationError
+
+        from forge.models.draft import DraftItem
+
+        if target_item is not None:
+            full_item = {**target_item, **params}
+        else:
+            defaults = {
+                "id": 1,
+                "summary": "",
+                "description": "",
+                "repo": "",
+                "acceptance_criteria": [],
+                "excluded": False,
+                "epic_key": None,
+            }
+            full_item = {**defaults, **params}
+
+        try:
+            DraftItem.model_validate(full_item, strict=True)
+        except ValidationError as e:
+            for error in e.errors():
+                loc = error["loc"]
+                if not loc:
+                    continue
+                field = str(loc[0])
+                error_type = error["type"]
+                if error_type == "extra_forbidden":
+                    raise ValueError(f"Unknown field '{field}'")
+                elif field in {"summary", "description", "repo"}:
+                    val = (
+                        params.get(field)
+                        if field in params
+                        else (target_item.get(field) if target_item else None)
+                    )
+                    raise ValueError(
+                        f"Field '{field}' must be a string, got {type(val).__name__ if val is not None else 'None'}."
+                    )
+                elif field == "acceptance_criteria":
+                    raise ValueError("Field 'acceptance_criteria' must be a list of strings.")
+                elif field == "excluded":
+                    raise ValueError("Field 'excluded' must be a boolean.")
+                elif field == "epic_key":
+                    raise ValueError("Field 'epic_key' must be a string or None.")
+            raise ValueError(str(e))
 
     @staticmethod
     def apply_draft_modification(
@@ -134,7 +161,7 @@ class DraftManager:
             params = parsed_command.get("params", {})
 
             # Strict type validation
-            DraftManager._validate_item_params(params)
+            DraftManager._validate_item_params(params, target_item)
 
             # Apply updates
             for k, v in params.items():
@@ -347,9 +374,7 @@ class DraftManager:
         if len(full_comment) > 32767 or len(items) > 15:
             condensed_table = "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
             for item in items:
-                condensed_table += (
-                    f"| {item.id} | {item.summary} | {item.repo or 'unknown'} |\n"
-                )
+                condensed_table += f"| {item.id} | {item.summary} | {item.repo or 'unknown'} |\n"
 
             condensed_comment = (
                 f"### 📋 Proposed {phase_title} Draft (Condensed)\n\n"

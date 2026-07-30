@@ -470,7 +470,6 @@ class JiraClient:
                 {
                     "id": att.get("id"),
                     "filename": att.get("filename"),
-                    "content": att.get("content"),
                     "content_url": att.get("content"),
                 }
             )

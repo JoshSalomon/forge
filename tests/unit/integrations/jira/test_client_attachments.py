@@ -59,10 +59,6 @@ class TestJiraClientAttachments:
         assert attachments[0]["id"] == "10001"
         assert attachments[0]["filename"] == "spec.md"
         assert (
-            attachments[0]["content"]
-            == "https://test.atlassian.net/rest/api/3/attachment/content/10001"
-        )
-        assert (
             attachments[0]["content_url"]
             == "https://test.atlassian.net/rest/api/3/attachment/content/10001"
         )

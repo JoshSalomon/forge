@@ -2026,6 +2026,8 @@ class OrchestratorWorker:
                     updated_state["proposal_review_decisions"] = []
 
             # Ticket provisioning step on approval!
+            # Note on split ownership: The worker call site handles unpausing from human manual comments (webhook triggers)
+            # to catch and report provisioning errors early without breaking the LangGraph execution flow.
             if current_node == "plan_approval_gate" and not updated_state.get("epic_keys"):
                 jira = JiraClient()
                 try:
@@ -2046,6 +2048,8 @@ class OrchestratorWorker:
                     await jira.close()
 
             elif current_node == "task_approval_gate" and not updated_state.get("task_keys"):
+                # Note on split ownership: The worker call site handles unpausing from human manual comments (webhook triggers)
+                # to catch and report provisioning errors early without breaking the LangGraph execution flow.
                 jira = JiraClient()
                 try:
                     task_keys, tasks_by_repo = await provision_tasks_from_draft(updated_state, jira)

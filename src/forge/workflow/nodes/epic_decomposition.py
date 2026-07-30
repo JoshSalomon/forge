@@ -91,12 +91,12 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
         # 2. forge.repos Jira project property (required)
         feature_labels = await jira.get_labels(ticket_key)
 
-        available_repos: Any = set()
+        available_repos_set: set[str] = set()
 
         # Add repos from Feature labels
         for label in feature_labels:
             if label.startswith("repo:"):
-                available_repos.add(label[5:])
+                available_repos_set.add(label[5:])
 
         # Add repos from Jira project property (required in strict mode)
         settings = get_settings()
@@ -125,7 +125,7 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
             await jira.set_workflow_label(ticket_key, ForgeLabel.BLOCKED)
             return {**state, "last_error": str(e), "current_node": "decompose_epics"}
 
-        available_repos = list(available_repos)
+        available_repos: list[str] = list(available_repos_set)
 
         # Build context for Epic generation
         context: dict[str, Any] = {
@@ -332,59 +332,7 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
 
             # Format Markdown review comment outlining proposed items
             # Implement BR-003 Truncation Boundary
-            def format_review_comment(items: list[dict[str, Any]]) -> str:
-                header = "### 📋 Proposed Epics Draft\n\nThe following Epics have been proposed for decomposition:\n\n"
-
-                table = "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
-                for idx, item in enumerate(items, start=1):
-                    summary = item.get("summary", "Untitled Epic")
-                    repo = item.get("repo", "unknown")
-                    table += f"| {idx} | {summary} | {repo} |\n"
-                table += "\n---\n\n"
-
-                details = ""
-                for idx, item in enumerate(items, start=1):
-                    summary = item.get("summary", "Untitled Epic")
-                    repo = item.get("repo", "unknown")
-                    plan = item.get("plan", "")
-                    details += f"#### {idx}. {summary} (Repo: {repo})\n"
-                    if plan:
-                        details += f"**Plan:**\n{plan}\n\n"
-                    else:
-                        details += "\n"
-
-                footer = (
-                    "## 🤖 Forge interaction options\n\n"
-                    f"- ✅ **Approve:** comment `/forge approve` or add `{ForgeLabel.PLAN_APPROVED.value}` to continue.\n"
-                    "- ♻️ **Revise all epics:** add a comment starting with `!` on this ticket.\n"
-                    "- 🔧 **Revise a single epic:** add a comment starting with `!` on the Epic.\n"
-                    "- ❓ **Ask a question:** add a Jira comment starting with `?`."
-                )
-
-                full_comment = header + table + details + footer
-
-                if len(full_comment) > 32767 or len(items) > 15:
-                    condensed_table = (
-                        "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
-                    )
-                    for idx, item in enumerate(items, start=1):
-                        summary = item.get("summary", "Untitled Epic")
-                        repo = item.get("repo", "unknown")
-                        condensed_table += f"| {idx} | {summary} | {repo} |\n"
-
-                    condensed_comment = (
-                        "### 📋 Proposed Epics Draft (Condensed)\n\n"
-                        "⚠️ **Warning:** The proposed plan exceeds character or size limits for detailed display in a comment. "
-                        "Please refer to the attached `forge-stories-draft.json` for full implementation plan details.\n\n"
-                        + condensed_table
-                        + "\n"
-                        + footer
-                    )
-                    return condensed_comment
-
-                return full_comment
-
-            comment_body = format_review_comment(epics_data)
+            comment_body = DraftManager.format_review_comment(draft)
 
             # Post the review comment to the parent Jira ticket
             await jira.add_comment(ticket_key, comment_body)

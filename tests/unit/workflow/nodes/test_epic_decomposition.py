@@ -7,6 +7,7 @@ import pytest
 from forge.integrations.jira.client import MissingProjectConfig
 from forge.models.workflow import ForgeLabel
 from forge.workflow.nodes.epic_decomposition import decompose_epics, regenerate_all_epics
+from forge.workflow.utils.draft_manager import DraftManager
 
 
 @pytest.fixture
@@ -288,6 +289,7 @@ class TestDecomposeEpicsDraftReview:
 
             MockDraftManager.delete_draft_attachment = AsyncMock()
             MockDraftManager.save_draft_attachment = AsyncMock()
+            MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
             result = await decompose_epics(state)
 
@@ -351,6 +353,7 @@ class TestDecomposeEpicsDraftReview:
 
             MockDraftManager.delete_draft_attachment = AsyncMock()
             MockDraftManager.save_draft_attachment = AsyncMock()
+            MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
             await decompose_epics(state)
 
@@ -394,6 +397,7 @@ class TestDecomposeEpicsDraftReview:
 
             MockDraftManager.delete_draft_attachment = AsyncMock()
             MockDraftManager.save_draft_attachment = AsyncMock()
+            MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
             await decompose_epics(state)
 
