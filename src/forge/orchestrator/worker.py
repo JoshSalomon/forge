@@ -1081,6 +1081,40 @@ class OrchestratorWorker:
                                             jira, message.ticket_key, updated_draft, filename
                                         )
 
+                                        # Update the original review comment with the new breakdown (SC-002)
+                                        try:
+                                            comments_list = await jira.get_comments(
+                                                message.ticket_key
+                                            )
+                                            target_prefix = (
+                                                "### 📋 Proposed Epics Draft"
+                                                if original_draft.phase == "stories"
+                                                else "### 📋 Proposed Tasks Draft"
+                                            )
+                                            review_comment_id = None
+                                            for c in reversed(comments_list):
+                                                if c.body.startswith(target_prefix):
+                                                    review_comment_id = c.id
+                                                    break
+                                            if review_comment_id:
+                                                new_comment_body = (
+                                                    DraftManager.format_review_comment(
+                                                        updated_draft
+                                                    )
+                                                )
+                                                await jira.edit_comment(
+                                                    message.ticket_key,
+                                                    review_comment_id,
+                                                    new_comment_body,
+                                                )
+                                                logger.info(
+                                                    f"Edited original review comment {review_comment_id}"
+                                                )
+                                        except Exception as c_err:
+                                            logger.warning(
+                                                f"Could not update original review comment: {c_err}"
+                                            )
+
                                         comment_id = comment.get("id") if comment else None
                                         if comment_id:
                                             await jira.edit_comment(
@@ -1119,6 +1153,36 @@ class OrchestratorWorker:
                                     await DraftManager.save_draft_attachment(
                                         jira, message.ticket_key, updated_draft, filename
                                     )
+
+                                    # Update the original review comment with the new breakdown (SC-002)
+                                    try:
+                                        comments_list = await jira.get_comments(message.ticket_key)
+                                        target_prefix = (
+                                            "### 📋 Proposed Epics Draft"
+                                            if original_draft.phase == "stories"
+                                            else "### 📋 Proposed Tasks Draft"
+                                        )
+                                        review_comment_id = None
+                                        for c in reversed(comments_list):
+                                            if c.body.startswith(target_prefix):
+                                                review_comment_id = c.id
+                                                break
+                                        if review_comment_id:
+                                            new_comment_body = DraftManager.format_review_comment(
+                                                updated_draft
+                                            )
+                                            await jira.edit_comment(
+                                                message.ticket_key,
+                                                review_comment_id,
+                                                new_comment_body,
+                                            )
+                                            logger.info(
+                                                f"Edited original review comment {review_comment_id}"
+                                            )
+                                    except Exception as c_err:
+                                        logger.warning(
+                                            f"Could not update original review comment: {c_err}"
+                                        )
 
                                     comment_id = comment.get("id") if comment else None
                                     if comment_id:
