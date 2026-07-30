@@ -271,7 +271,9 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
                             "current_task_key": None,
                             "current_epic_key": None,
                             "current_node": "task_approval_gate",
-                            "last_error": f"Partial Jira failure: {jira_error}" if jira_error else None,
+                            "last_error": f"Partial Jira failure: {jira_error}"
+                            if jira_error
+                            else None,
                         }
                     ),
                 )
@@ -314,12 +316,14 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
                 summary = task_item.get("summary", "Untitled Task")
                 description = task_item.get("description", "")
                 repo = task_item.get("repo", "unknown")
+                item_epic_key = task_item.get("epic_key")
                 draft_items.append(
                     DraftItem(
                         id=idx,
                         summary=summary,
                         description=description,
                         repo=repo,
+                        epic_key=item_epic_key,
                         acceptance_criteria=[],
                         excluded=False,
                     )

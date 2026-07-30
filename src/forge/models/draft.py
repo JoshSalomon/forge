@@ -27,6 +27,9 @@ class DraftItem(BaseModel):
     excluded: bool = False
     """Whether this item should be excluded from ticket creation."""
 
+    epic_key: str | None = None
+    """Optional Jira key of the parent epic for this task."""
+
 
 class ForgeDecompositionDraft(BaseModel):
     """Represents the wrapper of all draft items and execution metadata."""

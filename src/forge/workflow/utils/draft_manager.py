@@ -28,12 +28,21 @@ class DraftManager:
         Raises:
             ValueError: If a validation check fails.
         """
-        allowed_fields = {"summary", "description", "repo", "acceptance_criteria", "excluded"}
+        allowed_fields = {
+            "summary",
+            "description",
+            "repo",
+            "acceptance_criteria",
+            "excluded",
+            "epic_key",
+        }
         for k, v in params.items():
             if k not in allowed_fields:
                 raise ValueError(f"Unknown field '{k}' for draft item.")
             if k in {"summary", "description", "repo"} and not isinstance(v, str):
                 raise ValueError(f"Field '{k}' must be a string, got {type(v).__name__}.")
+            if k == "epic_key" and v is not None and not isinstance(v, str):
+                raise ValueError("Field 'epic_key' must be a string or None.")
             if k == "acceptance_criteria" and (
                 not isinstance(v, list) or not all(isinstance(x, str) for x in v)
             ):

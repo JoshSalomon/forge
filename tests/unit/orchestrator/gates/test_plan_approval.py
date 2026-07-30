@@ -57,15 +57,17 @@ class TestRoutePlanApproval:
         state["is_paused"] = True
         return state
 
-    def test_routes_to_tasks_on_approval(self, plan_pending_state):
+    @pytest.mark.asyncio
+    async def test_routes_to_tasks_on_approval(self, plan_pending_state):
         """Approved Plan routes to task generation when not paused."""
         plan_pending_state["is_paused"] = False
 
-        result = route_plan_approval(plan_pending_state)
+        result = await route_plan_approval(plan_pending_state)
 
         assert result == "generate_tasks"
 
-    def test_routes_to_regenerate_all_on_full_rejection(self, plan_pending_state):
+    @pytest.mark.asyncio
+    async def test_routes_to_regenerate_all_on_full_rejection(self, plan_pending_state):
         """Full plan rejection routes to regenerate all epics."""
         plan_pending_state["context"] = {
             "labels": ["forge:managed", "forge:plan-pending"],
@@ -74,11 +76,12 @@ class TestRoutePlanApproval:
         plan_pending_state["feedback_comment"] = "The epic breakdown doesn't make sense."
         plan_pending_state["revision_requested"] = True
 
-        result = route_plan_approval(plan_pending_state)
+        result = await route_plan_approval(plan_pending_state)
 
         assert result == "regenerate_all_epics"
 
-    def test_routes_to_update_single_on_epic_rejection(self, plan_pending_state):
+    @pytest.mark.asyncio
+    async def test_routes_to_update_single_on_epic_rejection(self, plan_pending_state):
         """Single epic rejection routes to update that epic."""
         plan_pending_state["context"] = {
             "labels": ["forge:managed", "forge:plan-pending"],
@@ -89,17 +92,18 @@ class TestRoutePlanApproval:
         plan_pending_state["feedback_comment"] = "Epic 2 needs more detail."
         plan_pending_state["revision_requested"] = True
 
-        result = route_plan_approval(plan_pending_state)
+        result = await route_plan_approval(plan_pending_state)
 
         assert result == "update_single_epic"
 
-    def test_routes_to_end_when_pending(self, plan_pending_state):
+    @pytest.mark.asyncio
+    async def test_routes_to_end_when_pending(self, plan_pending_state):
         """Pending Plan without feedback routes to END."""
         plan_pending_state["context"] = {
             "labels": ["forge:managed", "forge:plan-pending"],
         }
 
-        result = route_plan_approval(plan_pending_state)
+        result = await route_plan_approval(plan_pending_state)
 
         assert result == END
 
@@ -118,7 +122,8 @@ class TestPlanRevisionScenarios:
         state["epic_keys"] = ["TEST-124", "TEST-125", "TEST-126"]
         return state
 
-    def test_full_regen_deletes_all_epics(self, state_with_epics):
+    @pytest.mark.asyncio
+    async def test_full_regen_deletes_all_epics(self, state_with_epics):
         """Full regeneration affects all epics."""
         state_with_epics["context"] = {
             "labels": ["forge:managed", "forge:plan-pending"],
@@ -127,11 +132,12 @@ class TestPlanRevisionScenarios:
         state_with_epics["feedback_comment"] = "Start over with a different approach."
         state_with_epics["revision_requested"] = True
 
-        result = route_plan_approval(state_with_epics)
+        result = await route_plan_approval(state_with_epics)
 
         assert result == "regenerate_all_epics"
 
-    def test_single_epic_update_preserves_others(self, state_with_epics):
+    @pytest.mark.asyncio
+    async def test_single_epic_update_preserves_others(self, state_with_epics):
         """Single epic update preserves other epics."""
         state_with_epics["context"] = {
             "labels": ["forge:managed", "forge:plan-pending"],
@@ -142,14 +148,15 @@ class TestPlanRevisionScenarios:
         state_with_epics["feedback_comment"] = "Just fix this one epic."
         state_with_epics["revision_requested"] = True
 
-        result = route_plan_approval(state_with_epics)
+        result = await route_plan_approval(state_with_epics)
 
         assert result == "update_single_epic"
         # Other epics should remain in state
         assert "TEST-124" in state_with_epics["epic_keys"]
         assert "TEST-126" in state_with_epics["epic_keys"]
 
-    def test_partial_approval_scenario(self, state_with_epics):
+    @pytest.mark.asyncio
+    async def test_partial_approval_scenario(self, state_with_epics):
         """Some epics approved, one needs revision."""
         # This tests the scenario where user approves some epics
         # but requests changes to one specific epic
@@ -163,7 +170,7 @@ class TestPlanRevisionScenarios:
         state_with_epics["feedback_comment"] = "Epic 3 scope is too broad."
         state_with_epics["revision_requested"] = True
 
-        result = route_plan_approval(state_with_epics)
+        result = await route_plan_approval(state_with_epics)
 
         assert result == "update_single_epic"
 
@@ -186,41 +193,172 @@ class TestPlanQuestionRouting:
         state["is_paused"] = False
         return state
 
-    def test_routes_to_answer_question_when_is_question(self, plan_pending_state):
+    @pytest.mark.asyncio
+    async def test_routes_to_answer_question_when_is_question(self, plan_pending_state):
         """Questions route to answer_question node."""
         plan_pending_state["is_question"] = True
         plan_pending_state["feedback_comment"] = "?Why split into two epics?"
 
-        result = route_plan_approval(plan_pending_state)
+        result = await route_plan_approval(plan_pending_state)
 
         assert result == "answer_question"
 
-    def test_question_takes_priority_over_revision(self, plan_pending_state):
+    @pytest.mark.asyncio
+    async def test_question_takes_priority_over_revision(self, plan_pending_state):
         """Question routing takes priority over revision routing."""
         plan_pending_state["is_question"] = True
         plan_pending_state["revision_requested"] = True
         plan_pending_state["feedback_comment"] = "?What's the dependency order?"
 
-        result = route_plan_approval(plan_pending_state)
+        result = await route_plan_approval(plan_pending_state)
 
         assert result == "answer_question"
 
-    def test_routes_to_regenerate_all_when_feedback_not_question(self, plan_pending_state):
+    @pytest.mark.asyncio
+    async def test_routes_to_regenerate_all_when_feedback_not_question(self, plan_pending_state):
         """Normal feedback routes to regenerate all epics."""
         plan_pending_state["is_question"] = False
         plan_pending_state["revision_requested"] = True
         plan_pending_state["feedback_comment"] = "Rethink the epic breakdown"
 
-        result = route_plan_approval(plan_pending_state)
+        result = await route_plan_approval(plan_pending_state)
 
         assert result == "regenerate_all_epics"
 
-    def test_question_without_feedback_does_not_route_to_answer(self, plan_pending_state):
+    @pytest.mark.asyncio
+    async def test_question_without_feedback_does_not_route_to_answer(self, plan_pending_state):
         """is_question alone without feedback_comment doesn't route to answer."""
         plan_pending_state["is_question"] = True
         plan_pending_state["feedback_comment"] = ""
 
-        result = route_plan_approval(plan_pending_state)
+        result = await route_plan_approval(plan_pending_state)
 
         # Should proceed to generate_tasks since not paused
         assert result == "generate_tasks"
+
+
+class TestPlanDraftProvisioning:
+    """Tests for draft-based ticket provisioning in route_plan_approval."""
+
+    @pytest.fixture
+    def approved_plan_state(self):
+        """Approved plan state waiting for ticket creation."""
+        state = create_initial_state(
+            thread_id="test-thread",
+            ticket_key="TEST-123",
+            ticket_type=TicketType.FEATURE,
+        )
+        state["is_paused"] = False
+        state["epic_keys"] = []
+        return state
+
+    @pytest.mark.asyncio
+    async def test_successful_draft_provisioning(self, approved_plan_state):
+        """Verify successful download, parsing, skipping excluded items, and deletion on success."""
+        from datetime import UTC, datetime
+        from unittest.mock import AsyncMock, patch
+
+        from forge.models.draft import DraftItem, ForgeDecompositionDraft
+
+        draft_item_1 = DraftItem(
+            id=1,
+            summary="Epic One",
+            description="Details of epic 1",
+            repo="org/repo-1",
+            acceptance_criteria=[],
+            excluded=False,
+        )
+        draft_item_2 = DraftItem(
+            id=2,
+            summary="Epic Two",
+            description="Details of epic 2",
+            repo="org/repo-2",
+            acceptance_criteria=[],
+            excluded=True,  # Excluded!
+        )
+        draft = ForgeDecompositionDraft(
+            parent_key="TEST-123",
+            phase="stories",
+            items=[draft_item_1, draft_item_2],
+            version=1,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+
+        with (
+            patch("forge.integrations.jira.client.JiraClient") as MockJira,
+            patch("forge.workflow.utils.draft_manager.DraftManager") as MockDraftManager,
+        ):
+            mock_jira = AsyncMock()
+            MockJira.return_value = mock_jira
+
+            mock_issue = AsyncMock()
+            mock_issue.project_key = "TEST"
+            mock_jira.get_issue = AsyncMock(return_value=mock_issue)
+            mock_jira.create_epic = AsyncMock(return_value="EPIC-101")
+
+            MockDraftManager.get_draft_attachment = AsyncMock(return_value=draft)
+            MockDraftManager.delete_draft_attachment = AsyncMock()
+
+            result = await route_plan_approval(approved_plan_state)
+
+            assert result == "generate_tasks"
+            assert approved_plan_state["epic_keys"] == ["EPIC-101"]
+
+            # Verify creations and exclusions
+            mock_jira.create_epic.assert_called_once_with(
+                project_key="TEST",
+                summary="Epic One",
+                description="Details of epic 1",
+                parent_key="TEST-123",
+                labels=["forge:managed", "forge:parent:TEST-123", "repo:org/repo-1"],
+            )
+
+            # Verify draft deleted
+            MockDraftManager.delete_draft_attachment.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_retains_draft_on_failure(self, approved_plan_state):
+        """Verify that draft attachment is not deleted if epic creation fails midway."""
+        from datetime import UTC, datetime
+        from unittest.mock import AsyncMock, patch
+
+        from forge.models.draft import DraftItem, ForgeDecompositionDraft
+
+        draft_item_1 = DraftItem(
+            id=1,
+            summary="Epic One",
+            description="Details of epic 1",
+            repo="org/repo-1",
+            acceptance_criteria=[],
+            excluded=False,
+        )
+        draft = ForgeDecompositionDraft(
+            parent_key="TEST-123",
+            phase="stories",
+            items=[draft_item_1],
+            version=1,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+
+        with (
+            patch("forge.integrations.jira.client.JiraClient") as MockJira,
+            patch("forge.workflow.utils.draft_manager.DraftManager") as MockDraftManager,
+        ):
+            mock_jira = AsyncMock()
+            MockJira.return_value = mock_jira
+
+            mock_issue = AsyncMock()
+            mock_issue.project_key = "TEST"
+            mock_jira.get_issue = AsyncMock(return_value=mock_issue)
+            mock_jira.create_epic = AsyncMock(side_effect=Exception("Jira failure midway!"))
+
+            MockDraftManager.get_draft_attachment = AsyncMock(return_value=draft)
+            MockDraftManager.delete_draft_attachment = AsyncMock()
+
+            with pytest.raises(Exception, match="Jira failure midway!"):
+                await route_plan_approval(approved_plan_state)
+
+            # Deletion should not have been called
+            MockDraftManager.delete_draft_attachment.assert_not_called()
