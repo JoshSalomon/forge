@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from forge.integrations.jira.models import JiraIssue
+from forge.models.workflow import ForgeLabel
 from forge.workflow.nodes.task_generation import (
     _generate_tasks_for_epic,
     _parse_tasks_response,
@@ -24,6 +25,7 @@ def base_state():
         "task_keys": [],
         "tasks_by_repo": {},
         "retry_count": 0,
+        "yolo_mode": True,
     }
 
 
@@ -585,3 +587,167 @@ class TestRegenerateEpicTasks:
             r for r in caplog.records if "TASK-100" in r.message and "parent" in r.message.lower()
         ]
         assert orphan_warnings, "Expected a warning about the orphaned task TASK-100"
+
+
+class TestTaskGenerationDraftReview:
+    """Tests for the non-YOLO draft review gate flow in generate_tasks."""
+
+    @pytest.mark.asyncio
+    async def test_generate_tasks_draft_review_flow_success(
+        self, base_state, mock_parent_issue, mock_epic_issue, mock_tasks_data
+    ):
+        """When yolo_mode is False, generates tasks into a draft JSON, deletes old attachments, saves new one, posts comment, and pauses."""
+        state = {**base_state, "yolo_mode": False}
+
+        with (
+            patch("forge.workflow.nodes.task_generation.JiraClient") as MockJira,
+            patch("forge.workflow.nodes.task_generation.ForgeAgent") as MockAgent,
+            patch("forge.workflow.nodes.task_generation.DraftManager") as MockDraftManager,
+            patch("forge.workflow.nodes.task_generation.post_status_comment"),
+            patch(
+                "forge.workflow.nodes.task_generation._generate_tasks_for_epic",
+                new_callable=AsyncMock,
+                return_value=mock_tasks_data,
+            ),
+        ):
+            mock_jira = AsyncMock()
+            MockJira.return_value = mock_jira
+            mock_jira.get_issue = AsyncMock(side_effect=[mock_parent_issue, mock_epic_issue])
+            mock_jira.get_labels = AsyncMock(return_value=[])
+            mock_jira.set_workflow_label = AsyncMock()
+            mock_jira.add_comment = AsyncMock()
+
+            mock_agent = AsyncMock()
+            MockAgent.return_value = mock_agent
+
+            MockDraftManager.delete_draft_attachment = AsyncMock()
+            MockDraftManager.save_draft_attachment = AsyncMock()
+
+            result = await generate_tasks(state)
+
+        # 1. Verify DraftManager deleted any existing forge-tasks-draft.json first
+        MockDraftManager.delete_draft_attachment.assert_called_once_with(
+            mock_jira, "MYPROJ-1", "forge-tasks-draft.json"
+        )
+
+        # 2. Verify DraftManager saved the new draft
+        MockDraftManager.save_draft_attachment.assert_called_once()
+        saved_draft = MockDraftManager.save_draft_attachment.call_args[0][2]
+        assert saved_draft.phase == "tasks"
+        assert len(saved_draft.items) == 1
+        assert saved_draft.items[0].summary == "Task One"
+        assert saved_draft.items[0].description == "Do the first thing."
+        assert saved_draft.items[0].repo == "acme/backend"
+
+        # 3. Verify formatted comment posted
+        assert mock_jira.add_comment.call_count == 1
+        comment_text = mock_jira.add_comment.call_args[0][1]
+        assert "### 📋 Proposed Tasks Draft" in comment_text
+        assert "Task One" in comment_text
+        assert "acme/backend" in comment_text
+
+        # 4. Verify workflow label updated to TASK_PENDING
+        mock_jira.set_workflow_label.assert_called_once_with("MYPROJ-1", ForgeLabel.TASK_PENDING)
+
+        # 5. Verify state transitions to task_approval_gate and pauses
+        assert result["current_node"] == "task_approval_gate"
+        assert result["is_paused"] is True
+        assert result["task_keys"] == []
+
+    @pytest.mark.asyncio
+    async def test_generate_tasks_draft_review_truncation_limits(
+        self, base_state, mock_parent_issue, mock_epic_issue
+    ):
+        """When the item list has > 15 elements, comment falls back to a condensed table."""
+        state = {**base_state, "yolo_mode": False}
+
+        # Mock 16 items
+        many_tasks_data = [
+            {"summary": f"Task {i}", "description": f"Desc {i}", "repo": f"acme/repo-{i}"}
+            for i in range(1, 17)
+        ]
+
+        with (
+            patch("forge.workflow.nodes.task_generation.JiraClient") as MockJira,
+            patch("forge.workflow.nodes.task_generation.ForgeAgent") as MockAgent,
+            patch("forge.workflow.nodes.task_generation.DraftManager") as MockDraftManager,
+            patch("forge.workflow.nodes.task_generation.post_status_comment"),
+            patch(
+                "forge.workflow.nodes.task_generation._generate_tasks_for_epic",
+                new_callable=AsyncMock,
+                return_value=many_tasks_data,
+            ),
+        ):
+            mock_jira = AsyncMock()
+            MockJira.return_value = mock_jira
+            mock_jira.get_issue = AsyncMock(side_effect=[mock_parent_issue, mock_epic_issue])
+            mock_jira.get_labels = AsyncMock(return_value=[])
+            mock_jira.set_workflow_label = AsyncMock()
+            mock_jira.add_comment = AsyncMock()
+
+            mock_agent = AsyncMock()
+            MockAgent.return_value = mock_agent
+
+            MockDraftManager.delete_draft_attachment = AsyncMock()
+            MockDraftManager.save_draft_attachment = AsyncMock()
+
+            await generate_tasks(state)
+
+        # Verify comment is in condensed table format
+        assert mock_jira.add_comment.call_count == 1
+        comment_text = mock_jira.add_comment.call_args[0][1]
+        assert "### 📋 Proposed Tasks Draft (Condensed)" in comment_text
+        assert "Warning" in comment_text
+        assert "forge-tasks-draft.json" in comment_text
+        # Condensed table should only show IDs, summaries, and target repos
+        # Detailed descriptions/plans (like Desc 1) should NOT be in the comment
+        assert "Desc 1" not in comment_text
+        assert "Task 1" in comment_text
+        assert "acme/repo-1" in comment_text
+
+    @pytest.mark.asyncio
+    async def test_generate_tasks_draft_review_truncation_characters(
+        self, base_state, mock_parent_issue, mock_epic_issue
+    ):
+        """When comment exceeds 32,767 characters, comment falls back to a condensed table."""
+        state = {**base_state, "yolo_mode": False}
+
+        # Mock huge description to exceed character limit
+        huge_tasks_data = [
+            {"summary": "Task One", "description": "A" * 35000, "repo": "acme/backend"}
+        ]
+
+        with (
+            patch("forge.workflow.nodes.task_generation.JiraClient") as MockJira,
+            patch("forge.workflow.nodes.task_generation.ForgeAgent") as MockAgent,
+            patch("forge.workflow.nodes.task_generation.DraftManager") as MockDraftManager,
+            patch("forge.workflow.nodes.task_generation.post_status_comment"),
+            patch(
+                "forge.workflow.nodes.task_generation._generate_tasks_for_epic",
+                new_callable=AsyncMock,
+                return_value=huge_tasks_data,
+            ),
+        ):
+            mock_jira = AsyncMock()
+            MockJira.return_value = mock_jira
+            mock_jira.get_issue = AsyncMock(side_effect=[mock_parent_issue, mock_epic_issue])
+            mock_jira.get_labels = AsyncMock(return_value=[])
+            mock_jira.set_workflow_label = AsyncMock()
+            mock_jira.add_comment = AsyncMock()
+
+            mock_agent = AsyncMock()
+            MockAgent.return_value = mock_agent
+
+            MockDraftManager.delete_draft_attachment = AsyncMock()
+            MockDraftManager.save_draft_attachment = AsyncMock()
+
+            await generate_tasks(state)
+
+        # Verify comment is in condensed table format due to length
+        assert mock_jira.add_comment.call_count == 1
+        comment_text = mock_jira.add_comment.call_args[0][1]
+        assert "Warning" in comment_text
+        assert "forge-tasks-draft.json" in comment_text
+        assert "A" * 35000 not in comment_text
+        assert "Task One" in comment_text
+        assert "acme/backend" in comment_text
