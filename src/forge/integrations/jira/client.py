@@ -119,34 +119,43 @@ class JiraClient:
         client = await self._get_client()
         backoff = INITIAL_BACKOFF_SECONDS
 
-        for attempt in range(MAX_RETRIES):
-            response = await client.request(method, url, **kwargs)
+        has_ct = "Content-Type" in client.headers
+        removed_ct = None
+        if "files" in kwargs and has_ct:
+            removed_ct = client.headers.pop("Content-Type")
 
-            if response.status_code != 429:
-                return response
+        try:
+            for attempt in range(MAX_RETRIES):
+                response = await client.request(method, url, **kwargs)
 
-            # Rate limited - apply exponential backoff
-            retry_after = response.headers.get("Retry-After")
-            if retry_after:
-                try:
-                    wait_time = float(retry_after)
-                except ValueError:
+                if response.status_code != 429:
+                    return response
+
+                # Rate limited - apply exponential backoff
+                retry_after = response.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        wait_time = float(retry_after)
+                    except ValueError:
+                        wait_time = backoff
+                else:
                     wait_time = backoff
-            else:
-                wait_time = backoff
 
-            wait_time = min(wait_time, MAX_BACKOFF_SECONDS)
+                wait_time = min(wait_time, MAX_BACKOFF_SECONDS)
 
-            logger.warning(
-                f"Jira rate limited (attempt {attempt + 1}/{MAX_RETRIES}). "
-                f"Waiting {wait_time:.1f}s before retry."
-            )
-            await asyncio.sleep(wait_time)
-            backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
+                logger.warning(
+                    f"Jira rate limited (attempt {attempt + 1}/{MAX_RETRIES}). "
+                    f"Waiting {wait_time:.1f}s before retry."
+                )
+                await asyncio.sleep(wait_time)
+                backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
 
-        # Final attempt
-        response = await client.request(method, url, **kwargs)
-        return response
+            # Final attempt
+            response = await client.request(method, url, **kwargs)
+            return response
+        finally:
+            if removed_ct is not None:
+                client.headers["Content-Type"] = removed_ct
 
     async def get_issue(self, issue_key: str) -> JiraIssue:
         """Fetch a Jira issue by key.
@@ -411,46 +420,65 @@ class JiraClient:
         self,
         issue_key: str,
         filename: str,
-        content: str | bytes,
-        content_type: str = "text/markdown",
+        content: bytes,
     ) -> dict[str, Any]:
         """Add an attachment to a Jira issue.
 
         Args:
             issue_key: The Jira issue key.
             filename: Name for the attachment file.
-            content: File content (string or bytes).
-            content_type: MIME type of the content.
+            content: File content as bytes.
 
         Returns:
             The attachment metadata from Jira API.
         """
-        # Attachments require a separate client without JSON content-type
-        async with httpx.AsyncClient(
-            base_url=self.base_url,
-            auth=(
-                self.settings.jira_user_email,
-                self.settings.jira_api_token.get_secret_value(),
-            ),
-            headers={
-                "Accept": "application/json",
-                "X-Atlassian-Token": "no-check",  # Required for attachments
-            },
-            timeout=60.0,
-        ) as client:
-            # Convert string to bytes if needed
-            if isinstance(content, str):
-                content = content.encode("utf-8")
+        if isinstance(content, str):
+            content = content.encode("utf-8")
 
-            files = {"file": (filename, content, content_type)}
-            response = await client.post(
-                f"/issue/{issue_key}/attachments",
-                files=files,
-            )
-            response.raise_for_status()
-            data = response.json()
-            logger.info(f"Added attachment {filename} to {issue_key}")
-            return data[0] if data else {}
+        headers = {
+            "X-Atlassian-Token": "no-check",
+        }
+        files = {"file": (filename, content, "application/json")}
+
+        response = await self._request_with_retry(
+            "POST",
+            f"/issue/{issue_key}/attachments",
+            headers=headers,
+            files=files,
+        )
+        response.raise_for_status()
+        data = response.json()
+        logger.info(f"Added attachment {filename} to {issue_key}")
+        return data[0] if data else {}
+
+    async def list_attachments(self, issue_key: str) -> list[dict[str, Any]]:
+        """Fetch all attachments of a ticket by querying the issue's details.
+
+        Args:
+            issue_key: The Jira issue key.
+
+        Returns:
+            A list of attachment metadata dicts containing id, filename, and content URL.
+        """
+        response = await self._request_with_retry(
+            "GET",
+            f"/issue/{issue_key}",
+            params={"fields": "attachment"},
+        )
+        response.raise_for_status()
+        data = response.json()
+        attachments = data.get("fields", {}).get("attachment", [])
+
+        result = []
+        for att in attachments:
+            result.append({
+                "id": att.get("id"),
+                "filename": att.get("filename"),
+                "content": att.get("content"),
+                "content_url": att.get("content"),
+            })
+        logger.debug(f"Found {len(result)} attachments on {issue_key}")
+        return result
 
     async def get_attachments(self, issue_key: str) -> list[dict[str, Any]]:
         """Get all attachments for a Jira issue.
@@ -461,16 +489,20 @@ class JiraClient:
         Returns:
             List of attachment metadata dicts with 'id', 'filename', 'size', etc.
         """
-        client = await self._get_client()
-        response = await client.get(
-            f"/issue/{issue_key}",
-            params={"fields": "attachment"},
-        )
+        return await self.list_attachments(issue_key)
+
+    async def download_attachment(self, content_url: str) -> bytes:
+        """Download attachment raw binary content from the given content URL.
+
+        Args:
+            content_url: The full URL to download the attachment.
+
+        Returns:
+            The raw binary content of the attachment.
+        """
+        response = await self._request_with_retry("GET", content_url)
         response.raise_for_status()
-        data = response.json()
-        attachments = data.get("fields", {}).get("attachment", [])
-        logger.debug(f"Found {len(attachments)} attachments on {issue_key}")
-        return attachments
+        return response.content
 
     async def delete_attachment(self, attachment_id: str) -> None:
         """Delete an attachment by ID.
@@ -478,8 +510,7 @@ class JiraClient:
         Args:
             attachment_id: The Jira attachment ID.
         """
-        client = await self._get_client()
-        response = await client.delete(f"/attachment/{attachment_id}")
+        response = await self._request_with_retry("DELETE", f"/attachment/{attachment_id}")
         response.raise_for_status()
         logger.info(f"Deleted attachment {attachment_id}")
 
