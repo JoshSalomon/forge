@@ -406,3 +406,29 @@ class TestDecomposeEpicsDraftReview:
         assert "A" * 35000 not in comment_text
         assert "Epic One" in comment_text
         assert "acme/backend" in comment_text
+
+    @pytest.mark.asyncio
+    async def test_decompose_epics_empty_data_retry(self, base_state, mock_issue):
+        """When empty epics_data is returned, returns a retry state with last_error and retry_count incremented."""
+        state = {**base_state}
+
+        with (
+            patch("forge.workflow.nodes.epic_decomposition.JiraClient") as MockJira,
+            patch("forge.workflow.nodes.epic_decomposition.ForgeAgent") as MockAgent,
+            patch("forge.workflow.nodes.epic_decomposition.post_qa_summary_if_needed"),
+        ):
+            mock_jira = AsyncMock()
+            MockJira.return_value = mock_jira
+            mock_jira.get_issue = AsyncMock(return_value=mock_issue)
+            mock_jira.get_labels = AsyncMock(return_value=[])
+            mock_jira.get_project_repos = AsyncMock(return_value=["acme/backend"])
+
+            mock_agent = AsyncMock()
+            MockAgent.return_value = mock_agent
+            mock_agent.generate_epics = AsyncMock(return_value=[])
+
+            result = await decompose_epics(state)
+
+        assert result["current_node"] == "decompose_epics"
+        assert result["retry_count"] == 1
+        assert "Epic generation returned no results" in result["last_error"]
