@@ -620,6 +620,29 @@ class JiraClient:
         logger.info(f"Added comment to {issue_key}")
         return JiraComment.from_api_response(data)
 
+    async def edit_comment(self, issue_key: str, comment_id: str, body: str) -> JiraComment:
+        """Edit an existing comment on a Jira issue.
+
+        Args:
+            issue_key: The Jira issue key.
+            comment_id: The Jira comment ID.
+            body: New comment text content.
+
+        Returns:
+            The updated JiraComment.
+        """
+        client = await self._get_client()
+        adf_content = self._text_to_adf(body)
+
+        response = await client.put(
+            f"/issue/{issue_key}/comment/{comment_id}",
+            json={"body": adf_content},
+        )
+        response.raise_for_status()
+        data = response.json()
+        logger.info(f"Edited comment {comment_id} on {issue_key}")
+        return JiraComment.from_api_response(data)
+
     async def add_error_comment(
         self,
         issue_key: str,

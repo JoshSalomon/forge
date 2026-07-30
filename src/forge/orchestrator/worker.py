@@ -9,6 +9,7 @@ import signal
 import sys
 import uuid
 from dataclasses import replace as dataclass_replace
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -18,8 +19,11 @@ from forge.api.routes.metrics import (
     record_workflow_started,
 )
 from forge.config import get_settings
+from forge.integrations.agents import ForgeAgent
 from forge.integrations.github.comment_signature import is_self_comment
+from forge.integrations.github.client import GitHubClient
 from forge.integrations.jira.client import JiraClient
+from forge.models.draft import DraftItem, ForgeDecompositionDraft
 from forge.integrations.source_control.contracts import (
     ChangeRequestState,
     CheckStatus,
@@ -58,7 +62,16 @@ from forge.workflow.utils.automated_review_triage import (
     is_bot_sender,
     triage_automated_review,
 )
-from forge.workflow.utils.comment_classifier import CommentType, classify_comment
+from forge.workflow.utils.comment_classifier import (
+    CommentType,
+    classify_comment,
+    parse_comment_command,
+)
+from forge.workflow.utils.draft_manager import (
+    FORGE_STORIES_DRAFT_FILENAME,
+    FORGE_TASKS_DRAFT_FILENAME,
+    DraftManager,
+)
 from forge.workflow.utils.jira_status import post_status_comment
 from forge.workflow.utils.proposal_review_threads import (
     reply_to_proposal_decisions,
@@ -177,6 +190,12 @@ _YOLO_GATES = {
     "task_plan_approval_gate",
     "task_approval_gate",
     "rca_option_gate",
+}
+
+_PENDING_APPROVAL_GATES = {
+    "plan_approval_gate",
+    "task_plan_approval_gate",
+    "task_approval_gate",
 }
 
 
@@ -963,6 +982,161 @@ class OrchestratorWorker:
                 comment_body = self._extract_text_from_adf(comment_body)
 
             if comment_body.strip():
+                # Check for interactive comment commands or natural language feedback when paused in PENDING_APPROVAL (BR-006)
+                if current_state.get("is_paused") and current_node in _PENDING_APPROVAL_GATES:
+                    parsed_cmd = parse_comment_command(comment_body)
+                    is_forge_cmd = parsed_cmd is not None
+                    is_revision_comment = comment_body.startswith("!")
+
+                    if is_forge_cmd or is_revision_comment:
+                        filename = (
+                            FORGE_STORIES_DRAFT_FILENAME
+                            if current_node in ("plan_approval_gate", "task_plan_approval_gate")
+                            else FORGE_TASKS_DRAFT_FILENAME
+                        )
+
+                        jira = JiraClient()
+                        has_draft = False
+                        try:
+                            attachments = await jira.get_attachments(message.ticket_key)
+                            has_draft = any(att.get("filename") == filename for att in attachments)
+                        except Exception as list_err:
+                            logger.warning(f"Could not list attachments to check draft: {list_err}")
+
+                        if is_forge_cmd or (is_revision_comment and has_draft):
+                            original_draft = None
+                            try:
+                                try:
+                                    original_draft = await DraftManager.get_draft_attachment(
+                                        jira, message.ticket_key, filename
+                                    )
+                                except Exception as get_err:
+                                    logger.warning(
+                                        f"Could not download original draft for rollback: {get_err}"
+                                    )
+
+                                if is_forge_cmd and parsed_cmd is not None:
+                                    if parsed_cmd.get("command") == "approve":
+                                        is_approved = True
+                                        if current_node in (
+                                            "plan_approval_gate",
+                                            "task_plan_approval_gate",
+                                        ):
+                                            await jira.set_workflow_label(
+                                                message.ticket_key, ForgeLabel.PLAN_APPROVED
+                                            )
+                                        elif current_node == "task_approval_gate":
+                                            await jira.set_workflow_label(
+                                                message.ticket_key, ForgeLabel.TASK_APPROVED
+                                            )
+                                    else:
+                                        if not original_draft:
+                                            raise ValueError(
+                                                f"Draft attachment '{filename}' not found for modification."
+                                            )
+
+                                        draft_json = [
+                                            item.model_dump() for item in original_draft.items
+                                        ]
+                                        mutated_json = DraftManager.apply_draft_modification(
+                                            draft_json, parsed_cmd
+                                        )
+
+                                        from datetime import datetime
+
+                                        updated_items = [
+                                            DraftItem.model_validate(item) for item in mutated_json
+                                        ]
+                                        updated_draft = ForgeDecompositionDraft(
+                                            parent_key=original_draft.parent_key,
+                                            phase=original_draft.phase,
+                                            items=updated_items,
+                                            version=original_draft.version,
+                                            created_at=original_draft.created_at,
+                                            updated_at=datetime.now(UTC),
+                                        )
+
+                                        await DraftManager.save_draft_attachment(
+                                            jira, message.ticket_key, updated_draft, filename
+                                        )
+
+                                        comment_id = comment.get("id") if comment else None
+                                        if comment_id:
+                                            await jira.edit_comment(
+                                                message.ticket_key,
+                                                comment_id,
+                                                f"✅ {comment_body}",
+                                            )
+
+                                elif is_revision_comment:
+                                    if not original_draft:
+                                        raise ValueError(
+                                            f"Draft attachment '{filename}' not found for revision."
+                                        )
+
+                                    feedback_text = re.sub(r"^\s*!\s*", "", comment_body)
+                                    if not feedback_text:
+                                        raise ValueError("Revision feedback cannot be empty.")
+
+                                    agent = ForgeAgent()
+                                    try:
+                                        revised_json_str = await agent.revise_draft_with_feedback(
+                                            draft_content=original_draft.model_dump_json(),
+                                            feedback=feedback_text,
+                                            context={
+                                                "ticket_key": message.ticket_key,
+                                                "current_node": current_node,
+                                            },
+                                        )
+                                    finally:
+                                        await agent.close()
+
+                                    updated_draft = ForgeDecompositionDraft.model_validate_json(
+                                        revised_json_str
+                                    )
+
+                                    await DraftManager.save_draft_attachment(
+                                        jira, message.ticket_key, updated_draft, filename
+                                    )
+
+                                    comment_id = comment.get("id") if comment else None
+                                    if comment_id:
+                                        await jira.edit_comment(
+                                            message.ticket_key, comment_id, f"✅ {comment_body}"
+                                        )
+
+                                if not parsed_cmd or parsed_cmd.get("command") != "approve":
+                                    await jira.close()
+                                    return current_state
+
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to process comment command/revision: {e}",
+                                    exc_info=True,
+                                )
+                                if original_draft:
+                                    try:
+                                        await DraftManager.save_draft_attachment(
+                                            jira, message.ticket_key, original_draft, filename
+                                        )
+                                    except Exception as rollback_err:
+                                        logger.error(
+                                            f"Failed to roll back draft attachment: {rollback_err}",
+                                            exc_info=True,
+                                        )
+
+                                error_comment_text = f"❌ Forge command/revision failed: {str(e)}"
+                                try:
+                                    await jira.add_comment(message.ticket_key, error_comment_text)
+                                except Exception as post_err:
+                                    logger.error(
+                                        f"Failed to post error comment: {post_err}", exc_info=True
+                                    )
+
+                                await jira.close()
+                                return current_state
+                        await jira.close()
+
                 # >option N detection for rca_option_gate (runs before general classification)
                 if current_node == "rca_option_gate":
                     option_match = _OPTION_PATTERN.search(comment_body)
