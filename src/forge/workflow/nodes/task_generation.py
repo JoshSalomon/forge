@@ -12,7 +12,7 @@ from forge.models.draft import DraftItem, ForgeDecompositionDraft
 from forge.models.workflow import ForgeLabel
 from forge.prompts import load_prompt
 from forge.workflow.feature.state import FeatureState as WorkflowState
-from forge.workflow.utils import update_state_timestamp
+from forge.workflow.utils import check_yolo_mode, update_state_timestamp
 from forge.workflow.utils.draft_manager import FORGE_TASKS_DRAFT_FILENAME, DraftManager
 from forge.workflow.utils.jira_status import post_status_comment
 from forge.workflow.utils.references import fetch_and_inject_references
@@ -77,11 +77,7 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
         project_key = parent_issue.project_key
         feature_labels = await jira.get_labels(ticket_key)
 
-        is_yolo = (
-            "forge:yolo" in feature_labels
-            or getattr(settings, "yolo_mode", False)
-            or state.get("yolo_mode", False)
-        )
+        is_yolo = check_yolo_mode(state, feature_labels)
 
         # Pre-fetch all epic details upfront for sibling context
         for ek in epic_keys:

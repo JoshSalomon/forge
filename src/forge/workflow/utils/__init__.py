@@ -98,7 +98,31 @@ def set_error(state: dict[str, Any], error: str) -> dict[str, Any]:
     }
 
 
+def check_yolo_mode(state: dict[str, Any], labels: list[str] | None = None) -> bool:
+    """Check if YOLO mode is enabled based on labels, global settings, or state.
+
+    The three components are:
+    1. 'forge:yolo' label in the provided labels or the state context labels.
+    2. Global configuration yolo_mode (settings.yolo_mode).
+    3. State yolo_mode.
+    """
+    from forge.config import get_settings
+
+    settings = get_settings()
+
+    # 1. Label check
+    has_label = False
+    if (labels and "forge:yolo" in labels) or "forge:yolo" in state.get("context", {}).get(
+        "labels", []
+    ):
+        has_label = True
+
+    # 2. Settings check & 3. State check
+    return has_label or settings.yolo_mode or bool(state.get("yolo_mode", False))
+
+
 __all__ = [
+    "check_yolo_mode",
     "CommentType",
     "classify_comment",
     "collect_review_exhaustion",

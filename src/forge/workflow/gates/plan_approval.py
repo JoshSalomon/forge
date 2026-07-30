@@ -9,13 +9,16 @@ To request revision: Add a comment starting with ! (keep forge:plan-pending)
 """
 
 import logging
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from langgraph.graph import END
 
 from forge.api.routes.metrics import record_approval, record_revision_requested
 from forge.workflow.feature.state import FeatureState as WorkflowState
-from forge.workflow.utils import set_paused
+from forge.workflow.utils import check_yolo_mode, set_paused
+
+if TYPE_CHECKING:
+    from forge.integrations.jira.client import JiraClient
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +41,7 @@ def plan_approval_gate(state: WorkflowState) -> WorkflowState:
     epic_keys = state.get("epic_keys", [])
     epic_count = len(epic_keys)
 
-    is_yolo = state.get("yolo_mode") or "forge:yolo" in state.get("context", {}).get("labels", [])
+    is_yolo = check_yolo_mode(state)
 
     # Validate that we actually have epics to approve
     if epic_count == 0 and is_yolo:
@@ -73,7 +76,7 @@ async def route_plan_approval(state: WorkflowState) -> str:
         return "answer_question"
 
     # YOLO mode: auto-approve without human input
-    if state.get("yolo_mode"):
+    if check_yolo_mode(state):
         logger.info(f"YOLO mode: auto-approving plan for {state['ticket_key']}")
         record_approval("plan")
         return "generate_tasks"
@@ -128,7 +131,7 @@ async def route_plan_approval(state: WorkflowState) -> str:
     return "generate_tasks"
 
 
-async def provision_epics_from_draft(state: Any, jira: Any) -> list[str]:
+async def provision_epics_from_draft(state: WorkflowState, jira: "JiraClient") -> list[str]:
     """Provision Epics from the plan draft attachment on Jira.
 
     Args:

@@ -9,13 +9,16 @@ To request revision: Add a comment starting with ! (keeps forge:task-pending)
 """
 
 import logging
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from langgraph.graph import END
 
 from forge.api.routes.metrics import record_approval, record_revision_requested
 from forge.workflow.feature.state import FeatureState as WorkflowState
-from forge.workflow.utils import set_paused
+from forge.workflow.utils import check_yolo_mode, set_paused
+
+if TYPE_CHECKING:
+    from forge.integrations.jira.client import JiraClient
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +45,7 @@ def task_approval_gate(state: WorkflowState) -> WorkflowState:
     task_keys = state.get("task_keys", [])
     task_count = len(task_keys)
 
-    is_yolo = state.get("yolo_mode") or "forge:yolo" in state.get("context", {}).get("labels", [])
+    is_yolo = check_yolo_mode(state)
 
     # Validate that we actually have tasks to approve
     if task_count == 0 and is_yolo:
@@ -90,7 +93,7 @@ async def route_task_approval(state: WorkflowState) -> str:
         return "answer_question"
 
     # YOLO mode: auto-approve without human input
-    if state.get("yolo_mode"):
+    if check_yolo_mode(state):
         logger.info(f"YOLO mode: auto-approving tasks for {ticket_key}")
         record_approval("task")
         return "task_router"
@@ -153,7 +156,7 @@ async def route_task_approval(state: WorkflowState) -> str:
 
 
 async def provision_tasks_from_draft(
-    state: Any, jira: Any
+    state: WorkflowState, jira: "JiraClient"
 ) -> tuple[list[str], dict[str, list[str]]]:
     """Provision Tasks from the task draft attachment on Jira.
 

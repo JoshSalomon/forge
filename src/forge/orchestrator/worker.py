@@ -11,7 +11,7 @@ import uuid
 from dataclasses import replace as dataclass_replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from forge.api.routes.metrics import (
     record_workflow_completed,
@@ -2031,7 +2031,7 @@ class OrchestratorWorker:
             if current_node == "plan_approval_gate" and not updated_state.get("epic_keys"):
                 jira = JiraClient()
                 try:
-                    epic_keys = await provision_epics_from_draft(updated_state, jira)
+                    epic_keys = await provision_epics_from_draft(cast(Any, updated_state), jira)
                     updated_state["epic_keys"] = epic_keys
                 except Exception as e:
                     logger.error(
@@ -2052,7 +2052,9 @@ class OrchestratorWorker:
                 # to catch and report provisioning errors early without breaking the LangGraph execution flow.
                 jira = JiraClient()
                 try:
-                    task_keys, tasks_by_repo = await provision_tasks_from_draft(updated_state, jira)
+                    task_keys, tasks_by_repo = await provision_tasks_from_draft(
+                        cast(Any, updated_state), jira
+                    )
                     updated_state["task_keys"] = task_keys
                     updated_state["tasks_by_repo"] = tasks_by_repo
                 except Exception as e:
