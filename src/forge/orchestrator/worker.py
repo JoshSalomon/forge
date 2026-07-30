@@ -1527,7 +1527,7 @@ class OrchestratorWorker:
                         else None
                     )
                     pr_number = int(native_id) if native_id is not None else None
-                    inline_comments: list[dict[str, Any]] = []
+                    inline_comments = []
                     if repo_full and pr_number:
                         _repo_ref_obj, _adapter = get_adapter(repo_full)
                         _identity = identity_for(_repo_ref_obj, pr_number)
