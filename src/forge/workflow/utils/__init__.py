@@ -6,6 +6,11 @@ from typing import Any
 from langgraph.graph import END
 
 from forge.workflow.utils.comment_classifier import CommentType, classify_comment
+from forge.workflow.utils.draft_manager import (
+    FORGE_STORIES_DRAFT_FILENAME,
+    FORGE_TASKS_DRAFT_FILENAME,
+    DraftManager,
+)
 from forge.workflow.utils.jira_status import (
     post_status_comment,
     remove_implementing_label,
@@ -106,4 +111,7 @@ __all__ = [
     "set_review_pending_label",
     "transition_tasks_to_in_progress",
     "update_state_timestamp",
+    "FORGE_STORIES_DRAFT_FILENAME",
+    "FORGE_TASKS_DRAFT_FILENAME",
+    "DraftManager",
 ]
