@@ -441,3 +441,35 @@ def test_apply_draft_modification_parsing_error(sample_draft_json) -> None:
         ValueError, match="Invalid command parameters: Missing integer ID for remove command"
     ):
         DraftManager.apply_draft_modification(sample_draft_json, parsed_cmd)
+
+
+def test_apply_draft_modification_deepcopy_isolation(sample_draft_json) -> None:
+    """Test that apply_draft_modification doesn't modify the input draft_json in place."""
+    from forge.workflow.utils.draft_manager import DraftManager
+
+    parsed_cmd = {
+        "command": "update",
+        "id": 1,
+        "params": {
+            "summary": "Completely new summary",
+        },
+    }
+    import copy
+
+    original_copy = copy.deepcopy(sample_draft_json)
+
+    result = DraftManager.apply_draft_modification(sample_draft_json, parsed_cmd)
+
+    assert result[0]["summary"] == "Completely new summary"
+    assert sample_draft_json == original_copy
+
+
+def test_apply_draft_modification_invalid_command_failures(sample_draft_json) -> None:
+    """Test that invalid command types raise ValueError."""
+    from forge.workflow.utils.draft_manager import DraftManager
+
+    with pytest.raises(ValueError, match="Command type is missing in parsed command."):
+        DraftManager.apply_draft_modification(sample_draft_json, {})
+
+    with pytest.raises(ValueError, match="Unsupported modification command type: 'invalid'"):
+        DraftManager.apply_draft_modification(sample_draft_json, {"command": "invalid"})

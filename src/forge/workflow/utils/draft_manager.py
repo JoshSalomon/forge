@@ -1,5 +1,6 @@
 """Utility for managing draft CRUD operations on Jira parent tickets as attachments."""
 
+import copy
 import logging
 from typing import Any
 
@@ -17,8 +18,28 @@ FORGE_TASKS_DRAFT_FILENAME = "forge-tasks-draft.json"
 class DraftManager:
     """Manages draft CRUD operations on Jira parent tickets as attachments."""
 
-    FORGE_STORIES_DRAFT_FILENAME = FORGE_STORIES_DRAFT_FILENAME
-    FORGE_TASKS_DRAFT_FILENAME = FORGE_TASKS_DRAFT_FILENAME
+    @staticmethod
+    def _validate_item_params(params: dict[str, Any]) -> None:
+        """Validate the fields in draft item parameters strictly.
+
+        Args:
+            params: The parameters dictionary.
+
+        Raises:
+            ValueError: If a validation check fails.
+        """
+        allowed_fields = {"summary", "description", "repo", "acceptance_criteria", "excluded"}
+        for k, v in params.items():
+            if k not in allowed_fields:
+                raise ValueError(f"Unknown field '{k}' for draft item.")
+            if k in {"summary", "description", "repo"} and not isinstance(v, str):
+                raise ValueError(f"Field '{k}' must be a string, got {type(v).__name__}.")
+            if k == "acceptance_criteria" and (
+                not isinstance(v, list) or not all(isinstance(x, str) for x in v)
+            ):
+                raise ValueError("Field 'acceptance_criteria' must be a list of strings.")
+            if k == "excluded" and not isinstance(v, bool):
+                raise ValueError("Field 'excluded' must be a boolean.")
 
     @staticmethod
     def apply_draft_modification(
@@ -44,8 +65,6 @@ class DraftManager:
         command = parsed_command.get("command")
         if not command:
             raise ValueError("Command type is missing in parsed command.")
-
-        import copy
 
         mutated_list = copy.deepcopy(draft_json)
 
@@ -74,18 +93,7 @@ class DraftManager:
             params = parsed_command.get("params", {})
 
             # Strict type validation
-            allowed_fields = {"summary", "description", "repo", "acceptance_criteria", "excluded"}
-            for k, v in params.items():
-                if k not in allowed_fields:
-                    raise ValueError(f"Unknown field '{k}' for draft item.")
-                if k in {"summary", "description", "repo"} and not isinstance(v, str):
-                    raise ValueError(f"Field '{k}' must be a string, got {type(v).__name__}.")
-                if k == "acceptance_criteria" and (
-                    not isinstance(v, list) or not all(isinstance(x, str) for x in v)
-                ):
-                    raise ValueError("Field 'acceptance_criteria' must be a list of strings.")
-                if k == "excluded" and not isinstance(v, bool):
-                    raise ValueError("Field 'excluded' must be a boolean.")
+            DraftManager._validate_item_params(params)
 
             # Build the new item using parsed parameters with defaults
             new_item = {
@@ -117,18 +125,7 @@ class DraftManager:
             params = parsed_command.get("params", {})
 
             # Strict type validation
-            allowed_fields = {"summary", "description", "repo", "acceptance_criteria", "excluded"}
-            for k, v in params.items():
-                if k not in allowed_fields:
-                    raise ValueError(f"Unknown field '{k}' for draft item.")
-                if k in {"summary", "description", "repo"} and not isinstance(v, str):
-                    raise ValueError(f"Field '{k}' must be a string, got {type(v).__name__}.")
-                if k == "acceptance_criteria" and (
-                    not isinstance(v, list) or not all(isinstance(x, str) for x in v)
-                ):
-                    raise ValueError("Field 'acceptance_criteria' must be a list of strings.")
-                if k == "excluded" and not isinstance(v, bool):
-                    raise ValueError("Field 'excluded' must be a boolean.")
+            DraftManager._validate_item_params(params)
 
             # Apply updates
             for k, v in params.items():
@@ -217,7 +214,7 @@ class DraftManager:
             The parsed ForgeDecompositionDraft model instance, or None if not found or validation/parsing fails.
         """
         try:
-            attachments = await jira_client.list_attachments(issue_key)
+            attachments = await jira_client.get_attachments(issue_key)
         except Exception as e:
             logger.error(f"Failed to list attachments for {issue_key}: {e}", exc_info=True)
             raise

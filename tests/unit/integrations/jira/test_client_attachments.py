@@ -1,6 +1,5 @@
 """Unit tests for JiraClient attachment operations."""
 
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -25,8 +24,8 @@ class TestJiraClientAttachments:
             return client
 
     @pytest.mark.asyncio
-    async def test_list_attachments_success(self, mock_client):
-        """list_attachments successfully fetches and parses attachment list."""
+    async def test_get_attachments_success(self, mock_client):
+        """get_attachments successfully fetches and parses attachment list."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -54,13 +53,19 @@ class TestJiraClientAttachments:
             mock_http.request = AsyncMock(return_value=mock_response)
             mock_get_client.return_value = mock_http
 
-            attachments = await mock_client.list_attachments("TEST-123")
+            attachments = await mock_client.get_attachments("TEST-123")
 
         assert len(attachments) == 2
         assert attachments[0]["id"] == "10001"
         assert attachments[0]["filename"] == "spec.md"
-        assert attachments[0]["content"] == "https://test.atlassian.net/rest/api/3/attachment/content/10001"
-        assert attachments[0]["content_url"] == "https://test.atlassian.net/rest/api/3/attachment/content/10001"
+        assert (
+            attachments[0]["content"]
+            == "https://test.atlassian.net/rest/api/3/attachment/content/10001"
+        )
+        assert (
+            attachments[0]["content_url"]
+            == "https://test.atlassian.net/rest/api/3/attachment/content/10001"
+        )
 
         assert attachments[1]["id"] == "10002"
         assert attachments[1]["filename"] == "design.png"

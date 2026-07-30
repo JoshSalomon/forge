@@ -446,8 +446,8 @@ class JiraClient:
         logger.info(f"Added attachment {filename} to {issue_key}")
         return data[0] if data else {}
 
-    async def list_attachments(self, issue_key: str) -> list[dict[str, Any]]:
-        """Fetch all attachments of a ticket by querying the issue's details.
+    async def get_attachments(self, issue_key: str) -> list[dict[str, Any]]:
+        """Get all attachments for a Jira issue by querying the issue's details.
 
         Args:
             issue_key: The Jira issue key.
@@ -476,17 +476,6 @@ class JiraClient:
             )
         logger.debug(f"Found {len(result)} attachments on {issue_key}")
         return result
-
-    async def get_attachments(self, issue_key: str) -> list[dict[str, Any]]:
-        """Get all attachments for a Jira issue.
-
-        Args:
-            issue_key: The Jira issue key.
-
-        Returns:
-            List of attachment metadata dicts with 'id', 'filename', etc.
-        """
-        return await self.list_attachments(issue_key)
 
     async def download_attachment(self, content_url: str) -> bytes:
         """Download attachment raw binary content from the given content URL.
