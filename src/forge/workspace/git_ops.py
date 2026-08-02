@@ -63,7 +63,7 @@ class GitOperations:
         *args: str,
         capture_output: bool = True,
         check: bool = True,
-    ) -> subprocess.CompletedProcess:
+    ) -> subprocess.CompletedProcess[str]:
         """Run a git command in the workspace.
 
         Args:
@@ -479,6 +479,27 @@ class GitOperations:
         self._run_git("reset", "--hard", "HEAD")
         self._run_git("clean", "-fd")
         logger.info("Reset workspace to HEAD")
+
+    def has_commits_ahead(self, base_branch: str = "main") -> bool:
+        """Check if the current branch has commits ahead of the upstream default branch.
+
+        Args:
+            base_branch: The upstream default branch to compare against.
+
+        Returns:
+            True if the branch has commits ahead of origin/base_branch.
+        """
+        try:
+            result = self._run_git(
+                "log",
+                f"origin/{base_branch}..HEAD",
+                "--oneline",
+                check=True,
+            )
+            return bool(result.stdout.strip())
+        except Exception as e:
+            logger.warning(f"Error checking branch commits for {self.repo_path}: {e}")
+            return False
 
 
 class GitError(Exception):

@@ -48,7 +48,7 @@ async def update_documentation(state: WorkflowState) -> WorkflowState:
     task_description = load_prompt(
         "update-docs",
         workspace_path=workspace_path,
-        guardrails=guardrails[:2000] if guardrails else "",
+        guardrails=(guardrails or "")[:2000],
     )
 
     try:
