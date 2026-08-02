@@ -100,7 +100,7 @@ class TestFeatureWorkflowPhases:
 
         next_node = await route_plan_approval(state)
 
-        assert next_node == "generate_tasks"
+        assert next_node == "provision_epics"
 
 
 class TestFeatureWorkflowCompletion:

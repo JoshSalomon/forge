@@ -79,7 +79,7 @@ async def route_plan_approval(state: WorkflowState) -> str:
     if check_yolo_mode(state):
         logger.info(f"YOLO mode: auto-approving plan for {state['ticket_key']}")
         record_approval("plan")
-        return "generate_tasks"
+        return "provision_epics"
 
     # Check if revision requested
     if state.get("revision_requested"):
@@ -105,30 +105,39 @@ async def route_plan_approval(state: WorkflowState) -> str:
         )
         return END
 
-    # Handle standard (non-YOLO) approval draft ticket provisioning
-    # Note on split ownership: The gate nodes handle YOLO/autonomous paths where no manual comment or webhook
-    # is processed (so we must provision here), while the worker handles manual/human comment webhook triggers.
+    # All Epics approved, proceed to standard epic provisioning node
+    logger.info(f"Epics approved for {state['ticket_key']}, proceeding to epic provisioning node")
+    record_approval("plan")
+    return "provision_epics"
+
+
+async def provision_epics(state: WorkflowState) -> WorkflowState:
+    """Standard LangGraph node to provision Epics from draft.
+
+    Args:
+        state: Current workflow state.
+
+    Returns:
+        Updated workflow state with epic_keys.
+    """
+    ticket_key = state["ticket_key"]
     if not state.get("epic_keys"):
         from forge.integrations.jira.client import JiraClient
 
         jira = JiraClient()
         try:
             epic_keys = await provision_epics_from_draft(state, jira)
-            # Store the newly created keys
-            state["epic_keys"] = epic_keys
+            state = {**state, "epic_keys": epic_keys}
         except Exception as e:
             logger.error(
-                f"Failed ticket provisioning during plan approval for {state['ticket_key']}: {e}",
+                f"Failed ticket provisioning during plan approval for {ticket_key}: {e}",
                 exc_info=True,
             )
             raise
         finally:
             await jira.close()
 
-    # All Epics approved, proceed to task generation
-    logger.info(f"Epics approved for {state['ticket_key']}, proceeding to task generation")
-    record_approval("plan")
-    return "generate_tasks"
+    return state
 
 
 async def provision_epics_from_draft(state: WorkflowState, jira: "JiraClient") -> list[str]:
@@ -144,6 +153,23 @@ async def provision_epics_from_draft(state: WorkflowState, jira: "JiraClient") -
     ticket_key = state["ticket_key"]
     from forge.models.workflow import ForgeLabel
     from forge.workflow.utils.draft_manager import FORGE_STORIES_DRAFT_FILENAME, DraftManager
+
+    # Idempotency guard: check if Epics already exist on Jira with this parent label
+    jql = f'labels = "forge:parent:{ticket_key}"'
+    existing_issues = await jira.search_issues(jql)
+    if isinstance(existing_issues, list) and existing_issues:
+        existing_keys = [issue.key for issue in existing_issues]
+        logger.info(
+            f"Idempotency Guard: Found {len(existing_keys)} existing Epics for parent {ticket_key}: {existing_keys}. "
+            f"Skipping duplicate ticket creation, deleting draft and returning existing keys."
+        )
+        try:
+            await DraftManager.delete_draft_attachment(
+                jira, ticket_key, FORGE_STORIES_DRAFT_FILENAME
+            )
+        except Exception as e:
+            logger.warning(f"Draft deletion skipped or failed during idempotency recovery: {e}")
+        return existing_keys
 
     logger.info(f"Downloading plan draft for {ticket_key}")
     draft = await DraftManager.get_draft_attachment(jira, ticket_key, FORGE_STORIES_DRAFT_FILENAME)

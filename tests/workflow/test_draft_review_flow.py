@@ -763,7 +763,8 @@ class TestDraftRetentionOnFailure:
             MockDraftManager.delete_draft_attachment = AsyncMock()
 
             with pytest.raises(Exception, match="Jira API Failure"):
-                await route_plan_approval(state)
+                from forge.workflow.gates.plan_approval import provision_epics
+                await provision_epics(state)
 
         # Verify delete_draft_attachment was NEVER called, thus retaining the draft
         MockDraftManager.delete_draft_attachment.assert_not_called()
@@ -825,7 +826,8 @@ class TestDraftRetentionOnFailure:
             MockDraftManager.delete_draft_attachment = AsyncMock()
 
             with pytest.raises(Exception, match="Jira API Failure"):
-                await route_task_approval(state)
+                from forge.workflow.gates.task_approval import provision_tasks
+                await provision_tasks(state)
 
         # Verify delete_draft_attachment was NEVER called, thus retaining the draft
         MockDraftManager.delete_draft_attachment.assert_not_called()

@@ -148,7 +148,7 @@ class TestPlanPartialApproval:
 
         result = await route_plan_approval(plan_partial_approval)
 
-        assert result == "generate_tasks"
+        assert result == "provision_epics"
 
 
 class TestPlanRejectedBackToSpec:

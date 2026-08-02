@@ -5,7 +5,7 @@ from langgraph.graph import END
 
 from forge.models.workflow import TicketType
 from forge.workflow.feature.state import create_initial_feature_state as create_initial_state
-from forge.workflow.gates import route_task_approval, task_approval_gate
+from forge.workflow.gates import provision_tasks, route_task_approval, task_approval_gate
 
 
 class TestTaskApprovalGate:
@@ -66,7 +66,7 @@ class TestRouteTaskApproval:
 
         result = await route_task_approval(task_pending_state)
 
-        assert result == "task_router"
+        assert result == "provision_tasks"
 
     @pytest.mark.asyncio
     async def test_routes_to_regenerate_all_on_feature_rejection(self, task_pending_state):
@@ -191,12 +191,12 @@ class TestTaskQuestionRouting:
 
         result = await route_task_approval(task_pending_state)
 
-        # Should proceed to task_router since not paused
-        assert result == "task_router"
+        # Should proceed to provision_tasks since not paused
+        assert result == "provision_tasks"
 
 
 class TestTaskDraftProvisioning:
-    """Tests for draft-based ticket provisioning in route_task_approval."""
+    """Tests for draft-based ticket provisioning in provision_tasks."""
 
     @pytest.fixture
     def approved_task_state(self):
@@ -257,15 +257,15 @@ class TestTaskDraftProvisioning:
             mock_issue.project_key = "TEST"
             mock_jira.get_issue = AsyncMock(return_value=mock_issue)
             mock_jira.create_task = AsyncMock(return_value="TASK-201")
+            mock_jira.search_issues = AsyncMock(return_value=[])  # Idempotency guard finds nothing
 
             MockDraftManager.get_draft_attachment = AsyncMock(return_value=draft)
             MockDraftManager.delete_draft_attachment = AsyncMock()
 
-            result = await route_task_approval(approved_task_state)
+            result = await provision_tasks(approved_task_state)
 
-            assert result == "task_router"
-            assert approved_task_state["task_keys"] == ["TASK-201"]
-            assert approved_task_state["tasks_by_repo"] == {"org/repo-1": ["TASK-201"]}
+            assert result["task_keys"] == ["TASK-201"]
+            assert result["tasks_by_repo"] == {"org/repo-1": ["TASK-201"]}
 
             # Verify creations and exclusions
             mock_jira.create_task.assert_called_once_with(
@@ -316,12 +316,13 @@ class TestTaskDraftProvisioning:
             mock_issue.project_key = "TEST"
             mock_jira.get_issue = AsyncMock(return_value=mock_issue)
             mock_jira.create_task = AsyncMock(side_effect=Exception("Jira task failure!"))
+            mock_jira.search_issues = AsyncMock(return_value=[])  # Idempotency guard finds nothing
 
             MockDraftManager.get_draft_attachment = AsyncMock(return_value=draft)
             MockDraftManager.delete_draft_attachment = AsyncMock()
 
             with pytest.raises(Exception, match="Jira task failure!"):
-                await route_task_approval(approved_task_state)
+                await provision_tasks(approved_task_state)
 
             # Deletion should not have been called
             MockDraftManager.delete_draft_attachment.assert_not_called()

@@ -1413,9 +1413,7 @@ NOTE: No repositories configured. Use REPO: unknown for now."""
             return validated_json_str
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response as valid JSON: {e}\nResponse: {response}")
-            raise ValueError(
-                f"Failed to parse revised draft as JSON: {e}"
-            )
+            raise ValueError(f"Failed to parse revised draft as JSON: {e}")
 
     async def close(self) -> None:
         """Close the agent and cleanup resources."""

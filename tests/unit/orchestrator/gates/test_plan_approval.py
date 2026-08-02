@@ -5,7 +5,7 @@ from langgraph.graph import END
 
 from forge.models.workflow import TicketType
 from forge.workflow.feature.state import create_initial_feature_state as create_initial_state
-from forge.workflow.gates import plan_approval_gate, route_plan_approval
+from forge.workflow.gates import plan_approval_gate, provision_epics, route_plan_approval
 
 
 class TestPlanApprovalGate:
@@ -64,7 +64,7 @@ class TestRoutePlanApproval:
 
         result = await route_plan_approval(plan_pending_state)
 
-        assert result == "generate_tasks"
+        assert result == "provision_epics"
 
     @pytest.mark.asyncio
     async def test_routes_to_regenerate_all_on_full_rejection(self, plan_pending_state):
@@ -233,12 +233,12 @@ class TestPlanQuestionRouting:
 
         result = await route_plan_approval(plan_pending_state)
 
-        # Should proceed to generate_tasks since not paused
-        assert result == "generate_tasks"
+        # Should proceed to provision_epics since not paused
+        assert result == "provision_epics"
 
 
 class TestPlanDraftProvisioning:
-    """Tests for draft-based ticket provisioning in route_plan_approval."""
+    """Tests for draft-based ticket provisioning in provision_epics."""
 
     @pytest.fixture
     def approved_plan_state(self):
@@ -296,14 +296,14 @@ class TestPlanDraftProvisioning:
             mock_issue.project_key = "TEST"
             mock_jira.get_issue = AsyncMock(return_value=mock_issue)
             mock_jira.create_epic = AsyncMock(return_value="EPIC-101")
+            mock_jira.search_issues = AsyncMock(return_value=[])  # Idempotency guard finds nothing
 
             MockDraftManager.get_draft_attachment = AsyncMock(return_value=draft)
             MockDraftManager.delete_draft_attachment = AsyncMock()
 
-            result = await route_plan_approval(approved_plan_state)
+            result = await provision_epics(approved_plan_state)
 
-            assert result == "generate_tasks"
-            assert approved_plan_state["epic_keys"] == ["EPIC-101"]
+            assert result["epic_keys"] == ["EPIC-101"]
 
             # Verify creations and exclusions
             mock_jira.create_epic.assert_called_once_with(
@@ -353,12 +353,13 @@ class TestPlanDraftProvisioning:
             mock_issue.project_key = "TEST"
             mock_jira.get_issue = AsyncMock(return_value=mock_issue)
             mock_jira.create_epic = AsyncMock(side_effect=Exception("Jira failure midway!"))
+            mock_jira.search_issues = AsyncMock(return_value=[])  # Idempotency guard finds nothing
 
             MockDraftManager.get_draft_attachment = AsyncMock(return_value=draft)
             MockDraftManager.delete_draft_attachment = AsyncMock()
 
             with pytest.raises(Exception, match="Jira failure midway!"):
-                await route_plan_approval(approved_plan_state)
+                await provision_epics(approved_plan_state)
 
             # Deletion should not have been called
             MockDraftManager.delete_draft_attachment.assert_not_called()

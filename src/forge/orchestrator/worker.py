@@ -1154,7 +1154,9 @@ class OrchestratorWorker:
                                             exc_info=True,
                                         )
 
-                                error_comment_text = f"❌ Forge command/revision failed: {redact_secrets(e)}"
+                                error_comment_text = (
+                                    f"❌ Forge command/revision failed: {redact_secrets(e)}"
+                                )
                                 try:
                                     await jira.add_comment(message.ticket_key, error_comment_text)
                                 except Exception as post_err:

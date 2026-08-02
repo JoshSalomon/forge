@@ -222,14 +222,14 @@ class TestYoloGateRouting:
         from forge.workflow.gates.plan_approval import route_plan_approval
 
         state = self._feature_state("plan_approval_gate", epic_keys=["EPIC-1"])
-        assert await route_plan_approval(state) == "generate_tasks"
+        assert await route_plan_approval(state) == "provision_epics"
 
     @pytest.mark.asyncio
     async def test_task_route_auto_approves_in_yolo_mode(self):
         from forge.workflow.gates.task_approval import route_task_approval
 
         state = self._feature_state("task_approval_gate", task_keys=["TASK-1"])
-        assert await route_task_approval(state) == "task_router"
+        assert await route_task_approval(state) == "provision_tasks"
 
     def test_yolo_false_still_pauses_at_prd_gate(self):
         from langgraph.graph import END

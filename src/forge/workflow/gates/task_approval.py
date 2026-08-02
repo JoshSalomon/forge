@@ -96,7 +96,7 @@ async def route_task_approval(state: WorkflowState) -> str:
     if check_yolo_mode(state):
         logger.info(f"YOLO mode: auto-approving tasks for {ticket_key}")
         record_approval("task")
-        return "task_router"
+        return "provision_tasks"
 
     # Check if revision requested (! feedback comment added)
     if state.get("revision_requested"):
@@ -128,18 +128,29 @@ async def route_task_approval(state: WorkflowState) -> str:
         )
         return END
 
-    # Handle standard (non-YOLO) approval draft ticket provisioning
-    # Note on split ownership: The gate nodes handle YOLO/autonomous paths where no manual comment or webhook
-    # is processed (so we must provision here), while the worker handles manual/human comment webhook triggers.
+    # Tasks approved, proceed to standard task provisioning node
+    logger.info(f"Tasks approved for {ticket_key}, proceeding to task provisioning node")
+    record_approval("task")
+    return "provision_tasks"
+
+
+async def provision_tasks(state: WorkflowState) -> WorkflowState:
+    """Standard LangGraph node to provision Tasks from draft.
+
+    Args:
+        state: Current workflow state.
+
+    Returns:
+        Updated workflow state with task_keys and tasks_by_repo.
+    """
+    ticket_key = state["ticket_key"]
     if not state.get("task_keys"):
         from forge.integrations.jira.client import JiraClient
 
         jira = JiraClient()
         try:
             task_keys, tasks_by_repo = await provision_tasks_from_draft(state, jira)
-            # Store the newly created keys
-            state["task_keys"] = task_keys
-            state["tasks_by_repo"] = tasks_by_repo
+            state = {**state, "task_keys": task_keys, "tasks_by_repo": tasks_by_repo}
         except Exception as e:
             logger.error(
                 f"Failed ticket provisioning during task approval for {ticket_key}: {e}",
@@ -149,10 +160,7 @@ async def route_task_approval(state: WorkflowState) -> str:
         finally:
             await jira.close()
 
-    # Tasks approved, proceed to implementation
-    logger.info(f"Tasks approved for {ticket_key}, proceeding to implementation")
-    record_approval("task")
-    return "task_router"
+    return state
 
 
 async def provision_tasks_from_draft(
@@ -172,6 +180,36 @@ async def provision_tasks_from_draft(
     from forge.integrations.jira.client import MissingProjectConfig
     from forge.models.workflow import ForgeLabel
     from forge.workflow.utils.draft_manager import FORGE_TASKS_DRAFT_FILENAME, DraftManager
+
+    # Idempotency guard: check if Tasks already exist on Jira with this parent label
+    jql = f'labels = "forge:parent:{ticket_key}"'
+    existing_issues = await jira.search_issues(jql)
+    if isinstance(existing_issues, list) and existing_issues:
+        existing_keys = [issue.key for issue in existing_issues]
+        logger.info(
+            f"Idempotency Guard: Found {len(existing_keys)} existing Tasks for parent {ticket_key}: {existing_keys}. "
+            f"Skipping duplicate ticket creation, deleting draft and returning existing keys."
+        )
+
+        # Reconstruct tasks_by_repo from existing issues
+        reconstructed_tasks_by_repo: dict[str, list[str]] = {}
+        for issue in existing_issues:
+            repo = "unknown"
+            for label in issue.labels:
+                if label.startswith("repo:"):
+                    repo = label[len("repo:") :]
+                    break
+
+            if repo not in reconstructed_tasks_by_repo:
+                reconstructed_tasks_by_repo[repo] = []
+            reconstructed_tasks_by_repo[repo].append(issue.key)
+
+        try:
+            await DraftManager.delete_draft_attachment(jira, ticket_key, FORGE_TASKS_DRAFT_FILENAME)
+        except Exception as e:
+            logger.warning(f"Draft deletion skipped or failed during idempotency recovery: {e}")
+
+        return existing_keys, reconstructed_tasks_by_repo
 
     settings = get_settings()
     logger.info(f"Downloading task draft for {ticket_key}")
