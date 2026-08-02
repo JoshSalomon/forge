@@ -250,6 +250,7 @@ def test_apply_draft_modification_add_success(sample_draft_json) -> None:
             "description": "Task description",
             "repo": "test-repo",
             "acceptance_criteria": ["Criteria 1", "Criteria 2"],
+            "epic_key": "EPIC-123",
         },
     }
     result = DraftManager.apply_draft_modification(sample_draft_json, parsed_cmd)
@@ -262,6 +263,7 @@ def test_apply_draft_modification_add_success(sample_draft_json) -> None:
     assert new_item["repo"] == "test-repo"
     assert new_item["acceptance_criteria"] == ["Criteria 1", "Criteria 2"]
     assert new_item["excluded"] is False
+    assert new_item["epic_key"] == "EPIC-123"
 
 
 def test_apply_draft_modification_add_defaults(sample_draft_json) -> None:
