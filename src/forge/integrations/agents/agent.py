@@ -1414,7 +1414,7 @@ NOTE: No repositories configured. Use REPO: unknown for now."""
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response as valid JSON: {e}\nResponse: {response}")
             raise ValueError(
-                f"Failed to parse LLM response as valid JSON: {e}\nResponse: {response}"
+                f"Failed to parse revised draft as JSON: {e}"
             )
 
     async def close(self) -> None:

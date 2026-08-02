@@ -1154,7 +1154,7 @@ class OrchestratorWorker:
                                             exc_info=True,
                                         )
 
-                                error_comment_text = f"❌ Forge command/revision failed: {str(e)}"
+                                error_comment_text = f"❌ Forge command/revision failed: {redact_secrets(e)}"
                                 try:
                                     await jira.add_comment(message.ticket_key, error_comment_text)
                                 except Exception as post_err:
@@ -2038,7 +2038,8 @@ class OrchestratorWorker:
                         f"Failed ticket provisioning during plan approval for {message.ticket_key}: {e}",
                         exc_info=True,
                     )
-                    error_comment_text = f"❌ Ticket provisioning failed: {str(e)}"
+                    # Keep paused in PENDING_APPROVAL and post error comment
+                    error_comment_text = f"❌ Ticket provisioning failed: {redact_secrets(e)}"
                     try:
                         await jira.add_comment(message.ticket_key, error_comment_text)
                     except Exception as post_err:
@@ -2062,7 +2063,8 @@ class OrchestratorWorker:
                         f"Failed ticket provisioning during task approval for {message.ticket_key}: {e}",
                         exc_info=True,
                     )
-                    error_comment_text = f"❌ Ticket provisioning failed: {str(e)}"
+                    # Keep paused in PENDING_APPROVAL and post error comment
+                    error_comment_text = f"❌ Ticket provisioning failed: {redact_secrets(e)}"
                     try:
                         await jira.add_comment(message.ticket_key, error_comment_text)
                     except Exception as post_err:
