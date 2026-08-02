@@ -56,7 +56,7 @@ async def update_docs_repo(state: WorkflowState) -> WorkflowState:
     except Exception as e:
         logger.warning(f"Could not check docs repo config for {ticket_key}: {e}")
 
-    if not docs_repo or docs_repo == current_repo:
+    if not docs_repo or "/" not in docs_repo or docs_repo == current_repo:
         logger.info(f"No separate docs repo for {ticket_key}, skipping")
         return state
 
