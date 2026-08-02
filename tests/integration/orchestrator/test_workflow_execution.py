@@ -95,8 +95,13 @@ class TestWorkflowRouting:
 
     async def test_feature_ticket_routes_to_prd_generation(self, temp_checkpoint_db):
         """Feature tickets should route to generate_prd node."""
+        from forge.workflow.feature import FeatureWorkflow
+        from forge.workflow.feature.graph import route_by_ticket_type
+
         async with AsyncSqliteSaver.from_conn_string(str(temp_checkpoint_db)) as checkpointer:
-            compile_workflow(checkpointer=checkpointer)
+            workflow = FeatureWorkflow()
+            compiled = workflow.build_graph().compile(checkpointer=checkpointer)
+            assert compiled is not None
 
             initial_state = create_initial_state(
                 thread_id="TEST-123",
@@ -104,40 +109,32 @@ class TestWorkflowRouting:
                 ticket_type=TicketType.FEATURE,
             )
 
-            # Check the graph structure - feature should go to generate_prd
-            create_workflow_graph()
-
-            # Test routing function directly
-            from forge.orchestrator.graph import route_by_ticket_type
-
             route = route_by_ticket_type(initial_state)
             assert route == "generate_prd", f"Feature should route to generate_prd, got {route}"
 
     async def test_bug_ticket_routes_to_analyze_bug(self, temp_checkpoint_db):
-        """Bug tickets should route to analyze_bug node."""
-        initial_state = create_initial_state(
-            thread_id="TEST-456",
+        """Bug tickets should route to triage_check node."""
+        from forge.workflow.bug.graph import route_entry
+        from forge.workflow.bug.state import create_initial_bug_state
+
+        initial_state = create_initial_bug_state(
             ticket_key="TEST-456",
-            ticket_type=TicketType.BUG,
         )
 
-        from forge.orchestrator.graph import route_by_ticket_type
-
-        route = route_by_ticket_type(initial_state)
-        assert route == "analyze_bug", f"Bug should route to analyze_bug, got {route}"
+        route = route_entry(initial_state)
+        assert route == "triage_check", f"Bug should route to triage_check, got {route}"
 
     async def test_task_ticket_routes_to_task_workflow(self, temp_checkpoint_db):
-        """Task tickets should route to task_workflow node."""
-        initial_state = create_initial_state(
-            thread_id="TEST-789",
+        """Task tickets should route to triage_check node in task_takeover."""
+        from forge.workflow.task_takeover.graph import route_entry
+        from forge.workflow.task_takeover.state import create_initial_task_takeover_state
+
+        initial_state = create_initial_task_takeover_state(
             ticket_key="TEST-789",
-            ticket_type=TicketType.TASK,
         )
 
-        from forge.orchestrator.graph import route_by_ticket_type
-
-        route = route_by_ticket_type(initial_state)
-        assert route == "task_workflow", f"Task should route to task_workflow, got {route}"
+        route = route_entry(initial_state)
+        assert route == "triage_check", f"Task should route to triage_check, got {route}"
 
 
 class TestFeatureWorkflowExecution:
@@ -148,8 +145,9 @@ class TestFeatureWorkflowExecution:
         self, temp_checkpoint_db, mock_jira_client, mock_agent
     ):
         """Feature workflow should generate PRD and pause at approval gate."""
+        from forge.workflow.feature import FeatureWorkflow
         async with AsyncSqliteSaver.from_conn_string(str(temp_checkpoint_db)) as checkpointer:
-            workflow = compile_workflow(checkpointer=checkpointer)
+            workflow = FeatureWorkflow().build_graph().compile(checkpointer=checkpointer)
 
             initial_state = create_initial_state(
                 thread_id="TEST-123",
@@ -186,8 +184,9 @@ class TestFeatureWorkflowExecution:
         self, temp_checkpoint_db, mock_jira_client, mock_agent
     ):
         """Workflow state should be persisted and retrievable."""
+        from forge.workflow.feature import FeatureWorkflow
         async with AsyncSqliteSaver.from_conn_string(str(temp_checkpoint_db)) as checkpointer:
-            workflow = compile_workflow(checkpointer=checkpointer)
+            workflow = FeatureWorkflow().build_graph().compile(checkpointer=checkpointer)
 
             initial_state = create_initial_state(
                 thread_id="TEST-123",
@@ -305,7 +304,7 @@ class TestConditionalEdges:
 
     async def test_prd_approval_routes_to_spec_on_approval(self):
         """PRD approval should route to spec generation when approved."""
-        from forge.orchestrator.gates import route_prd_approval
+        from forge.workflow.gates import route_prd_approval
 
         # State after approval (not paused, no revision requested)
         state: WorkflowState = {
@@ -320,7 +319,7 @@ class TestConditionalEdges:
 
     async def test_prd_approval_routes_to_regenerate_on_rejection(self):
         """PRD approval should route to regenerate when revision requested."""
-        from forge.orchestrator.gates import route_prd_approval
+        from forge.workflow.gates import route_prd_approval
 
         # State after rejection with feedback
         state: WorkflowState = {
@@ -338,7 +337,7 @@ class TestConditionalEdges:
         """PRD approval should return END when waiting for approval."""
         from langgraph.graph import END
 
-        from forge.orchestrator.gates import route_prd_approval
+        from forge.workflow.gates import route_prd_approval
 
         # State while waiting for approval
         state: WorkflowState = {
@@ -356,10 +355,14 @@ class TestGraphStructure:
     """Test that the workflow graph is structured correctly."""
 
     def test_graph_has_required_nodes(self):
-        """Verify all required nodes are present in the graph."""
-        graph = create_workflow_graph()
+        """Verify all required nodes are present in the graphs."""
+        from forge.workflow.feature import FeatureWorkflow
+        from forge.workflow.bug import BugWorkflow
 
-        required_nodes = [
+        feature_graph = FeatureWorkflow().build_graph()
+        bug_graph = BugWorkflow().build_graph()
+
+        required_feature_nodes = [
             "route_entry",
             "generate_prd",
             "prd_approval_gate",
@@ -367,26 +370,38 @@ class TestGraphStructure:
             "generate_spec",
             "spec_approval_gate",
             "decompose_epics",
-            "analyze_bug",
-            "rca_approval_gate",
         ]
+        for node in required_feature_nodes:
+            assert node in feature_graph.nodes, f"Missing required feature node: {node}"
 
-        for node in required_nodes:
-            assert node in graph.nodes, f"Missing required node: {node}"
+        required_bug_nodes = [
+            "triage_check",
+            "triage_gate",
+            "analyze_bug",
+            "rca_option_gate",
+        ]
+        for node in required_bug_nodes:
+            assert node in bug_graph.nodes, f"Missing required bug node: {node}"
 
     def test_graph_compiles_without_error(self):
-        """Verify the graph compiles successfully."""
-        graph = create_workflow_graph()
-        compiled = graph.compile()
-        assert compiled is not None, "Graph should compile successfully"
+        """Verify the graphs compile successfully."""
+        from forge.workflow.feature import FeatureWorkflow
+        from forge.workflow.bug import BugWorkflow
+
+        assert FeatureWorkflow().build_graph().compile() is not None
+        assert BugWorkflow().build_graph().compile() is not None
 
     def test_graph_compiles_with_checkpointer(self, temp_checkpoint_db):
-        """Verify the graph compiles with a checkpointer."""
+        """Verify the graphs compile with a checkpointer."""
         import asyncio
+        from forge.workflow.feature import FeatureWorkflow
+        from forge.workflow.bug import BugWorkflow
 
         async def _test():
             async with AsyncSqliteSaver.from_conn_string(str(temp_checkpoint_db)) as checkpointer:
-                compiled = compile_workflow(checkpointer=checkpointer)
-                assert compiled is not None
+                compiled_feature = FeatureWorkflow().build_graph().compile(checkpointer=checkpointer)
+                compiled_bug = BugWorkflow().build_graph().compile(checkpointer=checkpointer)
+                assert compiled_feature is not None
+                assert compiled_bug is not None
 
         asyncio.run(_test())
