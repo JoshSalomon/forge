@@ -327,6 +327,9 @@ class DraftManager:
         """Format a human-readable review comment for a draft."""
         from forge.models.workflow import ForgeLabel
 
+        def _escape_cell(text: str) -> str:
+            return text.replace("|", "\\|")
+
         items = draft.items
         if draft.phase == "stories":
             phase_title = "Epics"
@@ -348,7 +351,9 @@ class DraftManager:
         header = f"### 📋 Proposed {phase_title} Draft\n\nThe following {phase_title} have been proposed for {phase_action}:\n\n"
         table = "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
         for item in items:
-            table += f"| {item.id} | {item.summary} | {item.repo or 'unknown'} |\n"
+            escaped_summary = _escape_cell(item.summary)
+            escaped_repo = _escape_cell(item.repo or "unknown")
+            table += f"| {item.id} | {escaped_summary} | {escaped_repo} |\n"
         table += "\n---\n\n"
 
         details = ""
@@ -372,7 +377,9 @@ class DraftManager:
         if len(full_comment) > 32767 or len(items) > 15:
             condensed_table = "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
             for item in items:
-                condensed_table += f"| {item.id} | {item.summary} | {item.repo or 'unknown'} |\n"
+                escaped_summary = _escape_cell(item.summary)
+                escaped_repo = _escape_cell(item.repo or "unknown")
+                condensed_table += f"| {item.id} | {escaped_summary} | {escaped_repo} |\n"
 
             condensed_comment = (
                 f"### 📋 Proposed {phase_title} Draft (Condensed)\n\n"

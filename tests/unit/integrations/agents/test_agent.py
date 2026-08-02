@@ -353,3 +353,35 @@ async def test_revise_draft_with_feedback_prompt_formatting():
         context=json.dumps({"ticket_key": "PROJ-123"}, indent=2),
     )
     await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_revise_draft_with_feedback_fallback_matched_delimiters():
+    """Verify that revise_draft_with_feedback correctly extracts matching boundaries when there is trailing mismatched punctuation."""
+    agent = ForgeAgent()
+
+    # Case 1: JSON Object starting with '{' but having a trailing ']' in the postamble
+    llm_response_object = (
+        'Here is the result: {"parent_key": "PROJ-1", "items": [{"id": 1}]} with an unmatched trailing bracket ]'
+    )
+    mock_model_object = MockChatModel(response=llm_response_object)
+
+    with patch.object(agent, "_create_model", return_value=mock_model_object):
+        result_object = await agent.revise_draft_with_feedback(
+            draft_content='{"items": []}', feedback="Add Task 1", context={"ticket_key": "PROJ-1"}
+        )
+    assert json.loads(result_object) == {"parent_key": "PROJ-1", "items": [{"id": 1}]}
+
+    # Case 2: JSON List starting with '[' but having a trailing '}' in the postamble
+    llm_response_list = (
+        'Here is the result: [{"id": 1}] with an unmatched trailing brace }'
+    )
+    mock_model_list = MockChatModel(response=llm_response_list)
+
+    with patch.object(agent, "_create_model", return_value=mock_model_list):
+        result_list = await agent.revise_draft_with_feedback(
+            draft_content='{"items": []}', feedback="Add Task 1", context={"ticket_key": "PROJ-1"}
+        )
+    assert json.loads(result_list) == [{"id": 1}]
+
+    await agent.close()

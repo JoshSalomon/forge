@@ -1395,10 +1395,11 @@ NOTE: No repositories configured. Use REPO: unknown for now."""
                 start_idx = start_bracket
 
             if start_idx != -1:
-                # Find the last brace or bracket
-                end_brace = cleaned_text.rfind("}")
-                end_bracket = cleaned_text.rfind("]")
-                end_idx = max(end_brace, end_bracket)
+                # Find the last brace or bracket matching the start type
+                if start_idx == start_brace:
+                    end_idx = cleaned_text.rfind("}")
+                else:
+                    end_idx = cleaned_text.rfind("]")
 
                 if end_idx > start_idx:
                     cleaned_text = cleaned_text[start_idx : end_idx + 1].strip()

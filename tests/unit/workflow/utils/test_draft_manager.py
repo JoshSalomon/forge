@@ -305,3 +305,32 @@ class TestDraftManager:
 
         with pytest.raises(Exception, match="Delete Error"):
             await DraftManager.delete_draft_attachment(mock_jira, "PROJ-123", filename)
+
+    def test_format_review_comment_escapes_pipes(self) -> None:
+        """Should escape pipe characters in item summary and repo for draft review comment."""
+        now = datetime.now(UTC)
+        draft = ForgeDecompositionDraft(
+            parent_key="PROJ-123",
+            phase="tasks",
+            items=[
+                DraftItem(
+                    id=1,
+                    summary="Task with | pipe in summary",
+                    description="Desc 1",
+                    repo="repo|with|pipe",
+                    acceptance_criteria=["AC 1"],
+                )
+            ],
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+
+        comment = DraftManager.format_review_comment(draft)
+
+        # Verify that summary and repo are escaped in the markdown table
+        assert "Task with \\| pipe in summary" in comment
+        assert "repo\\|with\\|pipe" in comment
+
+        # Also verify that the details section is not escaped
+        assert "#### 1. Task with | pipe in summary (Repo: repo|with|pipe)" in comment
