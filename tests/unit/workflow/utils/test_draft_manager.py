@@ -69,7 +69,7 @@ class TestDraftManager:
         mock_jira.delete_attachments_by_name.assert_called_once_with("PROJ-123", filename)
 
         # Verify serialized content passed to add_attachment
-        expected_bytes = sample_draft.model_dump_json().encode("utf-8")
+        expected_bytes = sample_draft.model_dump_json(indent=2).encode("utf-8")
         mock_jira.add_attachment.assert_called_once_with("PROJ-123", filename, expected_bytes)
 
     @pytest.mark.asyncio
@@ -86,7 +86,7 @@ class TestDraftManager:
 
         mock_jira.delete_attachments_by_name.assert_called_once_with("PROJ-123", filename)
 
-        expected_bytes = sample_draft.model_dump_json().encode("utf-8")
+        expected_bytes = sample_draft.model_dump_json(indent=2).encode("utf-8")
         mock_jira.add_attachment.assert_called_once_with("PROJ-123", filename, expected_bytes)
 
     @pytest.mark.asyncio

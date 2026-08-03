@@ -215,7 +215,7 @@ class DraftManager:
 
         # 2. Serialize and upload
         try:
-            content_json = draft.model_dump_json()
+            content_json = draft.model_dump_json(indent=2)
             content_bytes = content_json.encode("utf-8")
         except Exception as e:
             logger.error(f"Failed to serialize draft for {issue_key}: {e}", exc_info=True)

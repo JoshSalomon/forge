@@ -90,7 +90,45 @@ class TestJiraClientAttachments:
             content = await mock_client.download_attachment(content_url)
 
         assert content == b"fake binary file content"
-        mock_http.request.assert_called_once_with("GET", content_url)
+        mock_http.request.assert_called_once_with("GET", content_url, follow_redirects=False)
+
+    @pytest.mark.asyncio
+    async def test_download_attachment_redirect(self, mock_client):
+        """download_attachment handles 3xx redirects securely."""
+        mock_redirect_response = MagicMock()
+        mock_redirect_response.status_code = 303
+        mock_redirect_response.headers = {
+            "Location": "https://secure-s3-bucket.amazonaws.com/temp/10001"
+        }
+        mock_redirect_response.raise_for_status = MagicMock()
+
+        mock_final_response = MagicMock()
+        mock_final_response.status_code = 200
+        mock_final_response.content = b"secure redirected binary content"
+        mock_final_response.raise_for_status = MagicMock()
+
+        content_url = "https://test.atlassian.net/rest/api/3/attachment/content/10001"
+
+        with (
+            patch.object(mock_client, "_get_client") as mock_get_client,
+            patch("httpx.AsyncClient") as mock_async_client_cls,
+        ):
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=mock_redirect_response)
+            mock_get_client.return_value = mock_http
+
+            mock_anon_client = AsyncMock()
+            mock_anon_client.get = AsyncMock(return_value=mock_final_response)
+            mock_async_client_cls.return_value.__aenter__.return_value = mock_anon_client
+
+            content = await mock_client.download_attachment(content_url)
+
+        assert content == b"secure redirected binary content"
+        mock_http.request.assert_called_once_with("GET", content_url, follow_redirects=False)
+        mock_async_client_cls.assert_called_once_with(follow_redirects=True)
+        mock_anon_client.get.assert_called_once_with(
+            "https://secure-s3-bucket.amazonaws.com/temp/10001"
+        )
 
     @pytest.mark.asyncio
     async def test_delete_attachment_success(self, mock_client):

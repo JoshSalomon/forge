@@ -485,7 +485,17 @@ class JiraClient:
         Returns:
             The raw binary content of the attachment.
         """
-        response = await self._request_with_retry("GET", content_url)
+        response = await self._request_with_retry("GET", content_url, follow_redirects=False)
+        if response.status_code in (301, 302, 303, 307, 308):
+            redirect_url = response.headers.get("Location")
+            if not redirect_url:
+                raise ValueError("Redirect response missing Location header")
+            logger.info("Downloading attachment securely via unauthenticated redirect")
+            async with httpx.AsyncClient(follow_redirects=True) as anon_client:
+                anon_response = await anon_client.get(redirect_url)
+                anon_response.raise_for_status()
+                return anon_response.content
+
         response.raise_for_status()
         return response.content
 
