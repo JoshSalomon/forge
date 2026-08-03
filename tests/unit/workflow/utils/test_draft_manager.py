@@ -374,3 +374,39 @@ class TestDraftManager:
         assert "| 2 | ~~Excluded task~~ *(excluded)* | ~~repo2~~ |" in comment
         # Verify excluded item heading summary in detail blocks
         assert "#### 2. ~~Excluded task~~ *(excluded)* (Repo: repo2)" in comment
+
+    def test_format_review_comment_condensed_exceeds_limit(self) -> None:
+        """Should truncate table rows and use warning note when condensed comment exceeds custom limit."""
+        now = datetime.now(UTC)
+        draft = ForgeDecompositionDraft(
+            parent_key="PROJ-123",
+            phase="tasks",
+            items=[
+                DraftItem(
+                    id=i,
+                    summary=f"Task {i}",
+                    repo=f"repo{i}",
+                    description=f"Desc {i}",
+                    acceptance_criteria=[f"AC {i}"],
+                )
+                for i in range(1, 11)
+            ],
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+
+        # Set a limit that is large enough to contain headers + footer + some rows + warning note,
+        # but too small to fit all 10 rows.
+        comment = DraftManager.format_review_comment(draft, limit=750)
+
+        assert len(comment) <= 750
+        assert "⚠️ Showing first" in comment
+        assert "items — see attached draft JSON for the full list." in comment
+        assert "Task 1" in comment
+        assert "## 🤖 Forge interaction options" in comment
+
+        # Verify it is truncated when the limit is extremely small (e.g. 100)
+        very_small_comment = DraftManager.format_review_comment(draft, limit=100)
+        assert len(very_small_comment) <= 100
+        assert very_small_comment.endswith(" [truncated]")

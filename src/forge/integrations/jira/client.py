@@ -617,6 +617,11 @@ class JiraClient:
         Returns:
             The created JiraComment.
         """
+        if len(body) > 32767:
+            raise ValueError(
+                f"Comment body length ({len(body)}) exceeds maximum Jira limit of 32767 characters"
+            )
+
         client = await self._get_client()
         adf_content = self._text_to_adf(body)
 
@@ -640,6 +645,11 @@ class JiraClient:
         Returns:
             The updated JiraComment.
         """
+        if len(body) > 32767:
+            raise ValueError(
+                f"Comment body length ({len(body)}) exceeds maximum Jira limit of 32767 characters"
+            )
+
         adf_content = self._text_to_adf(body)
 
         # Edit the comment using request_with_retry to handle transient rate limits robustly

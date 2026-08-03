@@ -463,6 +463,36 @@ class TestJiraClientErrorComments:
         assert "https://[REDACTED]@github.com/org/repo.git" in posted_text
 
 
+class TestJiraClientCommentLimit:
+    """Tests for Jira client comment length limits."""
+
+    @pytest.fixture
+    def mock_client(self):
+        """Create client with mocked settings."""
+        with patch("forge.integrations.jira.client.get_settings") as mock_settings:
+            mock_settings.return_value.jira_base_url = "https://test.atlassian.net"
+            mock_settings.return_value.jira_api_token = MagicMock()
+            mock_settings.return_value.jira_api_token.get_secret_value.return_value = "token"
+            mock_settings.return_value.jira_user_email = "test@example.com"
+
+            client = JiraClient()
+            return client
+
+    @pytest.mark.asyncio
+    async def test_add_comment_exceeds_limit_raises_value_error(self, mock_client):
+        """Should raise ValueError if the body exceeds 32767 characters in add_comment."""
+        huge_body = "a" * 32768
+        with pytest.raises(ValueError, match="exceeds maximum Jira limit of 32767"):
+            await mock_client.add_comment("TEST-123", huge_body)
+
+    @pytest.mark.asyncio
+    async def test_edit_comment_exceeds_limit_raises_value_error(self, mock_client):
+        """Should raise ValueError if the body exceeds 32767 characters in edit_comment."""
+        huge_body = "a" * 32768
+        with pytest.raises(ValueError, match="exceeds maximum Jira limit of 32767"):
+            await mock_client.edit_comment("TEST-123", "comment-456", huge_body)
+
+
 class TestJiraClientADF:
     """Tests for ADF conversion."""
 
@@ -1029,3 +1059,21 @@ class TestJiraClientListProjectProperties:
 
             result = await jira_client.list_project_properties("MYPROJ")
             assert result == []
+
+
+class TestJiraClientCommentLimits:
+    """Tests for character limit validation in JiraClient.add_comment and edit_comment."""
+
+    @pytest.mark.asyncio
+    async def test_add_comment_exceeds_limit_raises_value_error(self, jira_client):
+        """Should raise ValueError if comment body is longer than 32767 characters."""
+        long_body = "x" * 32768
+        with pytest.raises(ValueError, match="Comment body length.*exceeds maximum Jira limit of 32767 characters"):
+            await jira_client.add_comment("TEST-123", long_body)
+
+    @pytest.mark.asyncio
+    async def test_edit_comment_exceeds_limit_raises_value_error(self, jira_client):
+        """Should raise ValueError if comment body is longer than 32767 characters."""
+        long_body = "x" * 32768
+        with pytest.raises(ValueError, match="Comment body length.*exceeds maximum Jira limit of 32767 characters"):
+            await jira_client.edit_comment("TEST-123", "comment-123", long_body)

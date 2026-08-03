@@ -323,7 +323,17 @@ class DraftManager:
             raise
 
     @staticmethod
-    def format_review_comment(draft: ForgeDecompositionDraft) -> str:
+    def _truncate_to_jira_limit(text: str, limit: int = 32767) -> str:
+        """Truncate text to fit within Jira's character limit and append a [truncated] suffix."""
+        if len(text) <= limit:
+            return text
+        suffix = " [truncated]"
+        if limit <= len(suffix):
+            return text[:limit]
+        return text[: limit - len(suffix)] + suffix
+
+    @staticmethod
+    def format_review_comment(draft: ForgeDecompositionDraft, limit: int = 32767) -> str:
         """Format a human-readable review comment for a draft."""
         from forge.models.workflow import ForgeLabel
 
@@ -381,8 +391,17 @@ class DraftManager:
 
         full_comment = header + table + details + footer
 
-        if len(full_comment) > 32767 or len(items) > 15:
-            condensed_table = "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
+        if len(full_comment) > limit or len(items) > 15:
+            condensed_header = (
+                f"### 📋 Proposed {phase_title} Draft (Condensed)\n\n"
+                "⚠️ **Warning:** The proposed plan exceeds character or size limits for detailed display in a comment. "
+                f"Please refer to the attached `{filename}` for full implementation plan details.\n\n"
+            )
+            condensed_table_header = (
+                "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
+            )
+
+            rows = []
             for item in items:
                 escaped_summary = _escape_cell(item.summary)
                 escaped_repo = _escape_cell(item.repo or "unknown")
@@ -392,16 +411,40 @@ class DraftManager:
                 else:
                     summary_cell = escaped_summary
                     repo_cell = escaped_repo
-                condensed_table += f"| {item.id} | {summary_cell} | {repo_cell} |\n"
+                rows.append(f"| {item.id} | {summary_cell} | {repo_cell} |\n")
 
-            condensed_comment = (
-                f"### 📋 Proposed {phase_title} Draft (Condensed)\n\n"
-                "⚠️ **Warning:** The proposed plan exceeds character or size limits for detailed display in a comment. "
-                f"Please refer to the attached `{filename}` for full implementation plan details.\n\n"
-                + condensed_table
-                + "\n"
-                + footer
+            full_condensed_comment = (
+                condensed_header + condensed_table_header + "".join(rows) + "\n" + footer
             )
-            return condensed_comment
 
-        return full_comment
+            if len(full_condensed_comment) > limit:
+                allowed_rows = []
+                for i, row in enumerate(rows, start=1):
+                    temp_warning = f"\n⚠️ Showing first {i} items — see attached draft JSON for the full list.\n\n"
+                    temp_comment = (
+                        condensed_header
+                        + condensed_table_header
+                        + "".join(allowed_rows + [row])
+                        + temp_warning
+                        + footer
+                    )
+                    if len(temp_comment) <= limit:
+                        allowed_rows.append(row)
+                    else:
+                        break
+
+                count = len(allowed_rows)
+                warning_note = f"\n⚠️ Showing first {count} items — see attached draft JSON for the full list.\n\n"
+                condensed_comment = (
+                    condensed_header
+                    + condensed_table_header
+                    + "".join(allowed_rows)
+                    + warning_note
+                    + footer
+                )
+            else:
+                condensed_comment = full_condensed_comment
+
+            return DraftManager._truncate_to_jira_limit(condensed_comment, limit)
+
+        return DraftManager._truncate_to_jira_limit(full_comment, limit)
