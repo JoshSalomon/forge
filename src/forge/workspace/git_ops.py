@@ -480,6 +480,15 @@ class GitOperations:
         self._run_git("clean", "-fd")
         logger.info("Reset workspace to HEAD")
 
+    def checkout_commit(self, sha: str) -> None:
+        """Checkout a specific commit SHA (detached HEAD).
+
+        Args:
+            sha: The commit SHA to checkout.
+        """
+        self._run_git("checkout", sha)
+        logger.info(f"Checked out commit {sha}")
+
     def has_commits_ahead(self, base_branch: str = "main") -> bool:
         """Check if the current branch has commits ahead of the upstream default branch.
 

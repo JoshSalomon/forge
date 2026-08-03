@@ -418,7 +418,7 @@ class DraftManager:
             )
 
             if len(full_condensed_comment) > limit:
-                allowed_rows = []
+                allowed_rows: list[str] = []
                 for i, row in enumerate(rows, start=1):
                     temp_warning = f"\n⚠️ Showing first {i} items — see attached draft JSON for the full list.\n\n"
                     temp_comment = (
