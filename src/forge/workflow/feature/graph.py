@@ -557,6 +557,7 @@ def build_feature_graph() -> StateGraph:
         "plan_approval_gate",
         route_plan_approval,
         {
+            "decompose_epics": "decompose_epics",
             "provision_epics": "provision_epics",
             "regenerate_all_epics": "regenerate_all_epics",
             "update_single_epic": "update_single_epic",
@@ -595,6 +596,7 @@ def build_feature_graph() -> StateGraph:
         "task_approval_gate",
         route_task_approval,
         {
+            "generate_tasks": "generate_tasks",
             "provision_tasks": "provision_tasks",
             "regenerate_all_tasks": "regenerate_all_tasks",  # Feature-level rejection
             "regenerate_epic_tasks": "regenerate_epic_tasks",  # Epic-level rejection

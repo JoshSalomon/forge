@@ -38,6 +38,25 @@ class TestPlanApprovalGate:
 
         assert result["epic_keys"] == ["TEST-124", "TEST-125", "TEST-126"]
 
+    def test_gate_pauses_workflow_with_zero_epics_in_non_yolo(self, plan_pending_state):
+        """In non-YOLO mode, gate pauses even with zero epics."""
+        plan_pending_state["epic_keys"] = []
+        result = plan_approval_gate(plan_pending_state)
+
+        assert result["is_paused"] is True
+        assert result["current_node"] == "plan_approval_gate"
+
+    def test_gate_routes_to_retry_with_zero_epics_in_yolo(self, plan_pending_state):
+        """In YOLO mode, gate routes back to decompose_epics if empty."""
+        plan_pending_state["epic_keys"] = []
+        plan_pending_state["context"] = {"labels": ["forge:yolo"]}
+        result = plan_approval_gate(plan_pending_state)
+
+        assert result.get("is_paused") is not True
+        assert result["current_node"] == "decompose_epics"
+        assert result["retry_count"] == 1
+        assert "No Epics generated" in result["last_error"]
+
 
 class TestRoutePlanApproval:
     """Tests for route_plan_approval function."""

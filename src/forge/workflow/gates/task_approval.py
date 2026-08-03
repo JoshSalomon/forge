@@ -46,7 +46,7 @@ def task_approval_gate(state: WorkflowState) -> WorkflowState:
     task_count = len(task_keys)
 
     # Validate that we actually have tasks to approve
-    if task_count == 0:
+    if task_count == 0 and check_yolo_mode(state):
         logger.error(
             f"Task approval gate reached with 0 Tasks for {ticket_key}. "
             "This indicates task generation failed. Routing back to retry."

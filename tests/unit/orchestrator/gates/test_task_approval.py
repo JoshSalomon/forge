@@ -39,6 +39,25 @@ class TestTaskApprovalGate:
 
         assert result["task_keys"] == ["TEST-130", "TEST-131", "TEST-132"]
 
+    def test_gate_pauses_workflow_with_zero_tasks_in_non_yolo(self, task_pending_state):
+        """In non-YOLO mode, gate pauses even with zero tasks."""
+        task_pending_state["task_keys"] = []
+        result = task_approval_gate(task_pending_state)
+
+        assert result["is_paused"] is True
+        assert result["current_node"] == "task_approval_gate"
+
+    def test_gate_routes_to_retry_with_zero_tasks_in_yolo(self, task_pending_state):
+        """In YOLO mode, gate routes back to generate_tasks if empty."""
+        task_pending_state["task_keys"] = []
+        task_pending_state["context"] = {"labels": ["forge:yolo"]}
+        result = task_approval_gate(task_pending_state)
+
+        assert result.get("is_paused") is not True
+        assert result["current_node"] == "generate_tasks"
+        assert result["retry_count"] == 1
+        assert "No Tasks generated" in result["last_error"]
+
 
 class TestRouteTaskApproval:
     """Tests for route_task_approval function."""

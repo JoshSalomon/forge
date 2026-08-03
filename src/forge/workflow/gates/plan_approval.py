@@ -42,7 +42,7 @@ def plan_approval_gate(state: WorkflowState) -> WorkflowState:
     epic_count = len(epic_keys)
 
     # Validate that we actually have epics to approve
-    if epic_count == 0:
+    if epic_count == 0 and check_yolo_mode(state):
         logger.error(
             f"Plan approval gate reached with 0 Epics for {ticket_key}. "
             "This indicates epic decomposition failed. Routing back to retry."
