@@ -13,8 +13,8 @@ import pytest
 
 from forge.config import Settings
 from forge.models.draft import DraftItem, ForgeDecompositionDraft
-from forge.workflow.gates.plan_approval import provision_epics_from_draft, route_plan_approval
-from forge.workflow.gates.task_approval import provision_tasks_from_draft, route_task_approval
+from forge.workflow.gates.plan_approval import provision_epics_from_draft
+from forge.workflow.gates.task_approval import provision_tasks_from_draft
 from forge.workflow.nodes.epic_decomposition import decompose_epics
 from forge.workflow.nodes.task_generation import generate_tasks
 from forge.workflow.utils.draft_manager import DraftManager

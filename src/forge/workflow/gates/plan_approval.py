@@ -41,10 +41,8 @@ def plan_approval_gate(state: WorkflowState) -> WorkflowState:
     epic_keys = state.get("epic_keys", [])
     epic_count = len(epic_keys)
 
-    is_yolo = check_yolo_mode(state)
-
     # Validate that we actually have epics to approve
-    if epic_count == 0 and is_yolo:
+    if epic_count == 0:
         logger.error(
             f"Plan approval gate reached with 0 Epics for {ticket_key}. "
             "This indicates epic decomposition failed. Routing back to retry."
@@ -70,6 +68,9 @@ async def route_plan_approval(state: WorkflowState) -> str:
     Returns:
         Next node name or END.
     """
+    if state.get("current_node") == "decompose_epics":
+        return "decompose_epics"
+
     # Check if this is a question (Q&A mode) - check FIRST
     if state.get("is_question") and state.get("feedback_comment"):
         logger.info(f"Q&A mode: routing to answer_question for {state['ticket_key']}")
@@ -155,7 +156,7 @@ async def provision_epics_from_draft(state: WorkflowState, jira: "JiraClient") -
     from forge.workflow.utils.draft_manager import FORGE_STORIES_DRAFT_FILENAME, DraftManager
 
     # Idempotency guard: check if Epics already exist on Jira with this parent label
-    jql = f'labels = "forge:parent:{ticket_key}"'
+    jql = f'labels = "forge:parent:{ticket_key}" AND issuetype = Epic'
     existing_issues = await jira.search_issues(jql)
     if isinstance(existing_issues, list) and existing_issues:
         existing_keys = [issue.key for issue in existing_issues]

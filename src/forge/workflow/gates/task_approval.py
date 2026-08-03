@@ -45,10 +45,8 @@ def task_approval_gate(state: WorkflowState) -> WorkflowState:
     task_keys = state.get("task_keys", [])
     task_count = len(task_keys)
 
-    is_yolo = check_yolo_mode(state)
-
     # Validate that we actually have tasks to approve
-    if task_count == 0 and is_yolo:
+    if task_count == 0:
         logger.error(
             f"Task approval gate reached with 0 Tasks for {ticket_key}. "
             "This indicates task generation failed. Routing back to retry."
@@ -85,6 +83,9 @@ async def route_task_approval(state: WorkflowState) -> str:
     Returns:
         Next node name or END.
     """
+    if state.get("current_node") == "generate_tasks":
+        return "generate_tasks"
+
     ticket_key = state["ticket_key"]
 
     # Check if this is a question (Q&A mode) - check FIRST
@@ -182,7 +183,7 @@ async def provision_tasks_from_draft(
     from forge.workflow.utils.draft_manager import FORGE_TASKS_DRAFT_FILENAME, DraftManager
 
     # Idempotency guard: check if Tasks already exist on Jira with this parent label
-    jql = f'labels = "forge:parent:{ticket_key}"'
+    jql = f'labels = "forge:parent:{ticket_key}" AND issuetype = Task'
     existing_issues = await jira.search_issues(jql)
     if isinstance(existing_issues, list) and existing_issues:
         existing_keys = [issue.key for issue in existing_issues]

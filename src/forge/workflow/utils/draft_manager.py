@@ -353,12 +353,19 @@ class DraftManager:
         for item in items:
             escaped_summary = _escape_cell(item.summary)
             escaped_repo = _escape_cell(item.repo or "unknown")
-            table += f"| {item.id} | {escaped_summary} | {escaped_repo} |\n"
+            if item.excluded:
+                summary_cell = f"~~{escaped_summary}~~ *(excluded)*"
+                repo_cell = f"~~{escaped_repo}~~"
+            else:
+                summary_cell = escaped_summary
+                repo_cell = escaped_repo
+            table += f"| {item.id} | {summary_cell} | {repo_cell} |\n"
         table += "\n---\n\n"
 
         details = ""
         for item in items:
-            details += f"#### {item.id}. {item.summary} (Repo: {item.repo or 'unknown'})\n"
+            heading_summary = f"~~{item.summary}~~ *(excluded)*" if item.excluded else item.summary
+            details += f"#### {item.id}. {heading_summary} (Repo: {item.repo or 'unknown'})\n"
             if item.description:
                 details += f"**{item_label}:**\n{item.description}\n\n"
             else:
@@ -379,7 +386,13 @@ class DraftManager:
             for item in items:
                 escaped_summary = _escape_cell(item.summary)
                 escaped_repo = _escape_cell(item.repo or "unknown")
-                condensed_table += f"| {item.id} | {escaped_summary} | {escaped_repo} |\n"
+                if item.excluded:
+                    summary_cell = f"~~{escaped_summary}~~ *(excluded)*"
+                    repo_cell = f"~~{escaped_repo}~~"
+                else:
+                    summary_cell = escaped_summary
+                    repo_cell = escaped_repo
+                condensed_table += f"| {item.id} | {summary_cell} | {repo_cell} |\n"
 
             condensed_comment = (
                 f"### 📋 Proposed {phase_title} Draft (Condensed)\n\n"

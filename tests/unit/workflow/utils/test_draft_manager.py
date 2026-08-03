@@ -334,3 +334,43 @@ class TestDraftManager:
 
         # Also verify that the details section is not escaped
         assert "#### 1. Task with | pipe in summary (Repo: repo|with|pipe)" in comment
+
+    def test_format_review_comment_visual_indicator_excluded(self) -> None:
+        """Should apply strikethrough formatting and *(excluded)* text for excluded items."""
+        now = datetime.now(UTC)
+        draft = ForgeDecompositionDraft(
+            parent_key="PROJ-123",
+            phase="tasks",
+            items=[
+                DraftItem(
+                    id=1,
+                    summary="Active task",
+                    description="Desc 1",
+                    repo="repo1",
+                    acceptance_criteria=["AC 1"],
+                    excluded=False,
+                ),
+                DraftItem(
+                    id=2,
+                    summary="Excluded task",
+                    description="Desc 2",
+                    repo="repo2",
+                    acceptance_criteria=["AC 2"],
+                    excluded=True,
+                ),
+            ],
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+
+        comment = DraftManager.format_review_comment(draft)
+
+        # Verify normal item is formatted normally
+        assert "| 1 | Active task | repo1 |" in comment
+        assert "#### 1. Active task (Repo: repo1)" in comment
+
+        # Verify excluded item formatting in table
+        assert "| 2 | ~~Excluded task~~ *(excluded)* | ~~repo2~~ |" in comment
+        # Verify excluded item heading summary in detail blocks
+        assert "#### 2. ~~Excluded task~~ *(excluded)* (Repo: repo2)" in comment
