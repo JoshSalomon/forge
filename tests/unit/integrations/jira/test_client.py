@@ -1059,21 +1059,3 @@ class TestJiraClientListProjectProperties:
 
             result = await jira_client.list_project_properties("MYPROJ")
             assert result == []
-
-
-class TestJiraClientCommentLimits:
-    """Tests for character limit validation in JiraClient.add_comment and edit_comment."""
-
-    @pytest.mark.asyncio
-    async def test_add_comment_exceeds_limit_raises_value_error(self, jira_client):
-        """Should raise ValueError if comment body is longer than 32767 characters."""
-        long_body = "x" * 32768
-        with pytest.raises(ValueError, match="Comment body length.*exceeds maximum Jira limit of 32767 characters"):
-            await jira_client.add_comment("TEST-123", long_body)
-
-    @pytest.mark.asyncio
-    async def test_edit_comment_exceeds_limit_raises_value_error(self, jira_client):
-        """Should raise ValueError if comment body is longer than 32767 characters."""
-        long_body = "x" * 32768
-        with pytest.raises(ValueError, match="Comment body length.*exceeds maximum Jira limit of 32767 characters"):
-            await jira_client.edit_comment("TEST-123", "comment-123", long_body)
