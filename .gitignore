@@ -7,7 +7,6 @@ specs/
 docs/github-app-setup.md
 
 # Python
-.mypy_cache/
 __pycache__/
 *.py[cod]
 *$py.class
