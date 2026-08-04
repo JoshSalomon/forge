@@ -1263,27 +1263,6 @@ class JiraClient:
         logger.info(f"Project {project_key}: default repo: {value}")
         return value
 
-    async def get_project_docs_repo(self, project_key: str) -> str | None:
-        """Fetch the forge.docs_repo project property.
-
-        When set, specifies a separate docs repo for post-merge doc updates.
-        The value is a GitHub repo in "owner/repo" format.
-
-        Args:
-            project_key: The Jira project key.
-
-        Returns:
-            Repo string in "owner/repo" format, or None if not configured.
-        """
-        value = await self.get_project_property(project_key, "forge.docs_repo")
-        if value is None:
-            return None
-        if not isinstance(value, str) or "/" not in value:
-            logger.warning(f"forge.docs_repo for project {project_key} is malformed: {value!r}")
-            return None
-        logger.info(f"Project {project_key}: separate docs repo: {value}")
-        return value
-
     async def get_prd_proposals_repo(self, project_key: str) -> str | None:
         """Fetch the forge.prd_proposals_repo project property.
 
