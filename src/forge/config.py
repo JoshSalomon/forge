@@ -2,7 +2,7 @@
 
 import logging
 from functools import cached_property, lru_cache
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -179,6 +179,57 @@ class Settings(BaseSettings):
         default=16384,
         description="Maximum output tokens for LLM responses (default 16384)",
     )
+    model_connections: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Named non-secret model connections (JSON object)",
+    )
+    model_policy: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Global stable node/skill to exact model target mapping (JSON object)",
+    )
+    model_default: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Global default exact model target (JSON object)",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_legacy_model_fields(cls, values: Any) -> Any:
+        """Derive runtime fields from a complete provider-neutral configuration.
+
+        The rest of Forge can continue consuming the established settings
+        attributes without forcing operators to configure two sources of truth.
+        """
+        if not isinstance(values, dict):
+            return values
+        connections = values.get("model_connections") or {}
+        default = values.get("model_default") or {}
+        if not connections:
+            return values
+        if not default:
+            if not values.get("llm_backend") or not values.get("llm_model"):
+                raise ValueError(
+                    "MODEL_DEFAULT is required when MODEL_CONNECTIONS replaces legacy "
+                    "LLM_BACKEND/LLM_MODEL configuration"
+                )
+            return values
+
+        connection_name = default.get("connection")
+        connection = connections.get(connection_name)
+        if not isinstance(connection, dict):
+            raise ValueError(f"MODEL_DEFAULT references unknown connection '{connection_name}'")
+        backend = connection.get("backend")
+        model = default.get("model")
+        if not backend or not model:
+            raise ValueError("MODEL_DEFAULT and its connection must define a backend and model")
+
+        derived = dict(values)
+        derived["llm_backend"] = backend
+        derived["llm_model"] = model
+        if backend == "vertex-ai":
+            derived["google_cloud_project"] = connection.get("project") or ""
+            derived["google_cloud_location"] = connection.get("location") or "global"
+        return derived
 
     @property
     def container_model(self) -> str:
@@ -201,6 +252,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_llm_configuration(self) -> "Settings":
         """Fail at startup when the selected backend cannot serve its models."""
+        from forge.models.model_policy import ModelPolicyResolver
+
         models = [self.llm_model]
         if self.container_llm_model:
             models.append(self.container_llm_model)
@@ -208,6 +261,7 @@ class Settings(BaseSettings):
         if self.llm_backend == "vertex-ai":
             if not self.google_cloud_project:
                 raise ValueError("GOOGLE_CLOUD_PROJECT is required for vertex-ai")
+            self._validate_model_policy(ModelPolicyResolver)
             return self
 
         if self.llm_backend == "google-genai":
@@ -216,6 +270,7 @@ class Settings(BaseSettings):
             incompatible = [m for m in models if self.detect_model_provider(m) != "google"]
             if incompatible:
                 raise ValueError(f"Model '{incompatible[0]}' is not supported by google-genai")
+            self._validate_model_policy(ModelPolicyResolver)
             return self
 
         if not self.anthropic_api_key.get_secret_value():
@@ -223,7 +278,57 @@ class Settings(BaseSettings):
         incompatible = [m for m in models if self.detect_model_provider(m) != "anthropic"]
         if incompatible:
             raise ValueError(f"Model '{incompatible[0]}' is not supported by anthropic")
+        self._validate_model_policy(ModelPolicyResolver)
         return self
+
+    def _validate_model_policy(self, resolver_type: type) -> None:
+        """Validate policy while preserving the legacy single-model configuration."""
+        resolver = resolver_type(
+            connections=self.effective_model_connections,
+            policy=self.model_policy,
+            default=self.effective_model_default,
+        )
+        for connection in resolver.connections.values():
+            if connection.backend == "google-genai" and not self.google_api_key.get_secret_value():
+                raise ValueError("GOOGLE_API_KEY is required by a google-genai model connection")
+            if connection.backend == "anthropic" and not self.anthropic_api_key.get_secret_value():
+                raise ValueError("ANTHROPIC_API_KEY is required by an anthropic model connection")
+
+    @property
+    def effective_model_connections(self) -> dict[str, Any]:
+        if self.model_connections:
+            return self.model_connections
+        connection: dict[str, Any] = {
+            "backend": self.llm_backend,
+            "allowed_models": list(dict.fromkeys([self.llm_model, self.container_model])),
+            # Legacy Forge agents already rely on provider tool calling. This
+            # implicit connection is not exposed to Jira project overrides.
+            "capabilities": ["tools"],
+        }
+        if self.llm_backend == "vertex-ai":
+            connection.update(
+                project=self.google_cloud_project,
+                location=self.google_cloud_location,
+            )
+        return {"default": connection}
+
+    @property
+    def effective_model_default(self) -> dict[str, Any]:
+        return self.model_default or {"connection": "default", "model": self.llm_model}
+
+    @property
+    def has_explicit_model_policy(self) -> bool:
+        """Whether the provider-neutral policy settings were explicitly configured."""
+        return bool(self.model_connections or self.model_policy or self.model_default)
+
+    def model_policy_resolver(self):
+        from forge.models.model_policy import ModelPolicyResolver
+
+        return ModelPolicyResolver(
+            connections=self.effective_model_connections,
+            policy=self.model_policy,
+            default=self.effective_model_default,
+        )
 
     # Langfuse Configuration
     langfuse_enabled_setting: bool = Field(

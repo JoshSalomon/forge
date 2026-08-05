@@ -636,6 +636,107 @@ async def cmd_project_setup(args: argparse.Namespace) -> int:
             await jira.set_project_property(project_key, "forge.skills", skill_entries)
             print(f"[OK] forge.skills = {len(skill_entries)} entries")
 
+        # forge.model_policy — exact per-stage project overrides. User
+        # workstations validate syntax only; the Forge runtime owns and
+        # authorizes the deployment's connection/model allowlist.
+        model_policy: dict[str, Any] = {}
+        remove_models = getattr(args, "remove_model", None) or []
+        clear_model_policy = getattr(args, "clear_model_policy", False)
+        clear_model_default = getattr(args, "clear_model_default", False)
+        if clear_model_policy and (args.model_policy or args.model or remove_models):
+            print(
+                "Error: --clear-model-policy cannot be combined with stage model options",
+                file=sys.stderr,
+            )
+            return 1
+        if clear_model_default and args.model_all:
+            print(
+                "Error: --clear-model-default cannot be combined with --model-all",
+                file=sys.stderr,
+            )
+            return 1
+        if clear_model_policy:
+            await jira.delete_project_property(project_key, "forge.model_policy")
+            print("[OK] forge.model_policy deleted")
+        elif args.model_policy:
+            try:
+                model_policy = json.loads(args.model_policy)
+            except json.JSONDecodeError as exc:
+                print(f"Error: --model-policy is not valid JSON: {exc}", file=sys.stderr)
+                return 1
+            if not isinstance(model_policy, dict):
+                print("Error: --model-policy must be a JSON object", file=sys.stderr)
+                return 1
+        elif args.model or remove_models:
+            existing_policy = await jira.get_project_property(project_key, "forge.model_policy")
+            if existing_policy is not None and not isinstance(existing_policy, dict):
+                print(
+                    "Error: existing forge.model_policy must be a JSON object",
+                    file=sys.stderr,
+                )
+                return 1
+            model_policy = dict(existing_policy or {})
+        for policy_key in remove_models:
+            if not policy_key:
+                print("Error: --remove-model requires a non-empty policy key", file=sys.stderr)
+                return 1
+            model_policy.pop(policy_key, None)
+        for raw in args.model or []:
+            policy_key, separator, target = raw.partition("=")
+            connection, target_separator, model = target.partition(":")
+            if (
+                not separator
+                or not target_separator
+                or not policy_key
+                or not connection
+                or not model
+            ):
+                print(
+                    "Error: --model must use NODE_OR_SKILL=CONNECTION:MODEL",
+                    file=sys.stderr,
+                )
+                return 1
+            model_policy[policy_key] = {"connection": connection, "model": model}
+        if args.model_policy or args.model or remove_models:
+            from forge.models.model_policy import KNOWN_MODEL_POLICY_KEYS, ModelTarget
+
+            try:
+                unknown_keys = set(model_policy) - set(KNOWN_MODEL_POLICY_KEYS)
+                if unknown_keys:
+                    raise ValueError(f"Unknown model policy key '{sorted(unknown_keys)[0]}'")
+                for key, target in model_policy.items():
+                    if not key:
+                        raise ValueError("Model policy keys must not be empty")
+                    ModelTarget.model_validate(target)
+            except ValueError as exc:
+                print(f"Error: invalid model policy: {exc}", file=sys.stderr)
+                return 1
+            if model_policy:
+                await jira.set_project_property(project_key, "forge.model_policy", model_policy)
+                print(f"[OK] forge.model_policy = {len(model_policy)} overrides")
+            else:
+                await jira.delete_project_property(project_key, "forge.model_policy")
+                print("[OK] forge.model_policy deleted (no overrides remain)")
+
+        if args.model_all:
+            from forge.models.model_policy import ModelTarget
+
+            connection, separator, model = args.model_all.partition(":")
+            if not separator or not connection or not model:
+                print("Error: --model-all must use CONNECTION:MODEL", file=sys.stderr)
+                return 1
+            model_default = {"connection": connection, "model": model}
+            try:
+                ModelTarget.model_validate(model_default)
+            except ValueError as exc:
+                print(f"Error: invalid model default: {exc}", file=sys.stderr)
+                return 1
+            await jira.set_project_property(project_key, "forge.model_default", model_default)
+            print("[OK] forge.model_default set")
+        elif clear_model_default:
+            await jira.delete_project_property(project_key, "forge.model_default")
+            print("[OK] forge.model_default deleted")
+
         if not any(
             [
                 args.repo,
@@ -644,12 +745,21 @@ async def cmd_project_setup(args: argparse.Namespace) -> int:
                 args.prd_proposals_path is not None,
                 args.skills_config,
                 args.add_skill,
+                args.model_policy,
+                args.model,
+                args.model_all,
+                remove_models,
+                clear_model_policy,
+                clear_model_default,
             ]
         ):
             print(
                 "Nothing to set — specify at least one of: "
                 "--repo, --default-repo, --prd-proposals-repo, "
                 "--prd-proposals-path, --skills-config, --add-skill"
+                ", --model-policy, --model, --model-all"
+                ", --remove-model, --clear-model-policy"
+                ", --clear-model-default"
             )
             return 1
 
@@ -698,6 +808,8 @@ async def cmd_get_config(args: argparse.Namespace) -> int:
             "forge.prd_proposals_path",
             "forge.skills",
             "forge.references",
+            "forge.model_policy",
+            "forge.model_default",
         ]
 
         # Combine standard keys with extra discovered keys (avoid duplicates, preserve order/sort)
@@ -835,6 +947,28 @@ async def cmd_get_config(args: argparse.Namespace) -> int:
             effective_config["forge.references"] = {"value": refs_val, "source": "project"}
         else:
             effective_config["forge.references"] = {"value": None, "source": "unset"}
+
+        model_policy_val = project_properties.get("forge.model_policy")
+        effective_config["forge.model_policy"] = {
+            "value": model_policy_val,
+            "source": "project" if model_policy_val is not None else "unset",
+        }
+        model_default_val = project_properties.get("forge.model_default")
+        effective_config["forge.model_default"] = {
+            "value": model_default_val,
+            "source": "project" if model_default_val is not None else "unset",
+        }
+
+        if getattr(args, "models", False):
+            try:
+                resolved = settings.model_policy_resolver().resolve_all(
+                    model_policy_val or {}, model_default_val
+                )
+            except ValueError as exc:
+                print(f"Error: invalid model policy: {exc}", file=sys.stderr)
+                return 1
+            print(json.dumps(resolved, indent=2))
+            return 0
 
         # 7. Discovered keys
         for key in extra_keys:
@@ -1253,6 +1387,48 @@ Examples:
         metavar="JSON",
         help="Full forge.skills value as a JSON array of SkillEntry objects",
     )
+    setup_parser.add_argument(
+        "--model",
+        action="append",
+        metavar="NODE_OR_SKILL=CONNECTION:MODEL",
+        help="Add or replace one exact model override while preserving other project overrides",
+    )
+    setup_parser.add_argument(
+        "--model-all",
+        "--all-stages-model",
+        metavar="CONNECTION:MODEL",
+        help=(
+            "Set the separate project-wide model fallback in forge.model_default; "
+            "explicit --model stage overrides win"
+        ),
+    )
+    setup_parser.add_argument(
+        "--model-policy",
+        metavar="JSON",
+        help=(
+            "Replace the full forge.model_policy JSON object; later --model entries overwrite "
+            "matching keys"
+        ),
+    )
+    setup_parser.add_argument(
+        "--remove-model",
+        action="append",
+        metavar="POLICY_KEY",
+        help=(
+            "Remove one project model override while preserving the others; repeatable, "
+            "and later --model entries win"
+        ),
+    )
+    setup_parser.add_argument(
+        "--clear-model-policy",
+        action="store_true",
+        help="Delete the complete forge.model_policy Jira project property",
+    )
+    setup_parser.add_argument(
+        "--clear-model-default",
+        action="store_true",
+        help="Delete the project-wide forge.model_default fallback",
+    )
 
     # get-config command
     get_config_parser = subparsers.add_parser(
@@ -1278,6 +1454,11 @@ Examples:
         "--property",
         metavar="name",
         help="Retrieve a single resolved property value (case-insensitive)",
+    )
+    group.add_argument(
+        "--models",
+        action="store_true",
+        help="Validate and print resolved non-secret model targets for all known stages",
     )
 
     args = parser.parse_args(argv)

@@ -49,14 +49,166 @@ Choose one backend explicitly. Gemini 3.5 Flash through Vertex AI is recommended
     LLM_MODEL=claude-sonnet-4-6
     ```
 
-`LLM_BACKEND` and `LLM_MODEL` are required. Provider credentials must use the
-provider-native variables shown above; legacy aliases are not supported.
-Forge validates the backend, credentials, and model compatibility at startup.
+`LLM_BACKEND` and `LLM_MODEL` are required for legacy configuration. A complete
+`MODEL_CONNECTIONS` plus `MODEL_DEFAULT` configuration replaces them and
+derives the runtime backend, model, Vertex project, and location. Provider
+credentials must use the provider-native variables shown above; legacy aliases
+are not supported. Forge validates the backend, credentials, and model
+compatibility at startup.
 
-`CONTAINER_LLM_MODEL` may override the model used for implementation tasks, but
-it does not select a separate backend. The override must be compatible with
-`LLM_BACKEND`; using different orchestrator and container backends is not
-currently supported.
+The legacy `CONTAINER_LLM_MODEL` override remains supported. For exact
+per-stage selection, administrators can define JSON `MODEL_CONNECTIONS`,
+`MODEL_DEFAULT`, and `MODEL_POLICY` values. Connections contain a backend,
+provider location, model allowlist, and declared capabilities—never a credential value. Each backend
+uses its existing provider-native environment credential. Jira projects then
+set `forge.model_policy`, restricted to those connections and models:
+
+```bash
+MODEL_CONNECTIONS={"vertex-global":{"backend":"vertex-ai","project":"my-gcp-project","location":"global","allowed_models":["gemini-3.5-flash","claude-sonnet-5"],"capabilities":["tools"]}}
+MODEL_DEFAULT={"connection":"vertex-global","model":"gemini-3.5-flash"}
+MODEL_POLICY={"generate_prd":{"connection":"vertex-global","model":"claude-sonnet-5"},"generate_spec":{"connection":"vertex-global","model":"gemini-3.5-flash"}}
+```
+
+```bash
+forge project-setup MYPROJ \
+  --model generate_prd=vertex-production:gemini-3.5-pro \
+  --model implement_task=anthropic-production:claude-sonnet-4-6
+
+# Set a separate project-wide fallback (individual --model overrides still win)
+forge project-setup MYPROJ \
+  --model-all vertex-production:gemini-3.5-pro
+
+# Remove one stage override and preserve the rest
+forge project-setup MYPROJ --remove-model generate_prd
+
+# Delete all per-stage overrides
+forge project-setup MYPROJ --clear-model-policy
+
+# Delete the project-wide fallback
+forge project-setup MYPROJ --clear-model-default
+
+# Validate against the local runtime configuration and print every target
+forge get-config MYPROJ --models
+```
+
+Project overrides require administrators to configure `MODEL_CONNECTIONS`.
+The user-facing `project-setup` command validates policy syntax and canonical
+stage names but does not require access to the Forge deployment's connection
+registry. Forge validates connection names, model allowlists, backends, and
+capabilities when it executes a stage. Invalid runtime policy fails closed and
+reports the available configured connections and models to Jira and, when an
+active PR exists, GitHub. The implicit legacy connection remains restricted to
+`LLM_MODEL` and `CONTAINER_LLM_MODEL` and is never exposed to Jira project
+policy.
+
+Canonical policy keys are deliberately specific; runtime prompt, skill, and
+graph-node names are not accepted in Jira configuration:
+
+| Policy key | Execution |
+|---|---|
+| `generate_prd` | Initial PRD generation and every PRD revision |
+| `generate_spec` | Initial specification generation and every specification revision |
+| `decompose_epics` | Epic decomposition or revision |
+| `generate_tasks` | Task generation or revision |
+| `bug_triage` | Bug-report completeness triage |
+| `automated_review_triage` | Classification of automated review feedback |
+| `proposal_review_triage` | Classification of proposal review threads |
+| `task_takeover_triage` | Existing-task takeover triage |
+| `task_takeover_planning` | Existing-task implementation planning |
+| `task_takeover_execution` | Existing-task container implementation |
+| `task_takeover_review` | Existing-task qualitative review |
+| `task_takeover_question` | Questions about task-takeover artifacts |
+| `analyze_bug` | Root-cause analysis |
+| `reflect_rca` | Root-cause analysis reflection |
+| `plan_bug_fix` | Bug-fix planning |
+| `implement_bug_fix` | Bug-fix container implementation |
+| `implement_task` | Feature-task container implementation |
+| `bug_local_review` | Local qualitative review of a bug fix |
+| `local_code_review` | Local feature code review |
+| `code_review` | Pull-request code review |
+| `implement_review_analysis` | Analysis of implementation review feedback |
+| `implement_review_fix` | Applying implementation review fixes |
+| `generate_pr_description` | Initial pull-request description generation |
+| `sync_pr_description` | Pull-request description synchronization |
+| `ci_analysis` | CI failure analysis |
+| `ci_fix` | CI failure remediation |
+| `answer_question` | Q&A about PRDs, specifications, plans, and other generated artifacts |
+| `rebase` | Container-assisted rebase conflict resolution |
+| `update_docs` | Documentation update generation |
+
+Unknown keys fail validation instead of silently using the default target.
+
+### Keeping artifact generation, revision, and Q&A on one model
+
+Revisions reuse the artifact's generation policy key. For example, both initial
+PRD generation and later `!` revision requests resolve `generate_prd`. Questions
+submitted with `?` do not regenerate the artifact and resolve the separate
+`answer_question` key. Configure both keys when the answer must use the same
+model that created the PRD:
+
+```bash
+MODEL_POLICY={"generate_prd":{"connection":"vertex-global","model":"claude-opus-4-6"},"answer_question":{"connection":"vertex-global","model":"claude-opus-4-6"}}
+
+forge project-setup MYPROJ \
+  --model generate_prd=vertex-global:claude-opus-4-6 \
+  --model answer_question=vertex-global:claude-opus-4-6
+```
+
+The same pattern applies to `generate_spec`, `decompose_epics`, and
+`generate_tasks`: revisions reuse their generation key, while Q&A uses
+`answer_question`. Task-takeover artifact questions are the exception and use
+`task_takeover_question`.
+
+### Related actions that use separate policy keys
+
+Some user-visible flows contain multiple model invocations with intentionally
+different responsibilities. Forge resolves each invocation independently, so
+they may use different models unless every related key is mapped to the same
+target:
+
+| Flow | Policy keys | Boundary |
+|---|---|---|
+| Generated artifact interaction | `generate_prd`, `generate_spec`, `decompose_epics`, or `generate_tasks` + `answer_question` | Creation and revision use the generation key; Q&A uses `answer_question` |
+| Task takeover | `task_takeover_planning` + `task_takeover_question` | Plan creation and revision are separate from artifact Q&A |
+| Automated artifact review | `automated_review_triage` + the relevant generation key | Feedback classification occurs before an accepted revision is generated |
+| Proposal review | `proposal_review_triage` + the relevant generation key | Review-thread classification occurs before an accepted revision is generated |
+| Implementation review | `implement_review_analysis` + `implement_review_fix` | Feedback analysis and code modification are separate invocations |
+| CI remediation | `ci_analysis` + `ci_fix` | Failure diagnosis and code modification are separate invocations |
+| Bug investigation | `analyze_bug` + `reflect_rca` + `plan_bug_fix` | Initial analysis, reflection, and repair planning are separate stages |
+| Pull-request maintenance | `code_review` + `sync_pr_description` | Code review and description synchronization are separate tasks |
+
+Using different models for these keys is supported and can optimize cost or
+quality. When context continuity or consistent judgment is more important,
+assign all keys in the flow to the same connection and model. Run
+`forge get-config MYPROJ --models` to display the effective target for every
+key before testing a workflow.
+
+Forge owns stage capability requirements. Every stage requires a connection
+declaring `"capabilities": ["tools"]` except the explicitly tool-free text or
+classification stages `automated_review_triage`, `proposal_review_triage`,
+`generate_pr_description`, and `sync_pr_description`. Jira policy cannot
+weaken that requirement.
+Per-target `max_output_tokens` is limited to 131072.
+
+Resolution is project stage override (`forge.model_policy`), then the separate
+project-wide fallback (`forge.model_default`), then the deployment stage mapping
+(`MODEL_POLICY`), then the deployment default (`MODEL_DEFAULT`). Project policy
+does not use a `*` key. `--model-all` writes `forge.model_default` and does not
+modify per-stage overrides. When `--model-policy` and `--model` are combined,
+individual `--model` entries overwrite matching JSON keys. Used without
+`--model-policy`, `--model` preserves the project's other existing stage
+overrides; `--model-policy` deliberately replaces the full stage property.
+`--remove-model` removes only the named stage and deletes `forge.model_policy`
+when no overrides remain. `--clear-model-policy` deletes all per-stage
+overrides, while `--clear-model-default` independently deletes the project-wide
+fallback.
+When `MODEL_CONNECTIONS` is configured, Forge fetches the Jira project policy
+before each host or container agent execution, so changes apply automatically
+to the next stage or retry. The target remains fixed during that execution's
+internal model/tool loop. Legacy and global-only configurations make no extra
+Jira policy request. Projects without `forge.model_policy` fall back to the
+global stage mapping, then the global default, and finally the legacy
+`LLM_BACKEND`/`LLM_MODEL` settings.
 
 ### Redis
 

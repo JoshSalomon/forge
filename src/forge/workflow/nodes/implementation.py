@@ -215,6 +215,7 @@ async def implement_task(state: WorkflowState) -> WorkflowState:
                 implementation_node=implementation_node,
                 current_repo=current_repo,
             ),
+            policy_key=implementation_node,
         )
 
         # Collect review exhaustion data (if auto-review ran and exhausted)
