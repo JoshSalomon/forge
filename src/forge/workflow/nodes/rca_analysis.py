@@ -13,6 +13,7 @@ from forge.sandbox import ContainerRunner
 from forge.workflow.bug.state import BugState
 from forge.workflow.utils import merge_review_exhaustion, update_state_timestamp
 from forge.workflow.utils.jira_status import post_status_comment
+from forge.workflow.utils.repo_resolution import get_effective_repos
 
 logger = logging.getLogger(__name__)
 
@@ -62,30 +63,29 @@ async def analyze_bug(state: BugState) -> BugState:
         issue = await jira.get_issue(ticket_key)
 
         try:
-            repos = await jira.get_project_repos(issue.project_key)
+            repos = await get_effective_repos(jira, issue.project_key)
         except MissingProjectConfig as e:
-            if settings.forge_require_project_config:
-                await post_status_comment(
-                    jira,
-                    ticket_key,
-                    f"Cannot start RCA: repository configuration is missing for project "
-                    f"`{issue.project_key}`.\n\n"
-                    f"Set `forge.repos` on the Jira project to a comma-separated list of "
-                    f"`owner/repo` values, then add `forge:retry` to resume.\n\n"
-                    f"Details: {e}",
+            config_instruction = (
+                "Set `forge.repos` on the Jira project to a JSON list of `owner/repo` values"
+                if settings.forge_require_project_config
+                else (
+                    "Set `GITHUB_KNOWN_REPOS` in the Forge environment to a "
+                    "comma-separated list of `owner/repo` values"
                 )
-                await jira.set_workflow_label(ticket_key, ForgeLabel.BLOCKED)
-                return {
-                    **state,
-                    "last_error": str(e),
-                    "current_node": "analyze_bug",
-                }
-            repos = settings.known_repos
-            logger.info(
-                "Project %s: falling back to GITHUB_KNOWN_REPOS: %s",
-                issue.project_key,
-                repos,
             )
+            await post_status_comment(
+                jira,
+                ticket_key,
+                f"Cannot start RCA: repository configuration is missing for project "
+                f"`{issue.project_key}`.\n\n"
+                f"{config_instruction}, then add `forge:retry` to resume.\n\nDetails: {e}",
+            )
+            await jira.set_workflow_label(ticket_key, ForgeLabel.BLOCKED)
+            return {
+                **state,
+                "last_error": str(e),
+                "current_node": "analyze_bug",
+            }
 
         task_description = load_prompt(
             "analyze-bug",
