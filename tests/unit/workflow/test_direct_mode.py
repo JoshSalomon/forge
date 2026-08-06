@@ -1,11 +1,10 @@
 """Tests for forge:direct-mode direct ticket creation mode."""
 
-import pytest
 from unittest.mock import MagicMock
 
-from forge.models.workflow import ForgeLabel
+import pytest
+
 from forge.workflow.feature.state import create_initial_feature_state
-from forge.workflow.utils import check_direct_mode
 
 
 class TestDirectModeDefaultsToFalse:
@@ -22,7 +21,6 @@ class TestBuildInitialStateDirectMode:
     """Tests for direct_mode initialization from Jira payload."""
 
     def _make_worker(self):
-        from unittest.mock import MagicMock
         from forge.orchestrator.worker import OrchestratorWorker
 
         worker = OrchestratorWorker.__new__(OrchestratorWorker)
@@ -31,7 +29,6 @@ class TestBuildInitialStateDirectMode:
         return worker
 
     def _make_message(self, labels: list):
-        from unittest.mock import MagicMock
         from forge.models.events import EventSource
 
         msg = MagicMock()
@@ -80,6 +77,7 @@ class TestDirectModeApprovalGates:
     @pytest.mark.asyncio
     async def test_plan_route_pauses_in_direct_mode(self):
         from langgraph.graph import END
+
         from forge.workflow.gates.plan_approval import route_plan_approval
 
         state = self._feature_state("plan_approval_gate", {"epic_keys": ["EPIC-1"]})
@@ -88,6 +86,7 @@ class TestDirectModeApprovalGates:
     @pytest.mark.asyncio
     async def test_task_route_pauses_in_direct_mode(self):
         from langgraph.graph import END
+
         from forge.workflow.gates.task_approval import route_task_approval
 
         state = self._feature_state("task_approval_gate", {"task_keys": ["TASK-1"]})

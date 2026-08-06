@@ -1,6 +1,5 @@
 """Task generation node for LangGraph workflow."""
 
-from forge.config import get_settings
 import asyncio
 import logging
 import re
