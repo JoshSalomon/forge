@@ -15,7 +15,7 @@ from langgraph.graph import END
 
 from forge.api.routes.metrics import record_approval, record_revision_requested
 from forge.workflow.feature.state import FeatureState as WorkflowState
-from forge.workflow.utils import check_yolo_mode, set_paused
+from forge.workflow.utils import check_direct_mode, check_yolo_mode, set_paused
 
 if TYPE_CHECKING:
     from forge.integrations.jira.client import JiraClient
@@ -46,7 +46,7 @@ def task_approval_gate(state: WorkflowState) -> WorkflowState:
     task_count = len(task_keys)
 
     # Validate that we actually have tasks to approve
-    if task_count == 0 and check_yolo_mode(state):
+    if task_count == 0 and (check_yolo_mode(state) or check_direct_mode(state)):
         logger.error(
             f"Task approval gate reached with 0 Tasks for {ticket_key}. "
             "This indicates task generation failed. Routing back to retry."
@@ -207,6 +207,16 @@ async def provision_tasks_from_draft(
 
         try:
             await DraftManager.delete_draft_attachment(jira, ticket_key, FORGE_TASKS_DRAFT_FILENAME)
+            if state.get("epic_keys"):
+                for ek in state["epic_keys"]:
+                    try:
+                        await DraftManager.delete_draft_attachment(
+                            jira, ek, FORGE_TASKS_DRAFT_FILENAME
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to delete draft attachment '{FORGE_TASKS_DRAFT_FILENAME}' on Epic {ek} during idempotency recovery: {e}"
+                        )
         except Exception as e:
             logger.warning(f"Draft deletion skipped or failed during idempotency recovery: {e}")
 
@@ -278,6 +288,20 @@ async def provision_tasks_from_draft(
 
     # Delete the draft only after 100% successful ticket creation
     await DraftManager.delete_draft_attachment(jira, ticket_key, FORGE_TASKS_DRAFT_FILENAME)
+
+    epic_keys_to_clean = set()
+    if draft and draft.items:
+        epic_keys_to_clean.update(item.epic_key for item in draft.items if item.epic_key)
+    if state.get("epic_keys"):
+        epic_keys_to_clean.update(state["epic_keys"])
+
+    for ek in epic_keys_to_clean:
+        try:
+            await DraftManager.delete_draft_attachment(jira, ek, FORGE_TASKS_DRAFT_FILENAME)
+        except Exception as e:
+            logger.warning(
+                f"Failed to delete draft attachment '{FORGE_TASKS_DRAFT_FILENAME}' on Epic {ek}: {e}"
+            )
     logger.info(
         f"Successfully provisioned {len(task_keys)} Tasks across {len(tasks_by_repo)} repos and deleted draft"
     )

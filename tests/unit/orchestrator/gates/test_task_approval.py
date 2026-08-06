@@ -295,8 +295,14 @@ class TestTaskDraftProvisioning:
                 labels=["forge:managed", "forge:parent:TEST-123", "repo:org/repo-1"],
             )
 
-            # Verify draft deleted
-            MockDraftManager.delete_draft_attachment.assert_called_once()
+            # Verify draft deleted on both parent Feature and Epic
+            assert MockDraftManager.delete_draft_attachment.call_count == 2
+            MockDraftManager.delete_draft_attachment.assert_any_call(
+                mock_jira, "TEST-123", "forge-tasks-draft.json"
+            )
+            MockDraftManager.delete_draft_attachment.assert_any_call(
+                mock_jira, "EPIC-124", "forge-tasks-draft.json"
+            )
 
     @pytest.mark.asyncio
     async def test_retains_draft_on_failure(self, approved_task_state):

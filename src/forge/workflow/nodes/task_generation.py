@@ -1,5 +1,6 @@
 """Task generation node for LangGraph workflow."""
 
+from forge.config import get_settings
 import asyncio
 import logging
 import re
@@ -12,7 +13,7 @@ from forge.models.draft import DraftItem, ForgeDecompositionDraft
 from forge.models.workflow import ForgeLabel
 from forge.prompts import load_prompt
 from forge.workflow.feature.state import FeatureState as WorkflowState
-from forge.workflow.utils import check_yolo_mode, update_state_timestamp
+from forge.workflow.utils import check_direct_mode, check_yolo_mode, update_state_timestamp
 from forge.workflow.utils.draft_manager import FORGE_TASKS_DRAFT_FILENAME, DraftManager
 from forge.workflow.utils.jira_status import post_status_comment
 from forge.workflow.utils.references import fetch_and_inject_references
@@ -78,6 +79,7 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
         feature_labels = await jira.get_labels(ticket_key)
 
         is_yolo = check_yolo_mode(state, feature_labels)
+        is_direct = check_direct_mode(state, feature_labels)
 
         # Pre-fetch all epic details upfront for sibling context
         for ek in epic_keys:
@@ -171,7 +173,7 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
                     )
                     repo = "unknown"
 
-                if is_yolo:
+                if is_yolo or is_direct:
                     # Add labels: forge:managed for webhook routing, forge:parent for lookup, repo
                     labels = [
                         ForgeLabel.FORGE_MANAGED.value,
@@ -233,7 +235,7 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
                         }
                     )
 
-        if is_yolo:
+        if is_yolo or is_direct:
             logger.info(
                 f"Created {len(all_task_keys)} Tasks for {ticket_key}, awaiting implementation approval"
             )
@@ -267,6 +269,7 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
                             "current_task_key": None,
                             "current_epic_key": None,
                             "current_node": "task_approval_gate",
+                            "is_paused": not is_yolo,
                             "last_error": f"Partial Jira failure: {jira_error}"
                             if jira_error
                             else None,
@@ -335,10 +338,8 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
                 updated_at=datetime.now(UTC),
             )
 
-            # Call DraftManager to serialize and save the generated tasks draft to forge-tasks-draft.json
-            await DraftManager.save_draft_attachment(
-                jira, ticket_key, draft, FORGE_TASKS_DRAFT_FILENAME
-            )
+            # Call DraftManager to serialize and save the generated tasks draft to forge-tasks-draft.json and slices to Epics
+            await DraftManager.save_task_draft_with_slices(jira, ticket_key, draft)
 
             # Format Markdown review comment outlining proposed tasks
             # Implement BR-003 Truncation Boundary

@@ -82,6 +82,8 @@ By default, Forge uses an interactive **Draft Review Flow** at this stage (unles
 
 If `forge:yolo` mode is active, the draft review is bypassed. Epics are created in Jira immediately, and the workflow automatically proceeds to Task Generation.
 
+If `forge:direct-mode` is active, the draft review is also bypassed and Epics are created in Jira immediately, but the workflow still pauses at the `plan_approval_gate` waiting for manual human approval (via label or commands) before proceeding.
+
 ```mermaid
 flowchart TD
     Gate([plan_approval_gate])
@@ -115,6 +117,8 @@ By default, Forge uses an interactive **Draft Review Flow** at this stage (unles
 | **Request revisions** | Comment with `!` prefix followed by your feedback | Forge uses LLM assistance to revise the entire draft JSON and update the proposal comment with your feedback. |
 
 If `forge:yolo` mode is active, the draft review is bypassed. Tasks are created in Jira immediately, and the workflow automatically proceeds to Implementation.
+
+If `forge:direct-mode` is active, the draft review is also bypassed and Tasks are created in Jira immediately, but the workflow still pauses at the `task_approval_gate` waiting for manual human approval (via label or commands) before proceeding.
 
 ```mermaid
 flowchart TD

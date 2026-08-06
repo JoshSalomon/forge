@@ -121,8 +121,25 @@ def check_yolo_mode(state: Any, labels: list[str] | None = None) -> bool:
     return has_label or settings.yolo_mode or bool(state.get("yolo_mode", False))
 
 
+def check_direct_mode(state: Any, labels: list[str] | None = None) -> bool:
+    """Check if direct ticket creation mode is enabled based on labels or state.
+
+    The components are:
+    1. 'forge:direct-mode' label in the provided labels or the state context labels.
+    2. State direct_mode.
+    """
+    has_label = False
+    if (labels and "forge:direct-mode" in labels) or "forge:direct-mode" in state.get(
+        "context", {}
+    ).get("labels", []):
+        has_label = True
+
+    return has_label or bool(state.get("direct_mode", False))
+
+
 __all__ = [
     "check_yolo_mode",
+    "check_direct_mode",
     "CommentType",
     "classify_comment",
     "collect_review_exhaustion",

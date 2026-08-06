@@ -337,7 +337,7 @@ class TestDraftAttachmentCreationAndCleanup:
             MockAgent.return_value = mock_agent
 
             MockDraftManager.delete_draft_attachment = AsyncMock()
-            MockDraftManager.save_draft_attachment = AsyncMock()
+            MockDraftManager.save_task_draft_with_slices = AsyncMock()
 
             result = await generate_tasks(state)
 
@@ -347,8 +347,8 @@ class TestDraftAttachmentCreationAndCleanup:
         )
 
         # 2. Verify draft attachment saving
-        MockDraftManager.save_draft_attachment.assert_called_once()
-        saved_draft = MockDraftManager.save_draft_attachment.call_args[0][2]
+        MockDraftManager.save_task_draft_with_slices.assert_called_once()
+        saved_draft = MockDraftManager.save_task_draft_with_slices.call_args[0][2]
         assert isinstance(saved_draft, ForgeDecompositionDraft)
         assert saved_draft.parent_key == "TEST-100"
         assert saved_draft.phase == "tasks"
@@ -699,7 +699,7 @@ class TestApprovalCommandAndSkippingExcludedItems:
         )
 
         # Verify draft was deleted after successful provisioning
-        MockDraftManager.delete_draft_attachment.assert_called_once_with(
+        MockDraftManager.delete_draft_attachment.assert_any_call(
             mock_jira, "TEST-100", "forge-tasks-draft.json"
         )
         assert task_keys == ["TASK-1", "TASK-3"]

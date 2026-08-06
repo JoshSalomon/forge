@@ -15,7 +15,7 @@ from langgraph.graph import END
 
 from forge.api.routes.metrics import record_approval, record_revision_requested
 from forge.workflow.feature.state import FeatureState as WorkflowState
-from forge.workflow.utils import check_yolo_mode, set_paused
+from forge.workflow.utils import check_direct_mode, check_yolo_mode, set_paused
 
 if TYPE_CHECKING:
     from forge.integrations.jira.client import JiraClient
@@ -42,7 +42,7 @@ def plan_approval_gate(state: WorkflowState) -> WorkflowState:
     epic_count = len(epic_keys)
 
     # Validate that we actually have epics to approve
-    if epic_count == 0 and check_yolo_mode(state):
+    if epic_count == 0 and (check_yolo_mode(state) or check_direct_mode(state)):
         logger.error(
             f"Plan approval gate reached with 0 Epics for {ticket_key}. "
             "This indicates epic decomposition failed. Routing back to retry."

@@ -45,6 +45,7 @@ Standalone Tasks and Epics can be processed with the standard `forge:managed` la
 | `forge:blocked` | Set by Forge when a stage fails. Forge posts a comment with the error. |
 | `forge:retry` | Add this to resume from the exact node that failed, or to transition from `review_response_gate` back to `human_review_gate` (clearing contested review comments). Forge removes it after resuming. |
 | `forge:yolo` | Auto-approve supported planning gates. Human PR review still remains a gate. |
+| `forge:direct-mode` | Direct ticket creation mode (bypasses draft JSON attachments and creates Epic/Task tickets immediately in Jira), but still pauses for human approval at the planning gates (instead of auto-approving like `forge:yolo`). |
 | `repo:<owner>/<repo>` | Identifies repositories selected for planning and implementation. |
 
 ## How to Use Labels
@@ -53,7 +54,7 @@ Standalone Tasks and Epics can be processed with the standard `forge:managed` la
 
 **Approving a stage:** When Forge posts an artifact (such as a PRD or Spec), it sets the `forge:*-pending` label. You can approve it by changing the label to `forge:*-approved` to advance the workflow. For draft-based stages (Epic Plan and Tasks), you can also approve by commenting `/forge approve` on the ticket.
 
-**Interactive Draft Review:** For Epic Decomposition and Task Generation stages, Forge uses a draft-based review flow by default (unless `forge:yolo` mode is active).
+**Interactive Draft Review:** For Epic Decomposition and Task Generation stages, Forge uses a draft-based review flow by default (unless `forge:yolo` or `forge:direct-mode` mode is active).
 1. Instead of creating sub-tickets immediately, Forge serializes the proposed items into a JSON draft file (`forge-stories-draft.json` or `forge-tasks-draft.json`) and uploads it as a Jira attachment.
 2. Forge posts a formatted markdown table comment on the ticket detailing the proposed plan.
 3. While the stage is pending, you can modify the draft directly using **Jira comment commands** (see below) or request a natural language revision.

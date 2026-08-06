@@ -410,3 +410,107 @@ class TestDraftManager:
         very_small_comment = DraftManager.format_review_comment(draft, limit=100)
         assert len(very_small_comment) <= 100
         assert very_small_comment.endswith(" [truncated]")
+
+    def test_slice_task_draft(self) -> None:
+        """Should slice task draft by epic key and resequence item IDs."""
+        now = datetime.now(UTC)
+        draft = ForgeDecompositionDraft(
+            parent_key="FEATURE-1",
+            phase="tasks",
+            items=[
+                DraftItem(
+                    id=1,
+                    summary="Task 1",
+                    description="Desc 1",
+                    repo="repo1",
+                    acceptance_criteria=[],
+                    epic_key="EPIC-101",
+                ),
+                DraftItem(
+                    id=2,
+                    summary="Task 2",
+                    description="Desc 2",
+                    repo="repo2",
+                    acceptance_criteria=[],
+                    epic_key="EPIC-102",
+                ),
+                DraftItem(
+                    id=3,
+                    summary="Task 3",
+                    description="Desc 3",
+                    repo="repo3",
+                    acceptance_criteria=[],
+                    epic_key="EPIC-101",
+                ),
+            ],
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+
+        slices = DraftManager.slice_task_draft(draft)
+        assert len(slices) == 2
+        assert "EPIC-101" in slices
+        assert "EPIC-102" in slices
+
+        slice_101 = slices["EPIC-101"]
+        assert slice_101.parent_key == "EPIC-101"
+        assert slice_101.phase == "tasks"
+        assert len(slice_101.items) == 2
+        assert slice_101.items[0].summary == "Task 1"
+        assert slice_101.items[0].id == 1
+        assert slice_101.items[1].summary == "Task 3"
+        assert slice_101.items[1].id == 2  # Resequenced
+
+        slice_102 = slices["EPIC-102"]
+        assert slice_102.parent_key == "EPIC-102"
+        assert len(slice_102.items) == 1
+        assert slice_102.items[0].summary == "Task 2"
+        assert slice_102.items[0].id == 1  # Resequenced
+
+    @pytest.mark.asyncio
+    async def test_save_task_draft_with_slices(self) -> None:
+        """Should save the main draft on the Feature and per-Epic sliced drafts on each Epic."""
+        now = datetime.now(UTC)
+        draft = ForgeDecompositionDraft(
+            parent_key="FEATURE-1",
+            phase="tasks",
+            items=[
+                DraftItem(
+                    id=1,
+                    summary="Task 1",
+                    description="Desc 1",
+                    repo="repo1",
+                    acceptance_criteria=[],
+                    epic_key="EPIC-101",
+                ),
+                DraftItem(
+                    id=2,
+                    summary="Task 2",
+                    description="Desc 2",
+                    repo="repo2",
+                    acceptance_criteria=[],
+                    epic_key="EPIC-102",
+                ),
+            ],
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+
+        mock_jira = MagicMock(spec=JiraClient)
+        mock_jira.delete_attachments_by_name = AsyncMock(return_value=0)
+        mock_jira.add_attachment = AsyncMock()
+
+        await DraftManager.save_task_draft_with_slices(mock_jira, "FEATURE-1", draft)
+
+        # Verify main draft saved on Feature
+        mock_jira.delete_attachments_by_name.assert_any_call(
+            "FEATURE-1", FORGE_TASKS_DRAFT_FILENAME
+        )
+
+        # Verify sliced drafts saved on Epics
+        mock_jira.delete_attachments_by_name.assert_any_call("EPIC-101", FORGE_TASKS_DRAFT_FILENAME)
+        mock_jira.delete_attachments_by_name.assert_any_call("EPIC-102", FORGE_TASKS_DRAFT_FILENAME)
+
+        assert mock_jira.add_attachment.call_count == 3

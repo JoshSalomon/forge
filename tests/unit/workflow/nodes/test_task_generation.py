@@ -622,7 +622,7 @@ class TestTaskGenerationDraftReview:
             MockAgent.return_value = mock_agent
 
             MockDraftManager.delete_draft_attachment = AsyncMock()
-            MockDraftManager.save_draft_attachment = AsyncMock()
+            MockDraftManager.save_task_draft_with_slices = AsyncMock()
             MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
             result = await generate_tasks(state)
@@ -633,8 +633,8 @@ class TestTaskGenerationDraftReview:
         )
 
         # 2. Verify DraftManager saved the new draft
-        MockDraftManager.save_draft_attachment.assert_called_once()
-        saved_draft = MockDraftManager.save_draft_attachment.call_args[0][2]
+        MockDraftManager.save_task_draft_with_slices.assert_called_once()
+        saved_draft = MockDraftManager.save_task_draft_with_slices.call_args[0][2]
         assert saved_draft.phase == "tasks"
         assert len(saved_draft.items) == 1
         assert saved_draft.items[0].summary == "Task One"
@@ -691,7 +691,7 @@ class TestTaskGenerationDraftReview:
             MockAgent.return_value = mock_agent
 
             MockDraftManager.delete_draft_attachment = AsyncMock()
-            MockDraftManager.save_draft_attachment = AsyncMock()
+            MockDraftManager.save_task_draft_with_slices = AsyncMock()
             MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
             await generate_tasks(state)
@@ -742,7 +742,7 @@ class TestTaskGenerationDraftReview:
             MockAgent.return_value = mock_agent
 
             MockDraftManager.delete_draft_attachment = AsyncMock()
-            MockDraftManager.save_draft_attachment = AsyncMock()
+            MockDraftManager.save_task_draft_with_slices = AsyncMock()
             MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
             await generate_tasks(state)

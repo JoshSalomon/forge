@@ -448,3 +448,60 @@ class DraftManager:
             return DraftManager._truncate_to_jira_limit(condensed_comment, limit)
 
         return DraftManager._truncate_to_jira_limit(full_comment, limit)
+
+    @staticmethod
+    def slice_task_draft(draft: ForgeDecompositionDraft) -> dict[str, ForgeDecompositionDraft]:
+        """Slice the task draft by Epic key, producing a dict of epic_key -> slice_draft.
+
+        Each slice draft will have items resequenced starting from 1.
+        """
+        slices: dict[str, list[Any]] = {}
+        for item in draft.items:
+            ek = item.epic_key
+            if not ek:
+                continue
+            if ek not in slices:
+                slices[ek] = []
+            slices[ek].append(item)
+
+        result: dict[str, ForgeDecompositionDraft] = {}
+        for ek, items in slices.items():
+            # Clone and re-sequence item IDs
+            resequenced_items = []
+            for idx, item in enumerate(items, start=1):
+                cloned_item = item.model_copy()
+                cloned_item.id = idx
+                resequenced_items.append(cloned_item)
+
+            result[ek] = ForgeDecompositionDraft(
+                parent_key=ek,
+                phase=draft.phase,
+                items=resequenced_items,
+                version=draft.version,
+                created_at=draft.created_at,
+                updated_at=draft.updated_at,
+            )
+        return result
+
+    @staticmethod
+    async def save_task_draft_with_slices(
+        jira_client: JiraClient,
+        feature_key: str,
+        draft: ForgeDecompositionDraft,
+    ) -> None:
+        """Save the aggregate task draft on the Feature, and attach sliced drafts to each associated Epic."""
+        # 1. Save main aggregate draft on Feature
+        await DraftManager.save_draft_attachment(
+            jira_client, feature_key, draft, FORGE_TASKS_DRAFT_FILENAME
+        )
+
+        # 2. Slice and attach per-Epic drafts
+        slices = DraftManager.slice_task_draft(draft)
+        for epic_key, slice_draft in slices.items():
+            try:
+                # Save slice with the same task draft filename on the Epic ticket
+                await DraftManager.save_draft_attachment(
+                    jira_client, epic_key, slice_draft, FORGE_TASKS_DRAFT_FILENAME
+                )
+            except Exception as e:
+                logger.warning(f"Failed to save sliced draft to Epic {epic_key}: {e}")

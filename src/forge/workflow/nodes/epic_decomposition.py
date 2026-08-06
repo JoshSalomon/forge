@@ -10,7 +10,7 @@ from forge.integrations.jira.client import JiraClient, MissingProjectConfig
 from forge.models.draft import DraftItem, ForgeDecompositionDraft
 from forge.models.workflow import ForgeLabel
 from forge.workflow.feature.state import FeatureState as WorkflowState
-from forge.workflow.utils import check_yolo_mode, update_state_timestamp
+from forge.workflow.utils import check_direct_mode, check_yolo_mode, update_state_timestamp
 from forge.workflow.utils.draft_manager import FORGE_STORIES_DRAFT_FILENAME, DraftManager
 from forge.workflow.utils.jira_status import post_status_comment
 from forge.workflow.utils.qa_summary import post_qa_summary_if_needed
@@ -167,8 +167,9 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
 
         # Check parent Jira ticket labels to check for forge:yolo and inspect global config yolo_mode
         is_yolo = check_yolo_mode(state, feature_labels)
+        is_direct = check_direct_mode(state, feature_labels)
 
-        if is_yolo:
+        if is_yolo or is_direct:
             # Create Epics in Jira immediately
             epics_by_repo: dict[str, list[str]] = {}
 
@@ -254,6 +255,7 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
                             "revision_requested": False,
                             "current_epic_key": None,
                             "current_node": "plan_approval_gate",
+                            "is_paused": not is_yolo,
                             "last_error": f"Partial Jira failure: {jira_error}"
                             if jira_error
                             else None,
