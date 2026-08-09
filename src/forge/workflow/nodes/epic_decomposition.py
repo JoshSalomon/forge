@@ -229,7 +229,11 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
                     f"- ✅ **Approve:** add `{ForgeLabel.PLAN_APPROVED.value}` to continue.\n"
                     "- ♻️ **Revise all epics:** add a comment starting with `!` on this ticket.\n"
                     "- 🔧 **Revise a single epic:** add a comment starting with `!` on the Epic.\n"
-                    "- ❓ **Ask a question:** add a Jira comment starting with `?`.",
+                    "- ❓ **Ask a question:** add a Jira comment starting with `?`.\n\n"
+                    "### Supported Workflow Modes\n"
+                    "1. **Default Draft Review Flow:** Forge attaches a draft JSON and posts a detailed markdown preview. Users can use `/forge` commands or comment starting with `!` to revise, and approve via `/forge approve` or adding the `forge:plan-approved` label.\n"
+                    "2. **Direct Mode (`forge:direct-mode`):** Forge bypasses draft attachments and directly creates the Epic issues in Jira immediately, then pauses awaiting human approval (adding `forge:plan-approved` label).\n"
+                    "3. **YOLO Mode (`forge:yolo`):** Forge bypasses draft attachments and human approval gates, automatically creating the Epic issues in Jira and auto-advancing without pausing.",
                 )
 
                 # Store plan summary in generation_context so Q&A can reference it

@@ -1076,7 +1076,7 @@ class OrchestratorWorker:
                                         )
 
                                         if filename == FORGE_TASKS_DRAFT_FILENAME:
-                                            await DraftManager.save_task_draft_with_slices(
+                                            await self._save_task_draft_with_resolution(
                                                 jira, message.ticket_key, updated_draft
                                             )
                                         else:
@@ -1125,7 +1125,7 @@ class OrchestratorWorker:
                                     )
 
                                     if filename == FORGE_TASKS_DRAFT_FILENAME:
-                                        await DraftManager.save_task_draft_with_slices(
+                                        await self._save_task_draft_with_resolution(
                                             jira, message.ticket_key, updated_draft
                                         )
                                     else:
@@ -1156,7 +1156,7 @@ class OrchestratorWorker:
                                 if original_draft:
                                     try:
                                         if filename == FORGE_TASKS_DRAFT_FILENAME:
-                                            await DraftManager.save_task_draft_with_slices(
+                                            await self._save_task_draft_with_resolution(
                                                 jira, message.ticket_key, original_draft
                                             )
                                         else:
@@ -2410,6 +2410,89 @@ class OrchestratorWorker:
                 logger.info(f"Edited original review comment {review_comment_id}")
         except Exception as c_err:
             logger.warning(f"Could not update original review comment: {c_err}")
+
+    async def _save_task_draft_with_resolution(
+        self,
+        jira: JiraClient,
+        ticket_key: str,
+        draft: ForgeDecompositionDraft,
+    ) -> None:
+        """Helper to resolve the parent Feature of an Epic and synchronize edits/rollbacks.
+
+        If the ticket is an Epic, it merges the Epic's task slice back into the
+        Feature's aggregate task draft, re-sequences all items, and saves.
+        Otherwise, it saves the draft directly.
+        """
+        issue = await jira.get_issue(ticket_key)
+        if issue.issue_type == "Epic" and issue.parent_key:
+            feature_key = issue.parent_key
+            logger.info(
+                f"Ticket {ticket_key} is an Epic. Resolving parent Feature key {feature_key}."
+            )
+
+            # Fetch the Feature-level aggregate tasks draft (FORGE_TASKS_DRAFT_FILENAME)
+            try:
+                aggregate_draft = await DraftManager.get_draft_attachment(
+                    jira, feature_key, FORGE_TASKS_DRAFT_FILENAME
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Could not download Feature-level aggregate draft for {feature_key}: {e}. "
+                    "Will construct a new aggregate draft using current items."
+                )
+                aggregate_draft = None
+
+            if aggregate_draft:
+                # Filter out existing items for this Epic
+                other_items = [
+                    item.model_copy()
+                    for item in aggregate_draft.items
+                    if item.epic_key != ticket_key
+                ]
+                # Append newly updated ones with epic_key set
+                updated_epic_items = []
+                for item in draft.items:
+                    cloned_item = item.model_copy()
+                    cloned_item.epic_key = ticket_key
+                    updated_epic_items.append(cloned_item)
+
+                combined_items = other_items + updated_epic_items
+
+                # Re-sequence combined items sequentially starting from 1
+                for idx, item in enumerate(combined_items, start=1):
+                    item.id = idx
+
+                updated_aggregate_draft = ForgeDecompositionDraft(
+                    parent_key=feature_key,
+                    phase="tasks",
+                    items=combined_items,
+                    version=aggregate_draft.version,
+                    created_at=aggregate_draft.created_at,
+                    updated_at=datetime.now(UTC),
+                )
+            else:
+                # Construct a new aggregate draft
+                combined_items = []
+                for idx, item in enumerate(draft.items, start=1):
+                    cloned_item = item.model_copy()
+                    cloned_item.epic_key = ticket_key
+                    cloned_item.id = idx
+                    combined_items.append(cloned_item)
+
+                updated_aggregate_draft = ForgeDecompositionDraft(
+                    parent_key=feature_key,
+                    phase="tasks",
+                    items=combined_items,
+                    version=draft.version,
+                    created_at=draft.created_at,
+                    updated_at=datetime.now(UTC),
+                )
+
+            await DraftManager.save_task_draft_with_slices(
+                jira, feature_key, updated_aggregate_draft
+            )
+        else:
+            await DraftManager.save_task_draft_with_slices(jira, ticket_key, draft)
 
     async def _post_terminal_error_comment(self, ticket_key: str, error: str) -> None:
         """Post a comment explaining how to retry a terminal error.

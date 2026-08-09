@@ -6,6 +6,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from forge.config import get_settings  # noqa: F401
 from forge.integrations.agents import ForgeAgent
 from forge.integrations.jira.client import JiraClient, MissingProjectConfig
 from forge.models.draft import DraftItem, ForgeDecompositionDraft
@@ -254,7 +255,11 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
                     f"- ✅ **Approve:** add `{ForgeLabel.TASK_APPROVED.value}` to continue.\n"
                     "- ♻️ **Revise all tasks:** add a comment starting with `!` on this ticket.\n"
                     "- 🔧 **Revise a single task:** add a comment starting with `!` on the Task.\n"
-                    "- ❓ **Ask a question:** add a Jira comment starting with `?`.",
+                    "- ❓ **Ask a question:** add a Jira comment starting with `?`.\n\n"
+                    "### Supported Workflow Modes\n"
+                    "1. **Default Draft Review Flow:** Forge attaches a draft JSON and posts a detailed markdown preview. Users can use `/forge` commands or comment starting with `!` to revise, and approve via `/forge approve` or adding the `forge:task-approved` label.\n"
+                    "2. **Direct Mode (`forge:direct-mode`):** Forge bypasses draft attachments and directly creates the Task issues in Jira immediately, then pauses awaiting human approval (adding `forge:task-approved` label).\n"
+                    "3. **YOLO Mode (`forge:yolo`):** Forge bypasses draft attachments and human approval gates, automatically creating the Task issues in Jira and auto-advancing without pausing.",
                 )
                 return cast(
                     WorkflowState,
