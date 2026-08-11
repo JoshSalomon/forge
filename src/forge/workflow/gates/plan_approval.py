@@ -47,12 +47,15 @@ def plan_approval_gate(state: WorkflowState) -> WorkflowState:
             f"Plan approval gate reached with 0 Epics for {ticket_key}. "
             "This indicates epic decomposition failed. Routing back to retry."
         )
-        return {
-            **state,
-            "last_error": "No Epics generated - decomposition may have failed",
-            "current_node": "decompose_epics",
-            "retry_count": state.get("retry_count", 0) + 1,
-        }
+        return cast(
+            WorkflowState,
+            {
+                **state,
+                "last_error": "No Epics generated - decomposition may have failed",
+                "current_node": "decompose_epics",
+                "retry_count": state.get("retry_count", 0) + 1,
+            },
+        )
 
     logger.info(f"Plan approval gate: pausing workflow for {ticket_key} ({epic_count} Epics)")
 

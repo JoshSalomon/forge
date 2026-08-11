@@ -51,12 +51,15 @@ def task_approval_gate(state: WorkflowState) -> WorkflowState:
             f"Task approval gate reached with 0 Tasks for {ticket_key}. "
             "This indicates task generation failed. Routing back to retry."
         )
-        return {
-            **state,
-            "last_error": "No Tasks generated - task generation may have failed",
-            "current_node": "generate_tasks",
-            "retry_count": state.get("retry_count", 0) + 1,
-        }
+        return cast(
+            WorkflowState,
+            {
+                **state,
+                "last_error": "No Tasks generated - task generation may have failed",
+                "current_node": "generate_tasks",
+                "retry_count": state.get("retry_count", 0) + 1,
+            },
+        )
 
     logger.info(
         f"Task approval gate: pausing workflow for {ticket_key} "
