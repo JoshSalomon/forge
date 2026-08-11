@@ -11,7 +11,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
+
+class AsyncSqliteSaver(MemorySaver):
+    @classmethod
+    def from_conn_string(cls, conn_string: str) -> "AsyncSqliteSaver":
+        return cls()
 
 from forge.models.workflow import TicketType
 from forge.workflow.feature.state import FeatureState as WorkflowState
