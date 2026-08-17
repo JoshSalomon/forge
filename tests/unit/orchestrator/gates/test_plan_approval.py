@@ -297,7 +297,7 @@ class TestPlanDraftProvisioning:
         )
         draft = ForgeDecompositionDraft(
             parent_key="TEST-123",
-            phase="stories",
+            phase="epics",
             items=[draft_item_1, draft_item_2],
             version=1,
             created_at=datetime.now(UTC),
@@ -354,7 +354,7 @@ class TestPlanDraftProvisioning:
         )
         draft = ForgeDecompositionDraft(
             parent_key="TEST-123",
-            phase="stories",
+            phase="epics",
             items=[draft_item_1],
             version=1,
             created_at=datetime.now(UTC),

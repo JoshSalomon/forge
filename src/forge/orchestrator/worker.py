@@ -60,6 +60,7 @@ from forge.workflow.pr_state import (
 )
 from forge.workflow.registry import create_default_router
 from forge.workflow.router import WorkflowRouter
+from forge.workflow.utils import check_direct_mode
 from forge.workflow.utils.automated_review_triage import (
     is_bot_sender,
     triage_automated_review,
@@ -70,7 +71,6 @@ from forge.workflow.utils.comment_classifier import (
     parse_comment_command,
 )
 from forge.workflow.utils.draft_manager import (
-    FORGE_STORIES_DRAFT_FILENAME,
     FORGE_TASKS_DRAFT_FILENAME,
     DraftManager,
 )
@@ -1009,179 +1009,221 @@ class OrchestratorWorker:
                     # Revision comment check allows leading whitespace for consistency with the comment classifier
                     is_revision_comment = bool(re.match(r"^\s*!", comment_body))
 
-                    if is_forge_cmd or is_revision_comment:
-                        filename = (
-                            FORGE_STORIES_DRAFT_FILENAME
+                    is_direct_mode = check_direct_mode(current_state)
+                    if not is_direct_mode and (is_forge_cmd or is_revision_comment):
+                        draft_key = (
+                            "plan_draft"
                             if current_node in ("plan_approval_gate", "task_plan_approval_gate")
-                            else FORGE_TASKS_DRAFT_FILENAME
+                            else "tasks_draft"
                         )
 
                         jira = JiraClient()
-                        has_draft = False
                         try:
-                            attachments = await jira.get_attachments(message.ticket_key)
-                            has_draft = any(att.get("filename") == filename for att in attachments)
-                        except Exception as list_err:
-                            logger.warning(f"Could not list attachments to check draft: {list_err}")
+                            # 1. Handle parsing errors immediately
+                            if is_forge_cmd and parsed_cmd is not None and "error" in parsed_cmd:
+                                await jira.add_comment(
+                                    message.ticket_key,
+                                    f"❌ **Error parsing command:** {parsed_cmd['error']}",
+                                )
+                                await jira.close()
+                                return current_state
 
-                        if is_forge_cmd or (is_revision_comment and has_draft):
+                            original_draft_raw = current_state.get(draft_key)
                             original_draft = None
-                            try:
+                            if original_draft_raw is not None:
+                                if isinstance(original_draft_raw, dict):
+                                    original_draft = ForgeDecompositionDraft.model_validate(
+                                        original_draft_raw
+                                    )
+                                else:
+                                    original_draft = original_draft_raw
+
+                            # 2. Slice aggregate_draft if we are on an Epic (child ticket)
+                            if (
+                                draft_key == "tasks_draft"
+                                and message.ticket_key != current_state.get("ticket_key")
+                            ):
+                                epic_items = []
+                                if original_draft:
+                                    epic_items = [
+                                        item.model_copy()
+                                        for item in original_draft.items
+                                        if item.epic_key == message.ticket_key
+                                    ]
+                                # Re-sequence local IDs
+                                for idx, item in enumerate(epic_items, start=1):
+                                    item.id = idx
+
+                                original_draft = ForgeDecompositionDraft(
+                                    parent_key=message.ticket_key,
+                                    phase="tasks",
+                                    items=epic_items,
+                                    version=original_draft.version if original_draft else 1,
+                                    created_at=original_draft.created_at
+                                    if original_draft
+                                    else datetime.now(UTC),
+                                    updated_at=original_draft.updated_at
+                                    if original_draft
+                                    else datetime.now(UTC),
+                                )
+
+                            if not original_draft:
+                                raise ValueError(f"Draft '{draft_key}' not found in state.")
+
+                            updated_draft = None
+                            if is_forge_cmd and parsed_cmd is not None:
+                                draft_json = [item.model_dump() for item in original_draft.items]
+                                mutated_json = DraftManager.apply_draft_modification(
+                                    draft_json, parsed_cmd
+                                )
+
+                                updated_items = [
+                                    DraftItem.model_validate(item) for item in mutated_json
+                                ]
+                                updated_draft = ForgeDecompositionDraft(
+                                    parent_key=original_draft.parent_key,
+                                    phase=original_draft.phase,
+                                    items=updated_items,
+                                    version=original_draft.version,
+                                    created_at=original_draft.created_at,
+                                    updated_at=datetime.now(UTC),
+                                )
+
+                            elif is_revision_comment:
+                                feedback_text = re.sub(r"^\s*!\s*", "", comment_body)
+                                if not feedback_text:
+                                    raise ValueError("Revision feedback cannot be empty.")
+
+                                feature_key = current_state.get("ticket_key") or message.ticket_key
+                                feature_issue = await jira.get_issue(feature_key)
+                                feature_summary = ""
+                                feature_description = ""
+                                if feature_issue:
+                                    from unittest.mock import AsyncMock, MagicMock
+
+                                    if hasattr(feature_issue, "summary") and not isinstance(
+                                        feature_issue.summary, (MagicMock, AsyncMock)
+                                    ):
+                                        feature_summary = str(feature_issue.summary)
+                                    if hasattr(feature_issue, "description") and not isinstance(
+                                        feature_issue.description, (MagicMock, AsyncMock)
+                                    ):
+                                        feature_description = str(feature_issue.description)
+
+                                context_data = {
+                                    "parent_key": feature_key,
+                                    "parent_summary": feature_summary,
+                                    "parent_description": feature_description,
+                                    "prd": current_state.get("prd_content", ""),
+                                    "spec": current_state.get("spec_content", ""),
+                                    "ticket_key": message.ticket_key,
+                                    "current_node": current_node,
+                                }
+
+                                agent = ForgeAgent()
                                 try:
-                                    original_draft = await DraftManager.get_draft_attachment(
-                                        jira, message.ticket_key, filename
+                                    revised_json_str = await agent.revise_draft_with_feedback(
+                                        draft_content=original_draft.model_dump_json(),
+                                        feedback=feedback_text,
+                                        context=context_data,
                                     )
-                                except Exception as get_err:
-                                    logger.warning(
-                                        f"Could not download original draft for rollback: {get_err}"
-                                    )
+                                finally:
+                                    await agent.close()
 
-                                if is_forge_cmd and parsed_cmd is not None:
-                                    if parsed_cmd.get("command") == "approve":
-                                        is_approved = True
-                                        if current_node in (
-                                            "plan_approval_gate",
-                                            "task_plan_approval_gate",
-                                        ):
-                                            await jira.set_workflow_label(
-                                                message.ticket_key, ForgeLabel.PLAN_APPROVED
-                                            )
-                                        elif current_node == "task_approval_gate":
-                                            await jira.set_workflow_label(
-                                                message.ticket_key, ForgeLabel.TASK_APPROVED
-                                            )
-                                    else:
-                                        if not original_draft:
-                                            raise ValueError(
-                                                f"Draft attachment '{filename}' not found for modification."
-                                            )
+                                updated_draft = ForgeDecompositionDraft.model_validate_json(
+                                    revised_json_str
+                                )
 
-                                        draft_json = [
-                                            item.model_dump() for item in original_draft.items
+                            if updated_draft is not None:
+                                # Update Feature state with the modified draft
+                                if (
+                                    draft_key == "tasks_draft"
+                                    and message.ticket_key != current_state.get("ticket_key")
+                                ):
+                                    # It's an Epic slice update. Merge back.
+                                    aggregate_draft = current_state.get("tasks_draft")
+                                    if aggregate_draft:
+                                        if isinstance(aggregate_draft, dict):
+                                            aggregate_draft = (
+                                                ForgeDecompositionDraft.model_validate(
+                                                    aggregate_draft
+                                                )
+                                            )
+                                        other_items = [
+                                            item.model_copy()
+                                            for item in aggregate_draft.items
+                                            if item.epic_key != message.ticket_key
                                         ]
-                                        mutated_json = DraftManager.apply_draft_modification(
-                                            draft_json, parsed_cmd
+                                        updated_epic_items = []
+                                        for item in updated_draft.items:
+                                            cloned_item = item.model_copy()
+                                            cloned_item.epic_key = message.ticket_key
+                                            updated_epic_items.append(cloned_item)
+
+                                        combined_items = other_items + updated_epic_items
+
+                                        for idx, item in enumerate(combined_items, start=1):
+                                            item.id = idx
+
+                                        updated_aggregate_draft = ForgeDecompositionDraft(
+                                            parent_key=current_state.get("ticket_key"),
+                                            phase="tasks",
+                                            items=combined_items,
+                                            version=aggregate_draft.version,
+                                            created_at=aggregate_draft.created_at,
+                                            updated_at=datetime.now(UTC),
                                         )
+                                    else:
+                                        combined_items = []
+                                        for idx, item in enumerate(updated_draft.items, start=1):
+                                            cloned_item = item.model_copy()
+                                            cloned_item.epic_key = message.ticket_key
+                                            cloned_item.id = idx
+                                            combined_items.append(cloned_item)
 
-                                        updated_items = [
-                                            DraftItem.model_validate(item) for item in mutated_json
-                                        ]
-                                        updated_draft = ForgeDecompositionDraft(
-                                            parent_key=original_draft.parent_key,
-                                            phase=original_draft.phase,
-                                            items=updated_items,
-                                            version=original_draft.version,
-                                            created_at=original_draft.created_at,
+                                        updated_aggregate_draft = ForgeDecompositionDraft(
+                                            parent_key=current_state.get("ticket_key"),
+                                            phase="tasks",
+                                            items=combined_items,
+                                            version=updated_draft.version,
+                                            created_at=updated_draft.created_at,
                                             updated_at=datetime.now(UTC),
                                         )
 
-                                        if filename == FORGE_TASKS_DRAFT_FILENAME:
-                                            await self._save_task_draft_with_resolution(
-                                                jira, message.ticket_key, updated_draft
-                                            )
-                                        else:
-                                            await DraftManager.save_draft_attachment(
-                                                jira, message.ticket_key, updated_draft, filename
-                                            )
+                                    current_state["tasks_draft"] = updated_aggregate_draft
+                                else:
+                                    current_state[draft_key] = updated_draft
 
-                                        # Update the original review comment with the new breakdown (SC-002)
-                                        await self._update_original_review_comment(
-                                            jira, message.ticket_key, updated_draft
-                                        )
-
-                                        comment_id = comment.get("id") if comment else None
-                                        if comment_id:
-                                            await jira.edit_comment(
-                                                message.ticket_key,
-                                                comment_id,
-                                                f"✅ {comment_body}",
-                                            )
-
-                                elif is_revision_comment:
-                                    if not original_draft:
-                                        raise ValueError(
-                                            f"Draft attachment '{filename}' not found for revision."
-                                        )
-
-                                    feedback_text = re.sub(r"^\s*!\s*", "", comment_body)
-                                    if not feedback_text:
-                                        raise ValueError("Revision feedback cannot be empty.")
-
-                                    agent = ForgeAgent()
-                                    try:
-                                        revised_json_str = await agent.revise_draft_with_feedback(
-                                            draft_content=original_draft.model_dump_json(),
-                                            feedback=feedback_text,
-                                            context={
-                                                "ticket_key": message.ticket_key,
-                                                "current_node": current_node,
-                                            },
-                                        )
-                                    finally:
-                                        await agent.close()
-
-                                    updated_draft = ForgeDecompositionDraft.model_validate_json(
-                                        revised_json_str
-                                    )
-
-                                    if filename == FORGE_TASKS_DRAFT_FILENAME:
-                                        await self._save_task_draft_with_resolution(
-                                            jira, message.ticket_key, updated_draft
-                                        )
-                                    else:
-                                        await DraftManager.save_draft_attachment(
-                                            jira, message.ticket_key, updated_draft, filename
-                                        )
-
-                                    # Update the original review comment with the new breakdown (SC-002)
-                                    await self._update_original_review_comment(
-                                        jira, message.ticket_key, updated_draft
-                                    )
-
-                                    comment_id = comment.get("id") if comment else None
-                                    if comment_id:
-                                        await jira.edit_comment(
-                                            message.ticket_key, comment_id, f"✅ {comment_body}"
-                                        )
-
-                                if not parsed_cmd or parsed_cmd.get("command") != "approve":
-                                    await jira.close()
-                                    return current_state
-
-                            except Exception as e:
-                                logger.error(
-                                    f"Failed to process comment command/revision: {e}",
-                                    exc_info=True,
+                                # Update the original review comment with the new breakdown
+                                await self._update_original_review_comment(
+                                    jira, message.ticket_key, updated_draft
                                 )
-                                if original_draft:
-                                    try:
-                                        if filename == FORGE_TASKS_DRAFT_FILENAME:
-                                            await self._save_task_draft_with_resolution(
-                                                jira, message.ticket_key, original_draft
-                                            )
-                                        else:
-                                            await DraftManager.save_draft_attachment(
-                                                jira, message.ticket_key, original_draft, filename
-                                            )
-                                    except Exception as rollback_err:
-                                        logger.error(
-                                            f"Failed to roll back draft attachment: {rollback_err}",
-                                            exc_info=True,
-                                        )
 
-                                error_comment_text = (
-                                    f"❌ Forge command/revision failed: {redact_secrets(e)}"
-                                )
-                                try:
-                                    await jira.add_comment(message.ticket_key, error_comment_text)
-                                except Exception as post_err:
-                                    logger.error(
-                                        f"Failed to post error comment: {post_err}", exc_info=True
+                                comment_id = comment.get("id") if comment else None
+                                if comment_id:
+                                    await jira.edit_comment(
+                                        message.ticket_key,
+                                        comment_id,
+                                        f"✅ {comment_body}",
                                     )
 
-                                await jira.close()
-                                return current_state
-                        await jira.close()
+                            await jira.close()
+                            return current_state
+
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to process comment command/revision: {e}",
+                                exc_info=True,
+                            )
+                            try:
+                                await jira.add_comment(
+                                    message.ticket_key,
+                                    f"❌ **Error processing command/revision:** {e}",
+                                )
+                            except Exception as post_err:
+                                logger.error(f"Failed to post error comment: {post_err}")
+                            await jira.close()
+                            return current_state
 
                 # >option N detection for rca_option_gate (runs before general classification)
                 if current_node == "rca_option_gate":
@@ -2392,7 +2434,7 @@ class OrchestratorWorker:
             comments_list = await jira.get_comments(ticket_key)
             target_prefix = (
                 "### 📋 Proposed Epics Draft"
-                if draft.phase == "stories"
+                if draft.phase == "epics"
                 else "### 📋 Proposed Tasks Draft"
             )
             review_comment_id = None
@@ -2725,7 +2767,7 @@ class OrchestratorWorker:
             )
 
         yolo_mode = ForgeLabel.YOLO in labels
-        direct_mode = "forge:direct-mode" in labels
+        direct_mode = ForgeLabel.DIRECT_MODE in labels
 
         event_state = {
             "ticket_key": message.ticket_key,

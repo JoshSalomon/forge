@@ -18,7 +18,7 @@ from forge.workflow.utils.draft_manager import (
 
 @pytest.fixture(
     params=[
-        ("stories", FORGE_STORIES_DRAFT_FILENAME),
+        ("epics", FORGE_STORIES_DRAFT_FILENAME),
         ("tasks", FORGE_TASKS_DRAFT_FILENAME),
     ]
 )
@@ -53,226 +53,6 @@ def sample_draft(draft_config: tuple[str, str]) -> ForgeDecompositionDraft:
 
 class TestDraftManager:
     """Test cases for DraftManager CRUD operations on Jira parent tickets."""
-
-    @pytest.mark.asyncio
-    async def test_save_draft_attachment_success_no_existing(
-        self, draft_config: tuple[str, str], sample_draft: ForgeDecompositionDraft
-    ) -> None:
-        """Should successfully upload draft when no prior matching attachment exists."""
-        _, filename = draft_config
-        mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.delete_attachments_by_name = AsyncMock(return_value=0)
-        mock_jira.add_attachment = AsyncMock()
-
-        await DraftManager.save_draft_attachment(mock_jira, "PROJ-123", sample_draft, filename)
-
-        mock_jira.delete_attachments_by_name.assert_called_once_with("PROJ-123", filename)
-
-        # Verify serialized content passed to add_attachment
-        expected_bytes = sample_draft.model_dump_json(indent=2).encode("utf-8")
-        mock_jira.add_attachment.assert_called_once_with("PROJ-123", filename, expected_bytes)
-
-    @pytest.mark.asyncio
-    async def test_save_draft_attachment_success_with_existing(
-        self, draft_config: tuple[str, str], sample_draft: ForgeDecompositionDraft
-    ) -> None:
-        """Should delete existing matching attachment before uploading new draft."""
-        _, filename = draft_config
-        mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.delete_attachments_by_name = AsyncMock(return_value=2)
-        mock_jira.add_attachment = AsyncMock()
-
-        await DraftManager.save_draft_attachment(mock_jira, "PROJ-123", sample_draft, filename)
-
-        mock_jira.delete_attachments_by_name.assert_called_once_with("PROJ-123", filename)
-
-        expected_bytes = sample_draft.model_dump_json(indent=2).encode("utf-8")
-        mock_jira.add_attachment.assert_called_once_with("PROJ-123", filename, expected_bytes)
-
-    @pytest.mark.asyncio
-    async def test_save_draft_attachment_failure_to_delete(
-        self, draft_config: tuple[str, str], sample_draft: ForgeDecompositionDraft
-    ) -> None:
-        """Should propagate delete_attachments_by_name exception."""
-        _, filename = draft_config
-        mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.delete_attachments_by_name = AsyncMock(side_effect=Exception("Delete Error"))
-
-        with pytest.raises(Exception, match="Delete Error"):
-            await DraftManager.save_draft_attachment(mock_jira, "PROJ-123", sample_draft, filename)
-
-    @pytest.mark.asyncio
-    async def test_save_draft_attachment_failure_to_upload(
-        self, draft_config: tuple[str, str], sample_draft: ForgeDecompositionDraft
-    ) -> None:
-        """Should propagate add_attachment exception."""
-        _, filename = draft_config
-        mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.delete_attachments_by_name = AsyncMock(return_value=0)
-        mock_jira.add_attachment = AsyncMock(side_effect=Exception("Upload Error"))
-
-        with pytest.raises(Exception, match="Upload Error"):
-            await DraftManager.save_draft_attachment(mock_jira, "PROJ-123", sample_draft, filename)
-
-    @pytest.mark.asyncio
-    async def test_get_draft_attachment_success(
-        self, draft_config: tuple[str, str], sample_draft: ForgeDecompositionDraft
-    ) -> None:
-        """Should download and successfully parse draft attachment if found."""
-        _, filename = draft_config
-        mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.get_attachments = AsyncMock(
-            return_value=[
-                {
-                    "id": "att-222",
-                    "filename": filename,
-                    "content_url": "http://url2",
-                },
-            ]
-        )
-        serialized_bytes = sample_draft.model_dump_json().encode("utf-8")
-        mock_jira.download_attachment = AsyncMock(return_value=serialized_bytes)
-
-        res = await DraftManager.get_draft_attachment(mock_jira, "PROJ-123", filename)
-
-        assert res is not None
-        assert res.parent_key == sample_draft.parent_key
-        assert res.phase == sample_draft.phase
-        assert len(res.items) == len(sample_draft.items)
-        assert res.items[0].summary == sample_draft.items[0].summary
-        mock_jira.get_attachments.assert_called_once_with("PROJ-123")
-        mock_jira.download_attachment.assert_called_once_with("http://url2")
-
-    @pytest.mark.asyncio
-    async def test_get_draft_attachment_success_alternate_url_key(
-        self, draft_config: tuple[str, str], sample_draft: ForgeDecompositionDraft
-    ) -> None:
-        """Should download using 'content_url' key."""
-        _, filename = draft_config
-        mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.get_attachments = AsyncMock(
-            return_value=[
-                {
-                    "id": "att-222",
-                    "filename": filename,
-                    "content_url": "http://url2-alt",
-                },
-            ]
-        )
-        serialized_bytes = sample_draft.model_dump_json().encode("utf-8")
-        mock_jira.download_attachment = AsyncMock(return_value=serialized_bytes)
-
-        res = await DraftManager.get_draft_attachment(mock_jira, "PROJ-123", filename)
-
-        assert res is not None
-        mock_jira.download_attachment.assert_called_once_with("http://url2-alt")
-
-    @pytest.mark.asyncio
-    async def test_get_draft_attachment_not_found(self, draft_config: tuple[str, str]) -> None:
-        """Should return None if attachment does not exist."""
-        _, filename = draft_config
-        mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.get_attachments = AsyncMock(return_value=[])
-
-        res = await DraftManager.get_draft_attachment(mock_jira, "PROJ-123", filename)
-
-        assert res is None
-        mock_jira.get_attachments.assert_called_once_with("PROJ-123")
-
-    @pytest.mark.asyncio
-    async def test_get_draft_attachment_missing_content_url(
-        self, draft_config: tuple[str, str]
-    ) -> None:
-        """Should log warning and return None if content URL is missing."""
-        _, filename = draft_config
-        mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.get_attachments = AsyncMock(
-            return_value=[
-                {"id": "att-222", "filename": filename},
-            ]
-        )
-
-        res = await DraftManager.get_draft_attachment(mock_jira, "PROJ-123", filename)
-
-        assert res is None
-
-    @pytest.mark.asyncio
-    async def test_get_draft_attachment_validation_failure(
-        self, draft_config: tuple[str, str], caplog: LogCaptureFixture
-    ) -> None:
-        """Should log a warning and return None if draft JSON is invalid according to model schema."""
-        _, filename = draft_config
-        mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.get_attachments = AsyncMock(
-            return_value=[
-                {
-                    "id": "att-222",
-                    "filename": filename,
-                    "content_url": "http://url2",
-                },
-            ]
-        )
-        # Missing required fields like updated_at, parent_key, etc.
-        invalid_bytes = b'{"parent_key": "PROJ-123", "phase": "invalid_phase"}'
-        mock_jira.download_attachment = AsyncMock(return_value=invalid_bytes)
-
-        res = await DraftManager.get_draft_attachment(mock_jira, "PROJ-123", filename)
-
-        assert res is None
-        # Verify warning log was printed
-        assert any(
-            "Validation failed for draft attachment" in record.message
-            and record.levelname == "WARNING"
-            for record in caplog.records
-        )
-
-    @pytest.mark.asyncio
-    async def test_get_draft_attachment_parsing_failure(
-        self, draft_config: tuple[str, str], caplog: LogCaptureFixture
-    ) -> None:
-        """Should log a warning and return None if draft bytes are completely non-JSON."""
-        _, filename = draft_config
-        mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.get_attachments = AsyncMock(
-            return_value=[
-                {
-                    "id": "att-222",
-                    "filename": filename,
-                    "content_url": "http://url2",
-                },
-            ]
-        )
-        mock_jira.download_attachment = AsyncMock(return_value=b"not json at all")
-
-        res = await DraftManager.get_draft_attachment(mock_jira, "PROJ-123", filename)
-
-        assert res is None
-        # Verify warning log was printed
-        assert any(
-            "Failed to parse draft attachment" in record.message and record.levelname == "WARNING"
-            for record in caplog.records
-        )
-
-    @pytest.mark.asyncio
-    async def test_get_draft_attachment_download_failure(
-        self, draft_config: tuple[str, str]
-    ) -> None:
-        """Should propagate download_attachment exceptions."""
-        _, filename = draft_config
-        mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.get_attachments = AsyncMock(
-            return_value=[
-                {
-                    "id": "att-222",
-                    "filename": filename,
-                    "content_url": "http://url2",
-                },
-            ]
-        )
-        mock_jira.download_attachment = AsyncMock(side_effect=Exception("Network Timeout"))
-
-        with pytest.raises(Exception, match="Network Timeout"):
-            await DraftManager.get_draft_attachment(mock_jira, "PROJ-123", filename)
 
     @pytest.mark.asyncio
     async def test_delete_draft_attachment_success(self, draft_config: tuple[str, str]) -> None:
@@ -398,9 +178,9 @@ class TestDraftManager:
 
         # Set a limit that is large enough to contain headers + footer + some rows + warning note,
         # but too small to fit all 10 rows.
-        comment = DraftManager.format_review_comment(draft, limit=750)
+        comment = DraftManager.format_review_comment(draft, limit=950)
 
-        assert len(comment) <= 750
+        assert len(comment) <= 950
         assert "⚠️ Showing first" in comment
         assert "items — see attached draft JSON for the full list." in comment
         assert "Task 1" in comment
@@ -411,66 +191,20 @@ class TestDraftManager:
         assert len(very_small_comment) <= 100
         assert very_small_comment.endswith(" [truncated]")
 
-    def test_slice_task_draft(self) -> None:
-        """Should slice task draft by epic key and resequence item IDs."""
-        now = datetime.now(UTC)
-        draft = ForgeDecompositionDraft(
-            parent_key="FEATURE-1",
-            phase="tasks",
-            items=[
-                DraftItem(
-                    id=1,
-                    summary="Task 1",
-                    description="Desc 1",
-                    repo="repo1",
-                    acceptance_criteria=[],
-                    epic_key="EPIC-101",
-                ),
-                DraftItem(
-                    id=2,
-                    summary="Task 2",
-                    description="Desc 2",
-                    repo="repo2",
-                    acceptance_criteria=[],
-                    epic_key="EPIC-102",
-                ),
-                DraftItem(
-                    id=3,
-                    summary="Task 3",
-                    description="Desc 3",
-                    repo="repo3",
-                    acceptance_criteria=[],
-                    epic_key="EPIC-101",
-                ),
-            ],
-            version=1,
-            created_at=now,
-            updated_at=now,
-        )
 
-        slices = DraftManager.slice_task_draft(draft)
-        assert len(slices) == 2
-        assert "EPIC-101" in slices
-        assert "EPIC-102" in slices
-
-        slice_101 = slices["EPIC-101"]
-        assert slice_101.parent_key == "EPIC-101"
-        assert slice_101.phase == "tasks"
-        assert len(slice_101.items) == 2
-        assert slice_101.items[0].summary == "Task 1"
-        assert slice_101.items[0].id == 1
-        assert slice_101.items[1].summary == "Task 3"
-        assert slice_101.items[1].id == 2  # Resequenced
-
-        slice_102 = slices["EPIC-102"]
-        assert slice_102.parent_key == "EPIC-102"
-        assert len(slice_102.items) == 1
-        assert slice_102.items[0].summary == "Task 2"
-        assert slice_102.items[0].id == 1  # Resequenced
+    def test_chunk_text_by_limit(self) -> None:
+        """Verify chunk_text_by_limit splits text correctly."""
+        text = "Line 1\nLine 2\nLine 3"
+        # Split with small limit
+        chunks = DraftManager.chunk_text_by_limit(text, limit=10)
+        assert len(chunks) == 3
+        assert chunks[0] == "Line 1"
+        assert chunks[1] == "Line 2"
+        assert chunks[2] == "Line 3"
 
     @pytest.mark.asyncio
-    async def test_save_task_draft_with_slices(self) -> None:
-        """Should save the main draft on the Feature and per-Epic sliced drafts on each Epic."""
+    async def test_post_task_draft_review(self) -> None:
+        """Verify post_task_draft_review slices tasks by Epic and posts comments to Epic and Feature tickets."""
         now = datetime.now(UTC)
         draft = ForgeDecompositionDraft(
             parent_key="FEATURE-1",
@@ -499,18 +233,25 @@ class TestDraftManager:
         )
 
         mock_jira = MagicMock(spec=JiraClient)
-        mock_jira.delete_attachments_by_name = AsyncMock(return_value=0)
-        mock_jira.add_attachment = AsyncMock()
+        mock_jira.add_comment = AsyncMock()
 
-        await DraftManager.save_task_draft_with_slices(mock_jira, "FEATURE-1", draft)
+        await DraftManager.post_task_draft_review(mock_jira, "FEATURE-1", draft)
 
-        # Verify main draft saved on Feature
-        mock_jira.delete_attachments_by_name.assert_any_call(
-            "FEATURE-1", FORGE_TASKS_DRAFT_FILENAME
-        )
+        # Should add comments to EPIC-101, EPIC-102, and FEATURE-1
+        assert mock_jira.add_comment.call_count == 3
+        
+        # Verify Epic EPIC-101 comment
+        epic_101_call = [call for call in mock_jira.add_comment.call_args_list if call[0][0] == "EPIC-101"][0]
+        assert "### 📋 Proposed Tasks Draft" in epic_101_call[0][1]
+        assert "Task 1" in epic_101_call[0][1]
 
-        # Verify sliced drafts saved on Epics
-        mock_jira.delete_attachments_by_name.assert_any_call("EPIC-101", FORGE_TASKS_DRAFT_FILENAME)
-        mock_jira.delete_attachments_by_name.assert_any_call("EPIC-102", FORGE_TASKS_DRAFT_FILENAME)
+        # Verify Epic EPIC-102 comment
+        epic_102_call = [call for call in mock_jira.add_comment.call_args_list if call[0][0] == "EPIC-102"][0]
+        assert "### 📋 Proposed Tasks Draft" in epic_102_call[0][1]
+        assert "Task 2" in epic_102_call[0][1]
 
-        assert mock_jira.add_attachment.call_count == 3
+        # Verify Feature FEATURE-1 comment
+        feature_call = [call for call in mock_jira.add_comment.call_args_list if call[0][0] == "FEATURE-1"][0]
+        assert "### 📋 Proposed Tasks Drafts by Epic" in feature_call[0][1]
+        assert "EPIC-101" in feature_call[0][1]
+        assert "EPIC-102" in feature_call[0][1]

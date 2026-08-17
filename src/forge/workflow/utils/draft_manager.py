@@ -2,12 +2,13 @@
 
 import copy
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import ValidationError
 
 from forge.integrations.jira import JiraClient
-from forge.models.draft import ForgeDecompositionDraft
+from forge.models.draft import DraftItem, ForgeDecompositionDraft
 
 logger = logging.getLogger(__name__)
 
@@ -189,118 +190,6 @@ class DraftManager:
         return mutated_list
 
     @staticmethod
-    async def save_draft_attachment(
-        jira_client: JiraClient,
-        issue_key: str,
-        draft: ForgeDecompositionDraft,
-        filename: str,
-    ) -> None:
-        """Save a draft decomposition as an attachment on a Jira parent issue, enforcing the single-file constraint.
-
-        Args:
-            jira_client: The Jira client instance.
-            issue_key: The Jira issue key.
-            draft: The draft model to save.
-            filename: The target filename.
-        """
-        # 1. Delete any matching filename to enforce the single-file constraint (BR-002/BR-004)
-        try:
-            await jira_client.delete_attachments_by_name(issue_key, filename)
-        except Exception as e:
-            logger.error(
-                f"Failed to delete existing draft attachment '{filename}' on {issue_key} to enforce single-file constraint: {e}",
-                exc_info=True,
-            )
-            raise
-
-        # 2. Serialize and upload
-        try:
-            content_json = draft.model_dump_json(indent=2)
-            content_bytes = content_json.encode("utf-8")
-        except Exception as e:
-            logger.error(f"Failed to serialize draft for {issue_key}: {e}", exc_info=True)
-            raise
-
-        try:
-            logger.info(f"Uploading new draft attachment '{filename}' to {issue_key}.")
-            await jira_client.add_attachment(issue_key, filename, content_bytes)
-        except Exception as e:
-            logger.error(
-                f"Failed to upload draft attachment '{filename}' to {issue_key}: {e}",
-                exc_info=True,
-            )
-            raise
-
-    @staticmethod
-    async def get_draft_attachment(
-        jira_client: JiraClient,
-        issue_key: str,
-        filename: str,
-    ) -> ForgeDecompositionDraft | None:
-        """Scan for attachment with matching filename on the issue, download and parse it.
-
-        Args:
-            jira_client: The Jira client instance.
-            issue_key: The Jira issue key.
-            filename: The target filename to retrieve.
-
-        Returns:
-            The parsed ForgeDecompositionDraft model instance, or None if not found or validation/parsing fails.
-        """
-        try:
-            attachments = await jira_client.get_attachments(issue_key)
-        except Exception as e:
-            logger.error(f"Failed to list attachments for {issue_key}: {e}", exc_info=True)
-            raise
-
-        target_attachment = None
-        for att in attachments:
-            if att.get("filename") == filename:
-                target_attachment = att
-                break
-
-        if not target_attachment:
-            logger.debug(f"No attachment found with filename '{filename}' on {issue_key}")
-            return None
-
-        content_url = target_attachment.get("content_url") or target_attachment.get("content")
-        if not content_url:
-            logger.warning(
-                f"Attachment '{filename}' found on {issue_key} but is missing a download URL."
-            )
-            return None
-
-        try:
-            content_bytes = await jira_client.download_attachment(content_url)
-        except Exception as e:
-            logger.error(
-                f"Failed to download attachment '{filename}' from {content_url}: {e}",
-                exc_info=True,
-            )
-            raise
-
-        try:
-            return ForgeDecompositionDraft.model_validate_json(content_bytes)
-        except ValidationError as ve:
-            if "json_invalid" in str(ve) or "Invalid JSON" in str(ve):
-                logger.warning(
-                    f"Failed to parse draft attachment '{filename}' on {issue_key}. Error: {ve}",
-                    exc_info=True,
-                )
-            else:
-                logger.warning(
-                    f"Validation failed for draft attachment '{filename}' on {issue_key}. Error: {ve}",
-                    exc_info=True,
-                )
-            return None
-        except Exception as e:
-            logger.warning(
-                f"Failed to parse draft attachment '{filename}' on {issue_key}. Error: {e}",
-                exc_info=True,
-            )
-            return None
-
-    @staticmethod
     async def delete_draft_attachment(
         jira_client: JiraClient,
         issue_key: str,
@@ -341,7 +230,7 @@ class DraftManager:
             return text.replace("|", "\\|")
 
         items = draft.items
-        if draft.phase == "stories":
+        if draft.phase == "epics":
             phase_title = "Epics"
             noun_plural = "epics"
             noun_singular = "epic"
@@ -383,10 +272,15 @@ class DraftManager:
 
         footer = (
             "## 🤖 Forge interaction options\n\n"
-            f"- ✅ **Approve:** comment `/forge approve` or add `{approval_label}` to continue.\n"
+            f"- 🔧 **Modify draft items using commands:**\n"
+            f"  - `/forge add key=value` - Add a new item\n"
+            f"  - `/forge update <ID> key=value` - Update an item\n"
+            f"  - `/forge remove <ID>` - Remove an item\n"
+            f"  - `/forge exclude <ID>` - Toggle exclude on an item\n"
             f"- ♻️ **Revise all {noun_plural}:** add a comment starting with `!` on this ticket.\n"
-            f"- 🔧 **Revise a single {noun_singular}:** add a comment starting with `!` on the {phase_title.rstrip('s')}.\n"
-            "- ❓ **Ask a question:** add a Jira comment starting with `?`."
+            f"- 🔧 **Revise a single {noun_singular}:** add a comment starting with `!` on the {noun_singular.capitalize()}.\n"
+            f"- ❓ **Ask a question:** add a Jira comment starting with `?`.\n"
+            f"- ✅ **To approve:** add the `{approval_label}` label to the Feature ticket."
         )
 
         full_comment = header + table + details + footer
@@ -450,12 +344,50 @@ class DraftManager:
         return DraftManager._truncate_to_jira_limit(full_comment, limit)
 
     @staticmethod
-    def slice_task_draft(draft: ForgeDecompositionDraft) -> dict[str, ForgeDecompositionDraft]:
-        """Slice the task draft by Epic key, producing a dict of epic_key -> slice_draft.
+    def chunk_text_by_limit(text: str, limit: int = 30000) -> list[str]:
+        """Split text into chunks of at most 'limit' characters, splitting by lines if possible."""
+        if len(text) <= limit:
+            return [text]
 
-        Each slice draft will have items resequenced starting from 1.
-        """
-        slices: dict[str, list[Any]] = {}
+        chunks = []
+        lines = text.split("\n")
+        current_chunk = []
+        current_length = 0
+
+        for line in lines:
+            if current_length + len(line) + 1 > limit:
+                if current_chunk:
+                    chunks.append("\n".join(current_chunk))
+                    current_chunk = [line]
+                    current_length = len(line)
+                else:
+                    # Line itself is longer than limit, split it by chars
+                    chunks.append(line[:limit])
+                    # remaining line parts
+                    remaining = line[limit:]
+                    while len(remaining) > limit:
+                        chunks.append(remaining[:limit])
+                        remaining = remaining[limit:]
+                    current_chunk = [remaining]
+                    current_length = len(remaining)
+            else:
+                current_chunk.append(line)
+                current_length += len(line) + 1
+
+        if current_chunk:
+            chunks.append("\n".join(current_chunk))
+
+        return chunks
+
+    @staticmethod
+    async def post_task_draft_review(
+        jira_client: JiraClient,
+        feature_key: str,
+        draft: ForgeDecompositionDraft,
+    ) -> None:
+        """Post sliced task draft review comments to Epic tickets, with continuation chunks for overflow, and a navigation link comment on Feature."""
+        # 1. Slice draft by Epic key
+        slices: dict[str, list[DraftItem]] = {}
         for item in draft.items:
             ek = item.epic_key
             if not ek:
@@ -464,44 +396,40 @@ class DraftManager:
                 slices[ek] = []
             slices[ek].append(item)
 
-        result: dict[str, ForgeDecompositionDraft] = {}
-        for ek, items in slices.items():
-            # Clone and re-sequence item IDs
+        # 2. For each Epic, post the task draft review comment (supporting ordered continuation comments for overflow)
+        for epic_key, items in slices.items():
             resequenced_items = []
             for idx, item in enumerate(items, start=1):
                 cloned_item = item.model_copy()
                 cloned_item.id = idx
                 resequenced_items.append(cloned_item)
 
-            result[ek] = ForgeDecompositionDraft(
-                parent_key=ek,
-                phase=draft.phase,
+            epic_draft = ForgeDecompositionDraft(
+                parent_key=epic_key,
+                phase="tasks",
                 items=resequenced_items,
                 version=draft.version,
                 created_at=draft.created_at,
-                updated_at=draft.updated_at,
+                updated_at=datetime.now(UTC),
             )
-        return result
 
-    @staticmethod
-    async def save_task_draft_with_slices(
-        jira_client: JiraClient,
-        feature_key: str,
-        draft: ForgeDecompositionDraft,
-    ) -> None:
-        """Save the aggregate task draft on the Feature, and attach sliced drafts to each associated Epic."""
-        # 1. Save main aggregate draft on Feature
-        await DraftManager.save_draft_attachment(
-            jira_client, feature_key, draft, FORGE_TASKS_DRAFT_FILENAME
-        )
+            # Format the Epic's review comment
+            epic_comment = DraftManager.format_review_comment(epic_draft)
 
-        # 2. Slice and attach per-Epic drafts
-        slices = DraftManager.slice_task_draft(draft)
-        for epic_key, slice_draft in slices.items():
-            try:
-                # Save slice with the same task draft filename on the Epic ticket
-                await DraftManager.save_draft_attachment(
-                    jira_client, epic_key, slice_draft, FORGE_TASKS_DRAFT_FILENAME
+            # Support ordered continuation comments for overflow:
+            chunks = DraftManager.chunk_text_by_limit(epic_comment, limit=30000)
+            for i, chunk in enumerate(chunks):
+                prefix = (
+                    f"### 📋 Proposed Tasks Draft (Part {i + 1} of {len(chunks)})\n\n"
+                    if len(chunks) > 1
+                    else ""
                 )
-            except Exception as e:
-                logger.warning(f"Failed to save sliced draft to Epic {epic_key}: {e}")
+                await jira_client.add_comment(epic_key, prefix + chunk)
+
+        # 3. On the Feature ticket, publish feature-level navigation links pointing to the Epics
+        feature_comment = "### 📋 Proposed Tasks Drafts by Epic\n\nThe tasks have been proposed and distributed across the individual Epic tickets. Please review the detailed draft breakdown on each Epic:\n\n"
+        for epic_key in slices:
+            feature_comment += f"- 🔗 **Review Epic Tasks on:** {epic_key}\n"
+        feature_comment += "\n---\n## 🤖 Feature-Level Approval\nApproving this Feature will provision all tasks across all Epics. Please add the `forge:task-approved` label to this Feature ticket when ready."
+
+        await jira_client.add_comment(feature_key, feature_comment)

@@ -266,6 +266,17 @@ async def provision_tasks_from_draft(
         epic_key = item.epic_key
         if not epic_key and state.get("epic_keys"):
             epic_key = state["epic_keys"][0]
+            logger.warning(
+                f"Task '{item.summary}' (ID {item.id}) is missing epic_key. Reparenting to first Epic '{epic_key}'."
+            )
+            try:
+                await jira.add_comment(
+                    ticket_key,
+                    f"⚠️ **Notice:** Task '{item.summary}' (ID: {item.id}) was missing an Epic parent key. "
+                    f"It has been reparented to Epic '{epic_key}'.",
+                )
+            except Exception as comment_err:
+                logger.warning(f"Failed to post reparenting notice comment: {comment_err}")
 
         # Labels
         labels = [

@@ -293,16 +293,11 @@ class TestDecomposeEpicsDraftReview:
 
             result = await decompose_epics(state)
 
-        # 1. Verify DraftManager deleted any existing forge-stories-draft.json first
-        MockDraftManager.delete_draft_attachment.assert_called_once_with(
-            mock_jira, "MYPROJ-1", "forge-stories-draft.json"
-        )
-
-        # 2. Verify DraftManager saved the new draft
-        MockDraftManager.save_draft_attachment.assert_called_once()
-        saved_draft = MockDraftManager.save_draft_attachment.call_args[0][2]
+        # 1. Verify saved_draft is stored in the result state
+        saved_draft = result["plan_draft"]
+        assert saved_draft is not None
         assert saved_draft.parent_key == "MYPROJ-1"
-        assert saved_draft.phase == "stories"
+        assert saved_draft.phase == "epics"
         assert len(saved_draft.items) == 1
         assert saved_draft.items[0].summary == "Epic One"
         assert saved_draft.items[0].description == "Do stuff."

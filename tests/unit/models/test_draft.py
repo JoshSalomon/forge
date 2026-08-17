@@ -75,14 +75,14 @@ class TestForgeDecompositionDraft:
         now = datetime.now(UTC)
         draft = ForgeDecompositionDraft(
             parent_key="PROJ-123",
-            phase="stories",
+            phase="epics",
             items=valid_items,
             version=1,
             created_at=now,
             updated_at=now,
         )
         assert draft.parent_key == "PROJ-123"
-        assert draft.phase == "stories"
+        assert draft.phase == "epics"
         assert len(draft.items) == 3
         assert draft.version == 1
         assert draft.created_at == now
@@ -102,17 +102,17 @@ class TestForgeDecompositionDraft:
         assert draft.items == []
 
     def test_invalid_phase(self, valid_items):
-        """Verify that a phase other than 'stories' or 'tasks' raises ValidationError."""
+        """Verify that a phase other than 'epics' or 'tasks' raises ValidationError."""
         now = datetime.now(UTC)
         with pytest.raises(ValidationError) as exc_info:
             ForgeDecompositionDraft(
                 parent_key="PROJ-123",
-                phase="epics",  # Invalid phase
+                phase="invalid",  # Invalid phase
                 items=valid_items,
                 created_at=now,
                 updated_at=now,
             )
-        assert "Input should be 'stories' or 'tasks'" in str(exc_info.value)
+        assert "Input should be 'epics' or 'tasks'" in str(exc_info.value)
 
     def test_duplicate_ids(self):
         """Verify that duplicate item IDs raise ValidationError."""
@@ -136,7 +136,7 @@ class TestForgeDecompositionDraft:
         with pytest.raises(ValidationError) as exc_info:
             ForgeDecompositionDraft(
                 parent_key="PROJ-123",
-                phase="stories",
+                phase="epics",
                 items=items_with_duplicates,
                 created_at=now,
                 updated_at=now,
@@ -165,7 +165,7 @@ class TestForgeDecompositionDraft:
         with pytest.raises(ValidationError) as exc_info:
             ForgeDecompositionDraft(
                 parent_key="PROJ-123",
-                phase="stories",
+                phase="epics",
                 items=items_with_gap,
                 created_at=now,
                 updated_at=now,
@@ -194,7 +194,7 @@ class TestForgeDecompositionDraft:
         with pytest.raises(ValidationError) as exc_info:
             ForgeDecompositionDraft(
                 parent_key="PROJ-123",
-                phase="stories",
+                phase="epics",
                 items=items_not_starting_at_one,
                 created_at=now,
                 updated_at=now,
@@ -222,7 +222,7 @@ class TestForgeDecompositionDraft:
         ]
         draft = ForgeDecompositionDraft(
             parent_key="PROJ-123",
-            phase="stories",
+            phase="epics",
             items=unordered_items,
             created_at=now,
             updated_at=now,
@@ -237,7 +237,7 @@ class TestForgeDecompositionDraft:
         now = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
         draft = ForgeDecompositionDraft(
             parent_key="PROJ-123",
-            phase="stories",
+            phase="epics",
             items=valid_items,
             version=1,
             created_at=now,

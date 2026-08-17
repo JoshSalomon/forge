@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from forge.models.workflow import ForgeLabel
 from forge.workflow.feature.state import create_initial_feature_state
 
 
@@ -49,7 +50,7 @@ class TestBuildInitialStateDirectMode:
 
     def test_direct_mode_true_when_label_present(self):
         worker = self._make_worker()
-        msg = self._make_message(["forge:managed", "forge:direct-mode"])
+        msg = self._make_message(["forge:managed", ForgeLabel.DIRECT_MODE.value])
         state = worker._build_initial_state(msg)
         assert state["direct_mode"] is True
 

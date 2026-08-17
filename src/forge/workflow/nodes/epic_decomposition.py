@@ -320,16 +320,11 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
             # Create Draft model
             draft = ForgeDecompositionDraft(
                 parent_key=ticket_key,
-                phase="stories",
+                phase="epics",
                 items=draft_items,
                 version=1,
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
-            )
-
-            # Call DraftManager to serialize and save the generated epics draft to forge-stories-draft.json
-            await DraftManager.save_draft_attachment(
-                jira, ticket_key, draft, FORGE_STORIES_DRAFT_FILENAME
             )
 
             # Format Markdown review comment outlining proposed items
@@ -364,6 +359,7 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
                 update_state_timestamp(
                     {
                         **state,
+                        "plan_draft": draft,
                         "epic_keys": [],
                         "generation_context": generation_context,
                         "feedback_comment": None,

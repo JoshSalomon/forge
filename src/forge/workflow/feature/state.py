@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, cast
 
 from forge.config import get_settings
+from forge.models.draft import ForgeDecompositionDraft
 from forge.models.workflow import TicketType
 from forge.workflow.base import (
     BaseState,
@@ -68,6 +69,10 @@ class FeatureState(
     spec_pr_fork_repo: str | None
     spec_pr_branch: str | None
     spec_pr_file_path: str | None
+
+    # Draft state tracking
+    plan_draft: ForgeDecompositionDraft | None
+    tasks_draft: ForgeDecompositionDraft | None
 
 
 def create_initial_feature_state(ticket_key: str, **kwargs: Any) -> FeatureState:
@@ -168,6 +173,8 @@ def create_initial_feature_state(ticket_key: str, **kwargs: Any) -> FeatureState
         "spec_pr_file_path": None,
         "yolo_mode": False,
         "direct_mode": False,
+        "plan_draft": None,
+        "tasks_draft": None,
     }
 
     # Merge with kwargs, letting kwargs override defaults

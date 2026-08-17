@@ -342,15 +342,8 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
                 updated_at=datetime.now(UTC),
             )
 
-            # Call DraftManager to serialize and save the generated tasks draft to forge-tasks-draft.json and slices to Epics
-            await DraftManager.save_task_draft_with_slices(jira, ticket_key, draft)
-
-            # Format Markdown review comment outlining proposed tasks
-            # Implement BR-003 Truncation Boundary
-            comment_body = DraftManager.format_review_comment(draft)
-
-            # Post the review comment to the parent Jira ticket
-            await jira.add_comment(ticket_key, comment_body)
+            # Post task draft review comments to Epic tickets and a navigation comment on Feature
+            await DraftManager.post_task_draft_review(jira, ticket_key, draft)
 
             # Set workflow label to pending
             try:
@@ -365,6 +358,7 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
                 update_state_timestamp(
                     {
                         **state,
+                        "tasks_draft": draft,
                         "task_keys": [],
                         "tasks_by_repo": {},
                         "feedback_comment": None,

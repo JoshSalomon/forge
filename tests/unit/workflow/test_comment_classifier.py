@@ -103,10 +103,6 @@ class TestClassifyComment:
         """/forge exclude command should be classified as a command."""
         assert classify_comment("/forge exclude 3") == CommentType.COMMAND
 
-    def test_command_approve(self) -> None:
-        """/forge approve command should be classified as a command."""
-        assert classify_comment("/forge approve") == CommentType.COMMAND
-
     def test_command_add(self) -> None:
         """/forge add command should be classified as a command."""
         assert classify_comment('/forge add summary="Implement API"') == CommentType.COMMAND

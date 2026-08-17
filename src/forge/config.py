@@ -493,11 +493,6 @@ class Settings(BaseSettings):
         default=0.5, description="Webhook acknowledgment timeout in seconds"
     )
 
-    yolo_mode: bool = Field(
-        default=False,
-        description="Autonomous mode - skip all artifact approval gates",
-    )
-
     # Container Configuration
     sandbox_driver: str = Field(
         default="podman",

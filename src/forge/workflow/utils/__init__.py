@@ -99,17 +99,12 @@ def set_error(state: dict[str, Any], error: str) -> dict[str, Any]:
 
 
 def check_yolo_mode(state: Any, labels: list[str] | None = None) -> bool:
-    """Check if YOLO mode is enabled based on labels, global settings, or state.
+    """Check if YOLO mode is enabled based on labels or state.
 
-    The three components are:
+    The components are:
     1. 'forge:yolo' label in the provided labels or the state context labels.
-    2. Global configuration yolo_mode (settings.yolo_mode).
-    3. State yolo_mode.
+    2. State yolo_mode.
     """
-    from forge.config import get_settings
-
-    settings = get_settings()
-
     # 1. Label check
     has_label = False
     if (labels and "forge:yolo" in labels) or "forge:yolo" in state.get("context", {}).get(
@@ -117,19 +112,21 @@ def check_yolo_mode(state: Any, labels: list[str] | None = None) -> bool:
     ):
         has_label = True
 
-    # 2. Settings check & 3. State check
-    return has_label or settings.yolo_mode or bool(state.get("yolo_mode", False))
+    # 2. State check
+    return has_label or bool(state.get("yolo_mode", False))
 
 
 def check_direct_mode(state: Any, labels: list[str] | None = None) -> bool:
     """Check if direct ticket creation mode is enabled based on labels or state.
 
     The components are:
-    1. 'forge:direct-mode' label in the provided labels or the state context labels.
+    1. ForgeLabel.DIRECT_MODE label in the provided labels or the state context labels.
     2. State direct_mode.
     """
+    from forge.models.workflow import ForgeLabel
+
     has_label = False
-    if (labels and "forge:direct-mode" in labels) or "forge:direct-mode" in state.get(
+    if (labels and ForgeLabel.DIRECT_MODE in labels) or ForgeLabel.DIRECT_MODE in state.get(
         "context", {}
     ).get("labels", []):
         has_label = True

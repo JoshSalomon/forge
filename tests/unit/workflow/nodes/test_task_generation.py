@@ -621,32 +621,25 @@ class TestTaskGenerationDraftReview:
             mock_agent = AsyncMock()
             MockAgent.return_value = mock_agent
 
-            MockDraftManager.delete_draft_attachment = AsyncMock()
-            MockDraftManager.save_task_draft_with_slices = AsyncMock()
+            MockDraftManager.post_task_draft_review = AsyncMock()
             MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
             result = await generate_tasks(state)
 
-        # 1. Verify DraftManager deleted any existing forge-tasks-draft.json first
-        MockDraftManager.delete_draft_attachment.assert_called_once_with(
-            mock_jira, "MYPROJ-1", "forge-tasks-draft.json"
-        )
-
-        # 2. Verify DraftManager saved the new draft
-        MockDraftManager.save_task_draft_with_slices.assert_called_once()
-        saved_draft = MockDraftManager.save_task_draft_with_slices.call_args[0][2]
+        # 1. Verify tasks_draft is saved in state
+        saved_draft = result["tasks_draft"]
+        assert saved_draft is not None
         assert saved_draft.phase == "tasks"
         assert len(saved_draft.items) == 1
         assert saved_draft.items[0].summary == "Task One"
         assert saved_draft.items[0].description == "Do the first thing."
         assert saved_draft.items[0].repo == "acme/backend"
+        assert saved_draft.items[0].epic_key == "MYPROJ-10"
 
-        # 3. Verify formatted comment posted
-        assert mock_jira.add_comment.call_count == 1
-        comment_text = mock_jira.add_comment.call_args[0][1]
-        assert "### 📋 Proposed Tasks Draft" in comment_text
-        assert "Task One" in comment_text
-        assert "acme/backend" in comment_text
+        # 2. Verify DraftManager posted the review
+        MockDraftManager.post_task_draft_review.assert_called_once_with(
+            mock_jira, "MYPROJ-1", saved_draft
+        )
 
         # 4. Verify workflow label updated to TASK_PENDING
         mock_jira.set_workflow_label.assert_called_once_with("MYPROJ-1", ForgeLabel.TASK_PENDING)
@@ -690,15 +683,14 @@ class TestTaskGenerationDraftReview:
             mock_agent = AsyncMock()
             MockAgent.return_value = mock_agent
 
-            MockDraftManager.delete_draft_attachment = AsyncMock()
-            MockDraftManager.save_task_draft_with_slices = AsyncMock()
+            MockDraftManager.post_task_draft_review.side_effect = DraftManager.post_task_draft_review
             MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
             await generate_tasks(state)
 
         # Verify comment is in condensed table format
-        assert mock_jira.add_comment.call_count == 1
-        comment_text = mock_jira.add_comment.call_args[0][1]
+        assert mock_jira.add_comment.call_count == 2
+        comment_text = mock_jira.add_comment.call_args_list[0][0][1]
         assert "### 📋 Proposed Tasks Draft (Condensed)" in comment_text
         assert "Warning" in comment_text
         assert "forge-tasks-draft.json" in comment_text
@@ -741,15 +733,14 @@ class TestTaskGenerationDraftReview:
             mock_agent = AsyncMock()
             MockAgent.return_value = mock_agent
 
-            MockDraftManager.delete_draft_attachment = AsyncMock()
-            MockDraftManager.save_task_draft_with_slices = AsyncMock()
+            MockDraftManager.post_task_draft_review.side_effect = DraftManager.post_task_draft_review
             MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
             await generate_tasks(state)
 
         # Verify comment is in condensed table format due to length
-        assert mock_jira.add_comment.call_count == 1
-        comment_text = mock_jira.add_comment.call_args[0][1]
+        assert mock_jira.add_comment.call_count == 2
+        comment_text = mock_jira.add_comment.call_args_list[0][0][1]
         assert "Warning" in comment_text
         assert "forge-tasks-draft.json" in comment_text
         assert "A" * 35000 not in comment_text
