@@ -1,0 +1,90 @@
+image:
+  repository: forge
+  tag: latest
+  pullPolicy: Always
+
+sandboxImage:
+  repository: forge-sandbox
+  tag: latest
+
+# Create this secret separately from .env; both API and worker import its keys.
+existingSecret: forge-env
+
+api:
+  replicas: 1
+  service:
+    port: 8000
+  route:
+    enabled: true
+    host: ""
+    tlsTermination: edge
+
+worker:
+  replicas: 1
+  serviceAccountName: forge-worker
+  metricsPort: 8001
+
+googleCredentials:
+  enabled: false
+  existingSecret: google-adc
+  key: forge-gcp-credentials.json
+  mountPath: /etc/forge-gcp-credentials.json
+
+skills:
+  directory: /mnt/workspaces/skills
+
+workspace:
+  claimName: forge-workspaces
+  mountPath: /mnt/workspaces
+  size: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  # Empty uses the cluster's default StorageClass.
+  storageClassName: ""
+  retain: true
+
+redis:
+  enabled: true
+  image: redis/redis-stack-server:latest
+  persistence:
+    enabled: false
+    size: 5Gi
+    storageClassName: ""
+
+imagePullSecrets: []
+podAnnotations: {}
+podSecurityContext: {}
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# Numeric ownership shared by the API, worker, and sandbox Jobs. Leave empty on
+# OpenShift so its SCC assigns namespace-scoped values. Set both on vanilla
+# Kubernetes so runAsNonRoot is verifiable and PVC ownership is consistent.
+runtimeSecurity:
+  runAsUser: ""
+  fsGroup: ""
+
+resources:
+  api: {}
+  worker: {}
+
+sandbox:
+  memory: 4Gi
+  cpus: "2"
+  timeout: "1800"
+  jobServiceAccountName: forge-runner
+  imagePullSecrets: ""
+  networkPolicy:
+    enabled: true
+    # Prevent sandbox code from reaching cluster services, the Kubernetes API,
+    # cloud instance metadata, and other private networks.
+    privateCidrs:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - 169.254.0.0/16

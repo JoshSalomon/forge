@@ -6,6 +6,133 @@ on:
       - main
 
 jobs:
+  helm-lint:
+    name: Helm Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.2.4
+
+      - name: Lint chart
+        run: helm lint charts/forge
+
+      - name: Lint chart with Google credentials enabled
+        run: helm lint charts/forge --set googleCredentials.enabled=true
+
+  kubernetes-cluster-gate:
+    name: Kubernetes Cluster Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: uv sync --frozen --extra dev --extra k8s
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.2.4
+
+      - name: Install Kind
+        run: |
+          curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64
+          chmod +x /tmp/kind
+          sudo mv /tmp/kind /usr/local/bin/kind
+
+      - name: Create Kind cluster
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.kind-workspaces"
+          chmod 0777 "$GITHUB_WORKSPACE/.kind-workspaces"
+          sed "s|__WORKSPACE_PATH__|$GITHUB_WORKSPACE/.kind-workspaces|g" \
+            tests/cluster/kind-config.yaml.template > /tmp/kind-config.yaml
+          kind create cluster --name forge-ci --config /tmp/kind-config.yaml --wait 120s
+
+      - name: Build and load application and sandbox images
+        run: |
+          docker build --tag forge-kind-app:ci .
+          docker build --tag forge-sandbox-fixture:ci \
+            --file tests/cluster/sandbox-fixture/Containerfile \
+            tests/cluster/sandbox-fixture
+          kind load docker-image forge-kind-app:ci --name forge-ci
+          kind load docker-image forge-sandbox-fixture:ci --name forge-ci
+
+      - name: Create shared workspace PVC
+        run: |
+          kubectl create namespace forge
+          kubectl create secret generic forge-env -n forge \
+            --from-literal=JIRA_BASE_URL=https://example.atlassian.net \
+            --from-literal=JIRA_API_TOKEN=dummy \
+            --from-literal=JIRA_USER_EMAIL=dummy@example.com \
+            --from-literal=GITHUB_TOKEN=dummy \
+            --from-literal=LLM_BACKEND=vertex-ai \
+            --from-literal=LLM_MODEL=gemini-3.5-flash \
+            --from-literal=GOOGLE_CLOUD_PROJECT=test-project \
+            --from-literal=OTEL_SDK_DISABLED=true
+          kubectl apply -f tests/cluster/workspace-pv.yaml
+
+      - name: Server-validate Helm resources
+        run: >-
+          helm template forge charts/forge --namespace forge
+          --set api.route.enabled=false
+          --set workspace.claimName=forge-chart-validation
+          --set workspace.storageClassName=forge-kind
+          --set runtimeSecurity.runAsUser=1000
+          --set runtimeSecurity.fsGroup=1000
+          | kubectl apply --dry-run=server -f -
+
+      - name: Install and start Helm workloads
+        run: >-
+          helm upgrade --install forge charts/forge --namespace forge
+          --wait --timeout 4m
+          --set api.route.enabled=false
+          --set image.repository=forge-kind-app
+          --set image.tag=ci
+          --set image.pullPolicy=IfNotPresent
+          --set sandboxImage.repository=forge-sandbox-fixture
+          --set sandboxImage.tag=ci
+          --set workspace.claimName=forge-chart-workspaces
+          --set workspace.size=1Gi
+          --set runtimeSecurity.runAsUser=1000
+          --set runtimeSecurity.fsGroup=1000
+
+      - name: Verify application workloads
+        run: |
+          kubectl rollout status deployment/forge-api -n forge --timeout=60s
+          kubectl rollout status deployment/forge-worker -n forge --timeout=60s
+          test "$(kubectl exec -n forge deployment/forge-api -- id -u)" = "1000"
+
+      - name: Run Kubernetes driver cluster tests
+        env:
+          KIND_WORKSPACE_BASE: ${{ github.workspace }}/.kind-workspaces
+          JIRA_BASE_URL: https://example.atlassian.net
+          JIRA_API_TOKEN: dummy
+          JIRA_USER_EMAIL: dummy@example.com
+          GITHUB_TOKEN: dummy
+          LLM_BACKEND: vertex-ai
+          LLM_MODEL: gemini-3.5-flash
+          GOOGLE_CLOUD_PROJECT: test-project
+        run: uv run pytest tests/cluster/test_kubernetes_driver_kind.py -q --strict-markers
+
+      - name: Collect cluster diagnostics
+        if: failure()
+        run: |
+          kubectl get pods,jobs,pvc -n forge -o wide
+          kubectl describe pods -n forge
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

@@ -483,6 +483,11 @@ class Settings(BaseSettings):
     )
 
     # Container Configuration
+    sandbox_driver: str = Field(
+        default="podman",
+        alias="forge_sandbox_driver",
+        description="Sandbox driver backend: podman or kubernetes",
+    )
     container_image: str = Field(
         default="localhost/forge-dev:latest",
         description="Container image for task execution (local or registry URL)",
@@ -503,6 +508,57 @@ class Settings(BaseSettings):
     container_cpus: str = Field(
         default="2",
         description="Container CPU limit",
+    )
+
+    # Kubernetes Driver Configuration (only used when sandbox_driver=kubernetes)
+    k8s_namespace: str = Field(
+        default="forge",
+        description="Kubernetes namespace for sandbox Jobs",
+    )
+    k8s_workspace_pvc: str = Field(
+        default="",
+        description="PVC name for workspace storage shared between worker and sandbox pods",
+    )
+    k8s_workspace_base_path: str = Field(
+        default="",
+        description="Mount path on the worker host where the workspace PVC is accessible",
+    )
+    k8s_image_pull_secrets: str = Field(
+        default="",
+        description="Comma-separated image pull secret names for sandbox pods",
+    )
+    k8s_service_account: str = Field(
+        default="",
+        description="Kubernetes service account for sandbox pods",
+    )
+    k8s_google_credentials_secret: str = Field(
+        default="",
+        description="Secret containing Google ADC credentials for sandbox pods",
+    )
+    k8s_google_credentials_key: str = Field(
+        default="forge-gcp-credentials.json",
+        description="Key in the Google ADC credentials secret",
+    )
+    k8s_google_credentials_mount_path: str = Field(
+        default="/etc/forge-gcp-credentials.json",
+        description="File path where sandbox pods mount Google ADC credentials",
+    )
+    k8s_run_as_user: int | None = Field(
+        default=None,
+        description=(
+            "UID for sandbox Job pods. Leave unset on OpenShift (the SCC assigns a "
+            "non-root UID); set explicitly (e.g. 1000) on vanilla Kubernetes so the "
+            "runAsNonRoot requirement is satisfiable."
+        ),
+    )
+    k8s_fs_group: int | None = Field(
+        default=None,
+        description=(
+            "fsGroup applied to sandbox Job pods so they can read and write the "
+            "shared workspace PVC created by the worker. Leave unset on OpenShift "
+            "(assigned by the SCC); set to match the worker's fsGroup on vanilla "
+            "Kubernetes."
+        ),
     )
 
     # Auto Review Configuration
