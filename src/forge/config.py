@@ -104,6 +104,10 @@ class Settings(BaseSettings):
         default="",
         description="GitHub account/org where forks are created (defaults to authenticated user if empty)",
     )
+    forge_bot_comment_prefix: str = Field(
+        default="",
+        description="Prefix to use for all comments made by the Forge bot",
+    )
     git_user_name: str = Field(
         default="Forge",
         description="Git user name for commits made by Forge",
@@ -249,6 +253,23 @@ class Settings(BaseSettings):
             return "google"
         # Default to anthropic for claude-* or unknown direct-provider models.
         return "anthropic"
+
+    @model_validator(mode="after")
+    def warn_on_bot_comment_prefix(self) -> "Settings":
+        """Warn when the dev/test-only bot comment prefix is configured.
+
+        The prefix exists so a shared bot/developer account can comment without
+        triggering webhook loops during development; it should not be set in
+        production.
+        """
+        if self.forge_bot_comment_prefix.strip():
+            logger.warning(
+                "FORGE_BOT_COMMENT_PREFIX is set (%r). This is intended for "
+                "development/testing with shared API credentials and should not "
+                "be used in production.",
+                self.forge_bot_comment_prefix,
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_container_timeouts(self) -> "Settings":

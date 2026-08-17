@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from forge.config import Settings, get_settings
+from forge.integrations.github.comment_signature import prepend_bot_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +195,7 @@ class GitHubClient:
         Returns:
             API response with comment details.
         """
+        body = prepend_bot_prefix(body, self.settings.forge_bot_comment_prefix)
         client = await self._get_client()
         response = await client.post(
             f"/repos/{owner}/{repo}/pulls/{pr_number}/comments",
@@ -217,6 +219,7 @@ class GitHubClient:
         body: str,
     ) -> dict[str, Any]:
         """Reply in the review thread containing ``comment_id``."""
+        body = prepend_bot_prefix(body, self.settings.forge_bot_comment_prefix)
         client = await self._get_client()
         response = await client.post(
             f"/repos/{owner}/{repo}/pulls/{pr_number}/comments/{comment_id}/replies",
@@ -437,6 +440,7 @@ class GitHubClient:
         Returns:
             API response with comment details.
         """
+        body = prepend_bot_prefix(body, self.settings.forge_bot_comment_prefix)
         client = await self._get_client()
         response = await client.post(
             f"/repos/{owner}/{repo}/issues/{issue_number}/comments",

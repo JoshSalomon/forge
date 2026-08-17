@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from forge.prompts import load_prompt
 
@@ -22,11 +22,16 @@ class AutomatedReviewDecision:
     reason: str = ""
 
 
-def is_bot_sender(payload: dict) -> bool:
+def is_bot_sender(payload: dict[str, Any]) -> bool:
     """Return whether a GitHub webhook was sent by a bot account."""
-    sender = payload.get("sender", {})
-    review_user = payload.get("review", {}).get("user", {})
-    return sender.get("type", "").lower() == "bot" or review_user.get("type", "").lower() == "bot"
+    sender: dict[str, Any] = payload.get("sender", {}) or {}
+    review: dict[str, Any] = payload.get("review", {}) or {}
+    review_user: dict[str, Any] = review.get("user", {}) or {}
+
+    sender_type = str(sender.get("type", ""))
+    review_user_type = str(review_user.get("type", ""))
+
+    return bool(sender_type.lower() == "bot" or review_user_type.lower() == "bot")
 
 
 def parse_automated_review_decision(output: str) -> AutomatedReviewDecision:
