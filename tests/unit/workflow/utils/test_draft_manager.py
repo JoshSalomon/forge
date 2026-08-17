@@ -5,7 +5,6 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pytest import LogCaptureFixture
 
 from forge.integrations.jira import JiraClient
 from forge.models.draft import DraftItem, ForgeDecompositionDraft
@@ -178,9 +177,9 @@ class TestDraftManager:
 
         # Set a limit that is large enough to contain headers + footer + some rows + warning note,
         # but too small to fit all 10 rows.
-        comment = DraftManager.format_review_comment(draft, limit=950)
+        comment = DraftManager.format_review_comment(draft, limit=1000)
 
-        assert len(comment) <= 950
+        assert len(comment) <= 1000
         assert "⚠️ Showing first" in comment
         assert "items — see attached draft JSON for the full list." in comment
         assert "Task 1" in comment
@@ -190,7 +189,6 @@ class TestDraftManager:
         very_small_comment = DraftManager.format_review_comment(draft, limit=100)
         assert len(very_small_comment) <= 100
         assert very_small_comment.endswith(" [truncated]")
-
 
     def test_chunk_text_by_limit(self) -> None:
         """Verify chunk_text_by_limit splits text correctly."""
@@ -239,19 +237,25 @@ class TestDraftManager:
 
         # Should add comments to EPIC-101, EPIC-102, and FEATURE-1
         assert mock_jira.add_comment.call_count == 3
-        
+
         # Verify Epic EPIC-101 comment
-        epic_101_call = [call for call in mock_jira.add_comment.call_args_list if call[0][0] == "EPIC-101"][0]
+        epic_101_call = [
+            call for call in mock_jira.add_comment.call_args_list if call[0][0] == "EPIC-101"
+        ][0]
         assert "### 📋 Proposed Tasks Draft" in epic_101_call[0][1]
         assert "Task 1" in epic_101_call[0][1]
 
         # Verify Epic EPIC-102 comment
-        epic_102_call = [call for call in mock_jira.add_comment.call_args_list if call[0][0] == "EPIC-102"][0]
+        epic_102_call = [
+            call for call in mock_jira.add_comment.call_args_list if call[0][0] == "EPIC-102"
+        ][0]
         assert "### 📋 Proposed Tasks Draft" in epic_102_call[0][1]
         assert "Task 2" in epic_102_call[0][1]
 
         # Verify Feature FEATURE-1 comment
-        feature_call = [call for call in mock_jira.add_comment.call_args_list if call[0][0] == "FEATURE-1"][0]
+        feature_call = [
+            call for call in mock_jira.add_comment.call_args_list if call[0][0] == "FEATURE-1"
+        ][0]
         assert "### 📋 Proposed Tasks Drafts by Epic" in feature_call[0][1]
         assert "EPIC-101" in feature_call[0][1]
         assert "EPIC-102" in feature_call[0][1]

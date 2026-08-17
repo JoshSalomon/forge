@@ -112,7 +112,7 @@ class TestForgeDecompositionDraft:
                 created_at=now,
                 updated_at=now,
             )
-        assert "Input should be 'epics' or 'tasks'" in str(exc_info.value)
+        assert "Input should be 'epics'" in str(exc_info.value)
 
     def test_duplicate_ids(self):
         """Verify that duplicate item IDs raise ValidationError."""

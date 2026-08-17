@@ -357,9 +357,16 @@ class TestDraftAttachmentCreationAndCleanup:
         assert saved_draft.items[0].repo == "acme/repo1"
 
         # 3. Verify comments posted
-        assert mock_jira.add_comment.call_count == 1
-        comment_body = mock_jira.add_comment.call_args[0][1]
-        assert "### 📋 Proposed Tasks Draft" in comment_body
+        assert mock_jira.add_comment.call_count == 2
+        epic_comments = [
+            args[0][1]
+            for args in mock_jira.add_comment.call_args_list
+            if "### 📋 Proposed Tasks Draft" in args[0][1]
+            and "Condensed" not in args[0][1]
+            and "by Epic" not in args[0][1]
+        ]
+        assert len(epic_comments) == 1
+        comment_body = epic_comments[0]
         assert "Task 1" in comment_body
         assert "/forge approve" in comment_body
 
@@ -469,8 +476,14 @@ class TestTruncationFallbackBoundaries:
 
             await generate_tasks(state)
 
-        # Verify comment is condensed
-        comment_body = mock_jira.add_comment.call_args[0][1]
+        # Verify comment is condensed (find the comment posted to the Epic ticket)
+        epic_comments = [
+            args[0][1]
+            for args in mock_jira.add_comment.call_args_list
+            if "### 📋 Proposed Tasks Draft" in args[0][1]
+        ]
+        assert len(epic_comments) > 0, "No draft comment found"
+        comment_body = epic_comments[0]
         assert "### 📋 Proposed Tasks Draft (Condensed)" in comment_body
         assert "Warning" in comment_body
         assert "exceeds character or size limits" in comment_body

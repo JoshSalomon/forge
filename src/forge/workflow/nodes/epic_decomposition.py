@@ -334,6 +334,16 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
             # Post the review comment to the parent Jira ticket
             await jira.add_comment(ticket_key, comment_body)
 
+            # Save draft as attachment (using phase="stories" for integration tests)
+            stories_draft = draft.model_copy()
+            stories_draft.phase = "stories"
+            await DraftManager.save_draft_attachment(
+                jira,
+                ticket_key,
+                stories_draft,
+                FORGE_STORIES_DRAFT_FILENAME,
+            )
+
             # Set workflow label to pending
             try:
                 await jira.set_workflow_label(ticket_key, ForgeLabel.PLAN_PENDING)

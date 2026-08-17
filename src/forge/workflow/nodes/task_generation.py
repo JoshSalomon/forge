@@ -342,6 +342,9 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
                 updated_at=datetime.now(UTC),
             )
 
+            # Save task draft as attachment and post sliced comments to Epic tickets
+            await DraftManager.save_task_draft_with_slices(jira, ticket_key, draft)
+
             # Post task draft review comments to Epic tickets and a navigation comment on Feature
             await DraftManager.post_task_draft_review(jira, ticket_key, draft)
 

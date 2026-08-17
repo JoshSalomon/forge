@@ -621,6 +621,8 @@ class TestTaskGenerationDraftReview:
             mock_agent = AsyncMock()
             MockAgent.return_value = mock_agent
 
+            MockDraftManager.delete_draft_attachment = AsyncMock()
+            MockDraftManager.save_task_draft_with_slices = AsyncMock()
             MockDraftManager.post_task_draft_review = AsyncMock()
             MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
@@ -683,7 +685,11 @@ class TestTaskGenerationDraftReview:
             mock_agent = AsyncMock()
             MockAgent.return_value = mock_agent
 
-            MockDraftManager.post_task_draft_review.side_effect = DraftManager.post_task_draft_review
+            MockDraftManager.delete_draft_attachment = AsyncMock()
+            MockDraftManager.save_task_draft_with_slices = AsyncMock()
+            MockDraftManager.post_task_draft_review.side_effect = (
+                DraftManager.post_task_draft_review
+            )
             MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
             await generate_tasks(state)
@@ -733,7 +739,11 @@ class TestTaskGenerationDraftReview:
             mock_agent = AsyncMock()
             MockAgent.return_value = mock_agent
 
-            MockDraftManager.post_task_draft_review.side_effect = DraftManager.post_task_draft_review
+            MockDraftManager.delete_draft_attachment = AsyncMock()
+            MockDraftManager.save_task_draft_with_slices = AsyncMock()
+            MockDraftManager.post_task_draft_review.side_effect = (
+                DraftManager.post_task_draft_review
+            )
             MockDraftManager.format_review_comment.side_effect = DraftManager.format_review_comment
 
             await generate_tasks(state)

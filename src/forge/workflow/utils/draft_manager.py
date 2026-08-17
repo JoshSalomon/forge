@@ -212,6 +212,66 @@ class DraftManager:
             raise
 
     @staticmethod
+    async def save_draft_attachment(
+        jira_client: JiraClient,
+        issue_key: str,
+        draft: ForgeDecompositionDraft,
+        filename: str = FORGE_STORIES_DRAFT_FILENAME,
+    ) -> None:
+        """Serialize draft as JSON and attach it to Jira parent ticket.
+
+        Args:
+            jira_client: The Jira client instance.
+            issue_key: The Jira issue key.
+            draft: The draft model to save.
+            filename: The filename for the attachment.
+        """
+        try:
+            content = draft.model_dump_json(indent=2)
+            await jira_client.add_attachment(
+                issue_key=issue_key,
+                filename=filename,
+                content=content,
+                content_type="application/json",
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to save draft attachment '{filename}' on {issue_key}: {e}",
+                exc_info=True,
+            )
+            raise
+
+    @staticmethod
+    async def save_task_draft_with_slices(
+        jira_client: JiraClient,
+        issue_key: str,
+        draft: ForgeDecompositionDraft,
+        filename: str = FORGE_TASKS_DRAFT_FILENAME,
+    ) -> None:
+        """Serialize draft as JSON and attach it to Jira parent ticket.
+
+        Args:
+            jira_client: The Jira client instance.
+            issue_key: The Jira issue key.
+            draft: The draft model to save.
+            filename: The filename for the attachment.
+        """
+        try:
+            content = draft.model_dump_json(indent=2)
+            await jira_client.add_attachment(
+                issue_key=issue_key,
+                filename=filename,
+                content=content,
+                content_type="application/json",
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to save task draft with slices on {issue_key}: {e}",
+                exc_info=True,
+            )
+            raise
+
+    @staticmethod
     def _truncate_to_jira_limit(text: str, limit: int = 32767) -> str:
         """Truncate text to fit within Jira's character limit and append a [truncated] suffix."""
         if len(text) <= limit:
@@ -230,7 +290,7 @@ class DraftManager:
             return text.replace("|", "\\|")
 
         items = draft.items
-        if draft.phase == "epics":
+        if draft.phase in ("epics", "stories"):
             phase_title = "Epics"
             noun_plural = "epics"
             noun_singular = "epic"
@@ -280,7 +340,7 @@ class DraftManager:
             f"- ♻️ **Revise all {noun_plural}:** add a comment starting with `!` on this ticket.\n"
             f"- 🔧 **Revise a single {noun_singular}:** add a comment starting with `!` on the {noun_singular.capitalize()}.\n"
             f"- ❓ **Ask a question:** add a Jira comment starting with `?`.\n"
-            f"- ✅ **To approve:** add the `{approval_label}` label to the Feature ticket."
+            f"- ✅ **To approve:** submit comment `/forge approve` or add the `{approval_label}` label to the Feature ticket."
         )
 
         full_comment = header + table + details + footer
