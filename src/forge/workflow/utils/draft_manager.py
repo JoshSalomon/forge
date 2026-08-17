@@ -190,6 +190,44 @@ class DraftManager:
         return mutated_list
 
     @staticmethod
+    async def get_draft_attachment(
+        jira_client: JiraClient,
+        issue_key: str,
+        filename: str,
+    ) -> ForgeDecompositionDraft | None:
+        """Fetch a draft attachment from Jira parent ticket and parse it.
+
+        Args:
+            jira_client: The Jira client instance.
+            issue_key: The Jira issue key.
+            filename: The target filename to download.
+
+        Returns:
+            The parsed ForgeDecompositionDraft model, or None if not found.
+        """
+        try:
+            attachments = await jira_client.get_attachments(issue_key)
+            target_attachment = None
+            for att in attachments:
+                if att.get("filename") == filename:
+                    target_attachment = att
+                    break
+
+            if not target_attachment:
+                logger.info(f"Draft attachment '{filename}' not found on {issue_key}")
+                return None
+
+            content_bytes = await jira_client.download_attachment(target_attachment["content_url"])
+            content_str = content_bytes.decode("utf-8")
+            return ForgeDecompositionDraft.model_validate_json(content_str)
+        except Exception as e:
+            logger.error(
+                f"Failed to fetch draft attachment '{filename}' from {issue_key}: {e}",
+                exc_info=True,
+            )
+            raise
+
+    @staticmethod
     async def delete_draft_attachment(
         jira_client: JiraClient,
         issue_key: str,

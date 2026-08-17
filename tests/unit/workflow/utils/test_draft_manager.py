@@ -259,3 +259,54 @@ class TestDraftManager:
         assert "### 📋 Proposed Tasks Drafts by Epic" in feature_call[0][1]
         assert "EPIC-101" in feature_call[0][1]
         assert "EPIC-102" in feature_call[0][1]
+
+    @pytest.mark.asyncio
+    async def test_get_draft_attachment_success(self) -> None:
+        """Verify get_draft_attachment retrieves and parses the correct attachment successfully."""
+        mock_jira = MagicMock(spec=JiraClient)
+        mock_jira.get_attachments = AsyncMock(
+            return_value=[
+                {"id": "att-1", "filename": "other.json", "content_url": "http://other"},
+                {
+                    "id": "att-2",
+                    "filename": "forge-stories-draft.json",
+                    "content_url": "http://stories",
+                },
+            ]
+        )
+        now = datetime.now(UTC)
+        draft = ForgeDecompositionDraft(
+            parent_key="FEATURE-1",
+            phase="stories",
+            items=[],
+            created_at=now,
+            updated_at=now,
+        )
+        mock_jira.download_attachment = AsyncMock(
+            return_value=draft.model_dump_json().encode("utf-8")
+        )
+
+        res = await DraftManager.get_draft_attachment(
+            mock_jira, "FEATURE-1", "forge-stories-draft.json"
+        )
+        assert res is not None
+        assert res.parent_key == "FEATURE-1"
+        assert res.phase == "stories"
+        mock_jira.get_attachments.assert_called_once_with("FEATURE-1")
+        mock_jira.download_attachment.assert_called_once_with("http://stories")
+
+    @pytest.mark.asyncio
+    async def test_get_draft_attachment_not_found(self) -> None:
+        """Verify get_draft_attachment returns None if the target attachment doesn't exist."""
+        mock_jira = MagicMock(spec=JiraClient)
+        mock_jira.get_attachments = AsyncMock(
+            return_value=[
+                {"id": "att-1", "filename": "other.json", "content_url": "http://other"},
+            ]
+        )
+
+        res = await DraftManager.get_draft_attachment(
+            mock_jira, "FEATURE-1", "forge-stories-draft.json"
+        )
+        assert res is None
+        mock_jira.get_attachments.assert_called_once_with("FEATURE-1")
