@@ -292,16 +292,12 @@ class DraftManager:
         items = draft.items
         if draft.phase in ("epics", "stories"):
             phase_title = "Epics"
-            noun_plural = "epics"
-            noun_singular = "epic"
             phase_action = "decomposition"
             item_label = "Plan"
             approval_label = ForgeLabel.PLAN_APPROVED.value
             filename = FORGE_STORIES_DRAFT_FILENAME
         else:
             phase_title = "Tasks"
-            noun_plural = "tasks"
-            noun_singular = "task"
             phase_action = "implementation"
             item_label = "Description"
             approval_label = ForgeLabel.TASK_APPROVED.value
@@ -332,15 +328,13 @@ class DraftManager:
 
         footer = (
             "## 🤖 Forge interaction options\n\n"
-            f"- 🔧 **Modify draft items using commands:**\n"
-            f"  - `/forge add key=value` - Add a new item\n"
-            f"  - `/forge update <ID> key=value` - Update an item\n"
-            f"  - `/forge remove <ID>` - Remove an item\n"
-            f"  - `/forge exclude <ID>` - Toggle exclude on an item\n"
-            f"- ♻️ **Revise all {noun_plural}:** add a comment starting with `!` on this ticket.\n"
-            f"- 🔧 **Revise a single {noun_singular}:** add a comment starting with `!` on the {noun_singular.capitalize()}.\n"
-            f"- ❓ **Ask a question:** add a Jira comment starting with `?`.\n"
-            f"- ✅ **To approve:** submit comment `/forge approve` or add the `{approval_label}` label to the Feature ticket."
+            f"- Approve:  add the `{approval_label}` label\n"
+            f"- Revise:   comment starting with `!` (regenerates with your feedback)\n"
+            f"- Add:      /forge add summary=... repo=...\n"
+            f"- Update:   /forge update <ID> summary=... | description=... | repo=...\n"
+            f"- Remove:   /forge remove <ID>\n"
+            f"- Exclude:  /forge exclude <ID>\n"
+            f"- Ask:      comment starting with `?`"
         )
 
         full_comment = header + table + details + footer

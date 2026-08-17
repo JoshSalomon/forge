@@ -293,7 +293,7 @@ class TestDraftAttachmentCreationAndCleanup:
         comment_body = mock_jira.add_comment.call_args[0][1]
         assert "### 📋 Proposed Epics Draft" in comment_body
         assert "Epic 1" in comment_body
-        assert "/forge approve" in comment_body
+        assert "forge:plan-approved" in comment_body
 
         # 4. Verify workflow state transitions and pauses
         assert result["is_paused"] is True
@@ -368,7 +368,7 @@ class TestDraftAttachmentCreationAndCleanup:
         assert len(epic_comments) == 1
         comment_body = epic_comments[0]
         assert "Task 1" in comment_body
-        assert "/forge approve" in comment_body
+        assert "forge:task-approved" in comment_body
 
         # 4. Verify workflow state transitions and pauses
         assert result["is_paused"] is True

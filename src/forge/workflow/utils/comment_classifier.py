@@ -86,19 +86,11 @@ def parse_comment_command(comment_text: str) -> dict[str, Any] | None:
         return None
 
     cmd_name = match.group(1).lower()
-    valid_commands = {"remove", "add", "update", "exclude", "approve"}
+    valid_commands = {"remove", "add", "update", "exclude"}
     if cmd_name not in valid_commands:
         return None
 
     args_text = comment_text[match.end() :].strip()
-
-    if cmd_name == "approve":
-        if args_text:
-            return {
-                "command": "approve",
-                "error": f"Extra parameters for approve command: '{args_text}'",
-            }
-        return {"command": "approve"}
 
     if cmd_name in ("remove", "exclude"):
         if not args_text:

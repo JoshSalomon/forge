@@ -177,9 +177,9 @@ class TestDraftManager:
 
         # Set a limit that is large enough to contain headers + footer + some rows + warning note,
         # but too small to fit all 10 rows.
-        comment = DraftManager.format_review_comment(draft, limit=1000)
+        comment = DraftManager.format_review_comment(draft, limit=850)
 
-        assert len(comment) <= 1000
+        assert len(comment) <= 850
         assert "⚠️ Showing first" in comment
         assert "items — see attached draft JSON for the full list." in comment
         assert "Task 1" in comment
