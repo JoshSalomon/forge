@@ -67,7 +67,7 @@ Forge generates a behavioral specification from the approved PRD, typically usin
 Forge breaks the feature into logical epics — high-level areas of work that map to implementation phases.
 
 By default, Forge uses an interactive **Draft Review Flow** at this stage (unless YOLO mode is active):
-1. Instead of creating Jira tickets immediately, Forge serializes the proposed epics into `forge-stories-draft.json` and uploads it as an attachment on the Feature ticket.
+1. Instead of creating Jira tickets immediately, Forge serializes the proposed epics into `forge-epics-draft.json` and uploads it as an attachment on the Feature ticket.
 2. Forge posts a markdown table comment on the Feature ticket outlining the proposed Epics.
 3. The workflow pauses at `plan_approval_gate`.
 

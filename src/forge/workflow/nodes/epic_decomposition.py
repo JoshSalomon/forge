@@ -291,7 +291,7 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
                     },
                 )
 
-            # Prior to saving, check for existing forge-stories-draft.json attachments
+            # Prior to saving, check for existing forge-epics-draft.json attachments
             # and delete them using DraftManager/JiraClient to prevent duplicate file accumulation.
             try:
                 await DraftManager.delete_draft_attachment(

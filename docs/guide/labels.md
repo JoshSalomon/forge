@@ -55,7 +55,7 @@ Standalone Tasks and Epics can be processed with the standard `forge:managed` la
 **Approving a stage:** When Forge posts an artifact (such as a PRD or Spec), it sets the `forge:*-pending` label. You can approve it by changing the label to `forge:*-approved` to advance the workflow. For draft-based stages (Epic Plan and Tasks), you can also approve by commenting `/forge approve` on the ticket.
 
 **Interactive Draft Review:** For Epic Decomposition and Task Generation stages, Forge uses a draft-based review flow by default (unless `forge:yolo` or `forge:direct-mode` mode is active).
-1. Instead of creating sub-tickets immediately, Forge serializes the proposed items into a JSON draft file (`forge-stories-draft.json` or `forge-tasks-draft.json`) and uploads it as a Jira attachment.
+1. Instead of creating sub-tickets immediately, Forge serializes the proposed items into a JSON draft file (`forge-epics-draft.json` or `forge-tasks-draft.json`) and uploads it as a Jira attachment.
 2. Forge posts a formatted markdown table comment on the ticket detailing the proposed plan.
 3. While the stage is pending, you can modify the draft directly using **Jira comment commands** (see below) or request a natural language revision.
 4. Once you approve (via `/forge approve` or setting the approved label), Forge downloads the draft, provisions the actual Jira tickets from it, and deletes the draft attachment.
