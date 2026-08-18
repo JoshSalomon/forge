@@ -69,21 +69,30 @@ def base_task_state() -> dict[str, Any]:
 @pytest.fixture
 def mock_parent_issue() -> Any:
     """Mock Jira parent issue."""
-    issue = MagicMock()
-    issue.project_key = "TEST"
-    issue.summary = "Test Feature Summary"
-    issue.description = "Test Feature Description"
-    return issue
+    from forge.integrations.jira.models import JiraIssue
+    return JiraIssue(
+        key="TEST-123",
+        id="10123",
+        summary="Test Feature Summary",
+        description="Test Feature Description",
+        status="In Progress",
+        issue_type="Feature",
+    )
 
 
 @pytest.fixture
 def mock_epic_issue() -> Any:
     """Mock Jira Epic issue."""
-    issue = MagicMock()
-    issue.project_key = "TEST"
-    issue.summary = "Test Epic Summary"
-    issue.description = "Test Epic Plan Description"
-    return issue
+    from forge.integrations.jira.models import JiraIssue
+    return JiraIssue(
+        key="EPIC-456",
+        id="10456",
+        summary="Test Epic Summary",
+        description="Test Epic Plan Description",
+        status="In Progress",
+        issue_type="Epic",
+        parent_key="TEST-123",
+    )
 
 
 @pytest.fixture
@@ -275,7 +284,7 @@ class TestDraftAttachmentCreationAndCleanup:
 
         # 1. Verify cleanup of any old drafts
         MockDraftManager.delete_draft_attachment.assert_called_once_with(
-            mock_jira, "TEST-100", "forge-stories-draft.json"
+            mock_jira, "TEST-100", "forge-epics-draft.json"
         )
 
         # 2. Verify draft attachment saving
@@ -283,7 +292,7 @@ class TestDraftAttachmentCreationAndCleanup:
         saved_draft = MockDraftManager.save_draft_attachment.call_args[0][2]
         assert isinstance(saved_draft, ForgeDecompositionDraft)
         assert saved_draft.parent_key == "TEST-100"
-        assert saved_draft.phase == "stories"
+        assert saved_draft.phase == "epics"
         assert len(saved_draft.items) == 2
         assert saved_draft.items[0].summary == "Epic 1"
         assert saved_draft.items[0].repo == "acme/repo1"
@@ -426,7 +435,7 @@ class TestTruncationFallbackBoundaries:
         assert "### 📋 Proposed Epics Draft (Condensed)" in comment_body
         assert "Warning" in comment_body
         assert "exceeds character or size limits" in comment_body
-        assert "forge-stories-draft.json" in comment_body
+        assert "forge-epics-draft.json" in comment_body
         # Detailed descriptions of items should not be present
         assert "#### 1. Epic 1" not in comment_body
 
@@ -538,7 +547,7 @@ class TestTruncationFallbackBoundaries:
         assert "### 📋 Proposed Epics Draft (Condensed)" in comment_body
         assert "Warning" in comment_body
         assert "exceeds character or size limits" in comment_body
-        assert "forge-stories-draft.json" in comment_body
+        assert "forge-epics-draft.json" in comment_body
         # Detailed descriptions of items should not be present
         assert "#### 1. Epic 1" not in comment_body
 
@@ -551,16 +560,10 @@ class TestApprovalCommandAndSkippingExcludedItems:
         self, mock_parent_issue: Any, mock_settings: Settings
     ) -> None:
         """Verify only non-excluded items are provisioned and the attachment is deleted upon success."""
-        state = {
-            "ticket_key": "TEST-100",
-            "is_paused": False,
-            "epic_keys": [],
-        }
-
         # Create draft where item 2 is excluded
         draft = ForgeDecompositionDraft(
             parent_key="TEST-100",
-            phase="stories",
+            phase="epics",
             items=[
                 DraftItem(
                     id=1,
@@ -591,6 +594,13 @@ class TestApprovalCommandAndSkippingExcludedItems:
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
         )
+
+        state = {
+            "ticket_key": "TEST-100",
+            "is_paused": False,
+            "epic_keys": [],
+            "plan_draft": draft,
+        }
 
         with (
             patch("forge.config.get_settings", return_value=mock_settings),
@@ -631,7 +641,7 @@ class TestApprovalCommandAndSkippingExcludedItems:
 
         # Verify draft was deleted after successful provisioning
         MockDraftManager.delete_draft_attachment.assert_called_once_with(
-            mock_jira, "TEST-100", "forge-stories-draft.json"
+            mock_jira, "TEST-100", "forge-epics-draft.json"
         )
         assert result_keys == ["EPIC-1", "EPIC-3"]
 
@@ -640,13 +650,6 @@ class TestApprovalCommandAndSkippingExcludedItems:
         self, mock_parent_issue: Any, mock_settings: Settings
     ) -> None:
         """Verify only non-excluded tasks are provisioned and the attachment is deleted upon success."""
-        state = {
-            "ticket_key": "TEST-100",
-            "is_paused": False,
-            "task_keys": [],
-            "epic_keys": ["EPIC-10"],
-        }
-
         # Create draft where item 2 is excluded
         draft = ForgeDecompositionDraft(
             parent_key="TEST-100",
@@ -684,6 +687,14 @@ class TestApprovalCommandAndSkippingExcludedItems:
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
         )
+
+        state = {
+            "ticket_key": "TEST-100",
+            "is_paused": False,
+            "task_keys": [],
+            "epic_keys": ["EPIC-10"],
+            "tasks_draft": draft,
+        }
 
         with (
             patch("forge.config.get_settings", return_value=mock_settings),
@@ -727,16 +738,10 @@ class TestDraftRetentionOnFailure:
         self, mock_parent_issue: Any, mock_settings: Settings
     ) -> None:
         """Verify draft is retained (delete_draft_attachment is not called) if epic provisioning fails midway."""
-        state = {
-            "ticket_key": "TEST-100",
-            "is_paused": False,
-            "epic_keys": [],
-        }
-
         # Create draft with 2 epics
         draft = ForgeDecompositionDraft(
             parent_key="TEST-100",
-            phase="stories",
+            phase="epics",
             items=[
                 DraftItem(
                     id=1,
@@ -759,6 +764,13 @@ class TestDraftRetentionOnFailure:
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
         )
+
+        state = {
+            "ticket_key": "TEST-100",
+            "is_paused": False,
+            "epic_keys": [],
+            "plan_draft": draft,
+        }
 
         with (
             patch("forge.config.get_settings", return_value=mock_settings),
@@ -787,13 +799,6 @@ class TestDraftRetentionOnFailure:
         self, mock_parent_issue: Any, mock_settings: Settings
     ) -> None:
         """Verify draft is retained (delete_draft_attachment is not called) if task provisioning fails midway."""
-        state = {
-            "ticket_key": "TEST-100",
-            "is_paused": False,
-            "task_keys": [],
-            "epic_keys": ["EPIC-10"],
-        }
-
         # Create draft with 2 tasks
         draft = ForgeDecompositionDraft(
             parent_key="TEST-100",
@@ -823,6 +828,14 @@ class TestDraftRetentionOnFailure:
             updated_at=datetime.now(UTC),
         )
 
+        state = {
+            "ticket_key": "TEST-100",
+            "is_paused": False,
+            "task_keys": [],
+            "epic_keys": ["EPIC-10"],
+            "tasks_draft": draft,
+        }
+
         with (
             patch("forge.config.get_settings", return_value=mock_settings),
             patch("forge.integrations.jira.client.JiraClient") as MockJira,
@@ -844,3 +857,4 @@ class TestDraftRetentionOnFailure:
 
         # Verify delete_draft_attachment was NEVER called, thus retaining the draft
         MockDraftManager.delete_draft_attachment.assert_not_called()
+

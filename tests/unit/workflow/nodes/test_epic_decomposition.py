@@ -357,7 +357,7 @@ class TestDecomposeEpicsDraftReview:
         comment_text = mock_jira.add_comment.call_args_list[1][0][1]
         assert "### 📋 Proposed Epics Draft (Condensed)" in comment_text
         assert "Warning" in comment_text
-        assert "forge-stories-draft.json" in comment_text
+        assert "forge-epics-draft.json" in comment_text
         # Condensed table should only show IDs, summaries, and target repos
         # Detailed descriptions/plans (like Plan 1) should NOT be in the comment
         assert "Plan 1" not in comment_text
@@ -401,7 +401,7 @@ class TestDecomposeEpicsDraftReview:
         comment_text = mock_jira.add_comment.call_args_list[1][0][1]
         assert "### 📋 Proposed Epics Draft (Condensed)" in comment_text
         assert "Warning" in comment_text
-        assert "forge-stories-draft.json" in comment_text
+        assert "forge-epics-draft.json" in comment_text
         assert "A" * 35000 not in comment_text
         assert "Epic One" in comment_text
         assert "acme/backend" in comment_text

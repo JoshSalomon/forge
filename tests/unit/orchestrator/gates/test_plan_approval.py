@@ -320,6 +320,7 @@ class TestPlanDraftProvisioning:
             MockDraftManager.get_draft_attachment = AsyncMock(return_value=draft)
             MockDraftManager.delete_draft_attachment = AsyncMock()
 
+            approved_plan_state["plan_draft"] = draft
             result = await provision_epics(approved_plan_state)
 
             assert result["epic_keys"] == ["EPIC-101"]
@@ -377,6 +378,7 @@ class TestPlanDraftProvisioning:
             MockDraftManager.get_draft_attachment = AsyncMock(return_value=draft)
             MockDraftManager.delete_draft_attachment = AsyncMock()
 
+            approved_plan_state["plan_draft"] = draft
             with pytest.raises(Exception, match="Jira failure midway!"):
                 await provision_epics(approved_plan_state)
 

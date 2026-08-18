@@ -11,7 +11,7 @@ from forge.models.draft import DraftItem, ForgeDecompositionDraft
 from forge.models.workflow import ForgeLabel
 from forge.workflow.feature.state import FeatureState as WorkflowState
 from forge.workflow.utils import check_direct_mode, check_yolo_mode, update_state_timestamp
-from forge.workflow.utils.draft_manager import FORGE_STORIES_DRAFT_FILENAME, DraftManager
+from forge.workflow.utils.draft_manager import FORGE_EPICS_DRAFT_FILENAME, DraftManager
 from forge.workflow.utils.jira_status import post_status_comment
 from forge.workflow.utils.qa_summary import post_qa_summary_if_needed
 from forge.workflow.utils.references import fetch_and_inject_references
@@ -295,7 +295,7 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
             # and delete them using DraftManager/JiraClient to prevent duplicate file accumulation.
             try:
                 await DraftManager.delete_draft_attachment(
-                    jira, ticket_key, FORGE_STORIES_DRAFT_FILENAME
+                    jira, ticket_key, FORGE_EPICS_DRAFT_FILENAME
                 )
             except Exception as e:
                 logger.warning(f"Failed to delete existing draft attachment: {e}")
@@ -334,14 +334,12 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
             # Post the review comment to the parent Jira ticket
             await jira.add_comment(ticket_key, comment_body)
 
-            # Save draft as attachment (using phase="stories" for integration tests)
-            stories_draft = draft.model_copy()
-            stories_draft.phase = "stories"
+            # Save draft as attachment
             await DraftManager.save_draft_attachment(
                 jira,
                 ticket_key,
-                stories_draft,
-                FORGE_STORIES_DRAFT_FILENAME,
+                draft,
+                FORGE_EPICS_DRAFT_FILENAME,
             )
 
             # Set workflow label to pending

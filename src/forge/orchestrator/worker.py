@@ -71,6 +71,7 @@ from forge.workflow.utils.comment_classifier import (
     parse_comment_command,
 )
 from forge.workflow.utils.draft_manager import (
+    FORGE_EPICS_DRAFT_FILENAME,
     FORGE_TASKS_DRAFT_FILENAME,
     DraftManager,
 )
@@ -1099,15 +1100,9 @@ class OrchestratorWorker:
                                 feature_summary = ""
                                 feature_description = ""
                                 if feature_issue:
-                                    from unittest.mock import AsyncMock, MagicMock
-
-                                    if hasattr(feature_issue, "summary") and not isinstance(
-                                        feature_issue.summary, (MagicMock, AsyncMock)
-                                    ):
+                                    if hasattr(feature_issue, "summary"):
                                         feature_summary = str(feature_issue.summary)
-                                    if hasattr(feature_issue, "description") and not isinstance(
-                                        feature_issue.description, (MagicMock, AsyncMock)
-                                    ):
+                                    if hasattr(feature_issue, "description"):
                                         feature_description = str(feature_issue.description)
 
                                 context_data = {
@@ -1191,8 +1186,25 @@ class OrchestratorWorker:
                                         )
 
                                     current_state["tasks_draft"] = updated_aggregate_draft
+                                    try:
+                                        await DraftManager.save_task_draft_with_slices(
+                                            jira, current_state.get("ticket_key") or message.ticket_key, updated_aggregate_draft
+                                        )
+                                    except Exception as write_err:
+                                        logger.warning(f"Failed one-way draft write: {write_err}")
                                 else:
                                     current_state[draft_key] = updated_draft
+                                    try:
+                                        if draft_key == "tasks_draft":
+                                            await DraftManager.save_task_draft_with_slices(
+                                                jira, current_state.get("ticket_key") or message.ticket_key, updated_draft
+                                            )
+                                        else:
+                                            await DraftManager.save_draft_attachment(
+                                                jira, current_state.get("ticket_key") or message.ticket_key, updated_draft, FORGE_EPICS_DRAFT_FILENAME
+                                            )
+                                    except Exception as write_err:
+                                        logger.warning(f"Failed one-way draft write: {write_err}")
 
                                 # Update the original review comment with the new breakdown
                                 await self._update_original_review_comment(

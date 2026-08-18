@@ -32,18 +32,28 @@ def base_state():
 
 @pytest.fixture
 def mock_parent_issue():
-    issue = MagicMock()
-    issue.project_key = "MYPROJ"
-    issue.summary = "Feature summary"
-    return issue
+    from forge.integrations.jira.models import JiraIssue
+    return JiraIssue(
+        key="MYPROJ-123",
+        id="10123",
+        summary="Feature summary",
+        description="",
+        status="In Progress",
+        issue_type="Feature",
+    )
 
 
 @pytest.fixture
 def mock_epic_issue():
-    issue = MagicMock()
-    issue.summary = "Epic summary"
-    issue.description = "Implement the backend pieces."
-    return issue
+    from forge.integrations.jira.models import JiraIssue
+    return JiraIssue(
+        key="MYPROJ-124",
+        id="10124",
+        summary="Epic summary",
+        description="Implement the backend pieces.",
+        status="In Progress",
+        issue_type="Epic",
+    )
 
 
 @pytest.fixture

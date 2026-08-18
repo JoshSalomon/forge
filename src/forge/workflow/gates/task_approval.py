@@ -226,10 +226,15 @@ async def provision_tasks_from_draft(
         return existing_keys, reconstructed_tasks_by_repo
 
     settings = get_settings()
-    logger.info(f"Downloading task draft for {ticket_key}")
-    draft = await DraftManager.get_draft_attachment(jira, ticket_key, FORGE_TASKS_DRAFT_FILENAME)
-    if not draft:
-        raise ValueError(f"Approved draft {FORGE_TASKS_DRAFT_FILENAME} not found on {ticket_key}")
+    logger.info(f"Retrieving task draft for {ticket_key} from state")
+    draft_raw = state.get("tasks_draft")
+    if not draft_raw:
+        raise ValueError(f"Approved draft 'tasks_draft' not found in workflow state for {ticket_key}")
+    if isinstance(draft_raw, dict):
+        from forge.models.draft import ForgeDecompositionDraft
+        draft = ForgeDecompositionDraft.model_validate(draft_raw)
+    else:
+        draft = draft_raw
 
     parent_issue = await jira.get_issue(ticket_key)
     project_key = parent_issue.project_key

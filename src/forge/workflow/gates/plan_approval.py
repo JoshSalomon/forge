@@ -156,7 +156,7 @@ async def provision_epics_from_draft(state: WorkflowState, jira: "JiraClient") -
     """
     ticket_key = state["ticket_key"]
     from forge.models.workflow import ForgeLabel
-    from forge.workflow.utils.draft_manager import FORGE_STORIES_DRAFT_FILENAME, DraftManager
+    from forge.workflow.utils.draft_manager import FORGE_EPICS_DRAFT_FILENAME, DraftManager
 
     # Idempotency guard: check if Epics already exist on Jira with this parent label
     jql = f'labels = "forge:parent:{ticket_key}" AND issuetype = Epic'
@@ -169,16 +169,21 @@ async def provision_epics_from_draft(state: WorkflowState, jira: "JiraClient") -
         )
         try:
             await DraftManager.delete_draft_attachment(
-                jira, ticket_key, FORGE_STORIES_DRAFT_FILENAME
+                jira, ticket_key, FORGE_EPICS_DRAFT_FILENAME
             )
         except Exception as e:
             logger.warning(f"Draft deletion skipped or failed during idempotency recovery: {e}")
         return existing_keys
 
-    logger.info(f"Downloading plan draft for {ticket_key}")
-    draft = await DraftManager.get_draft_attachment(jira, ticket_key, FORGE_STORIES_DRAFT_FILENAME)
-    if not draft:
-        raise ValueError(f"Approved draft {FORGE_STORIES_DRAFT_FILENAME} not found on {ticket_key}")
+    logger.info(f"Retrieving plan draft for {ticket_key} from state")
+    draft_raw = state.get("plan_draft")
+    if not draft_raw:
+        raise ValueError(f"Approved draft 'plan_draft' not found in workflow state for {ticket_key}")
+    if isinstance(draft_raw, dict):
+        from forge.models.draft import ForgeDecompositionDraft
+        draft = ForgeDecompositionDraft.model_validate(draft_raw)
+    else:
+        draft = draft_raw
 
     parent_issue = await jira.get_issue(ticket_key)
     project_key = parent_issue.project_key
@@ -206,7 +211,7 @@ async def provision_epics_from_draft(state: WorkflowState, jira: "JiraClient") -
         epic_keys.append(epic_key)
 
     # Delete the draft only after 100% successful ticket creation
-    await DraftManager.delete_draft_attachment(jira, ticket_key, FORGE_STORIES_DRAFT_FILENAME)
+    await DraftManager.delete_draft_attachment(jira, ticket_key, FORGE_EPICS_DRAFT_FILENAME)
     logger.info(
         f"Successfully provisioned {len(epic_keys)} Epics for {ticket_key} and deleted draft"
     )

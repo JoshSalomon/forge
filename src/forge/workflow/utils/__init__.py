@@ -11,7 +11,7 @@ from forge.workflow.utils.comment_classifier import (
     parse_comment_command,
 )
 from forge.workflow.utils.draft_manager import (
-    FORGE_STORIES_DRAFT_FILENAME,
+    FORGE_EPICS_DRAFT_FILENAME,
     FORGE_TASKS_DRAFT_FILENAME,
     DraftManager,
 )
@@ -154,7 +154,7 @@ __all__ = [
     "set_review_pending_label",
     "transition_tasks_to_in_progress",
     "update_state_timestamp",
-    "FORGE_STORIES_DRAFT_FILENAME",
+    "FORGE_EPICS_DRAFT_FILENAME",
     "FORGE_TASKS_DRAFT_FILENAME",
     "DraftManager",
 ]

@@ -12,7 +12,7 @@ from forge.models.draft import DraftItem, ForgeDecompositionDraft
 
 logger = logging.getLogger(__name__)
 
-FORGE_STORIES_DRAFT_FILENAME = "forge-stories-draft.json"
+FORGE_EPICS_DRAFT_FILENAME = "forge-epics-draft.json"
 FORGE_TASKS_DRAFT_FILENAME = "forge-tasks-draft.json"
 
 
@@ -197,14 +197,16 @@ class DraftManager:
     ) -> ForgeDecompositionDraft | None:
         """Fetch a draft attachment from Jira parent ticket and parse it.
 
-        Args:
-            jira_client: The Jira client instance.
-            issue_key: The Jira issue key.
-            filename: The target filename to download.
-
-        Returns:
-            The parsed ForgeDecompositionDraft model, or None if not found.
+        .. deprecated:: 1.0
+           Read from workflow state instead.
         """
+        import warnings
+
+        warnings.warn(
+            "get_draft_attachment is deprecated and scheduled for removal. Read from workflow state instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         try:
             attachments = await jira_client.get_attachments(issue_key)
             target_attachment = None
@@ -254,7 +256,7 @@ class DraftManager:
         jira_client: JiraClient,
         issue_key: str,
         draft: ForgeDecompositionDraft,
-        filename: str = FORGE_STORIES_DRAFT_FILENAME,
+        filename: str = FORGE_EPICS_DRAFT_FILENAME,
     ) -> None:
         """Serialize draft as JSON and attach it to Jira parent ticket.
 
@@ -328,12 +330,12 @@ class DraftManager:
             return text.replace("|", "\\|")
 
         items = draft.items
-        if draft.phase in ("epics", "stories"):
+        if draft.phase == "epics":
             phase_title = "Epics"
             phase_action = "decomposition"
             item_label = "Plan"
             approval_label = ForgeLabel.PLAN_APPROVED.value
-            filename = FORGE_STORIES_DRAFT_FILENAME
+            filename = FORGE_EPICS_DRAFT_FILENAME
         else:
             phase_title = "Tasks"
             phase_action = "implementation"

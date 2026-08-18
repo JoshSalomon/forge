@@ -39,8 +39,8 @@ class ForgeDecompositionDraft(BaseModel):
     parent_key: str
     """Jira key of the parent feature or epic."""
 
-    phase: Literal["epics", "tasks", "stories"]
-    """Phase of the draft, either "epics", "tasks", or "stories"."""
+    phase: Literal["epics", "tasks"]
+    """Phase of the draft, either "epics" or "tasks"."""
 
     items: list[DraftItem]
     """List of draft items (proposed Stories or Tasks)."""

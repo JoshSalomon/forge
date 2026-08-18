@@ -281,6 +281,7 @@ class TestTaskDraftProvisioning:
             MockDraftManager.get_draft_attachment = AsyncMock(return_value=draft)
             MockDraftManager.delete_draft_attachment = AsyncMock()
 
+            approved_task_state["tasks_draft"] = draft
             result = await provision_tasks(approved_task_state)
 
             assert result["task_keys"] == ["TASK-201"]
@@ -346,6 +347,7 @@ class TestTaskDraftProvisioning:
             MockDraftManager.get_draft_attachment = AsyncMock(return_value=draft)
             MockDraftManager.delete_draft_attachment = AsyncMock()
 
+            approved_task_state["tasks_draft"] = draft
             with pytest.raises(Exception, match="Jira task failure!"):
                 await provision_tasks(approved_task_state)
 
