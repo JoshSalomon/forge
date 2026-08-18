@@ -1188,7 +1188,9 @@ class OrchestratorWorker:
                                     current_state["tasks_draft"] = updated_aggregate_draft
                                     try:
                                         await DraftManager.save_task_draft_with_slices(
-                                            jira, current_state.get("ticket_key") or message.ticket_key, updated_aggregate_draft
+                                            jira,
+                                            current_state.get("ticket_key") or message.ticket_key,
+                                            updated_aggregate_draft,
                                         )
                                     except Exception as write_err:
                                         logger.warning(f"Failed one-way draft write: {write_err}")
@@ -1197,11 +1199,18 @@ class OrchestratorWorker:
                                     try:
                                         if draft_key == "tasks_draft":
                                             await DraftManager.save_task_draft_with_slices(
-                                                jira, current_state.get("ticket_key") or message.ticket_key, updated_draft
+                                                jira,
+                                                current_state.get("ticket_key")
+                                                or message.ticket_key,
+                                                updated_draft,
                                             )
                                         else:
                                             await DraftManager.save_draft_attachment(
-                                                jira, current_state.get("ticket_key") or message.ticket_key, updated_draft, FORGE_EPICS_DRAFT_FILENAME
+                                                jira,
+                                                current_state.get("ticket_key")
+                                                or message.ticket_key,
+                                                updated_draft,
+                                                FORGE_EPICS_DRAFT_FILENAME,
                                             )
                                     except Exception as write_err:
                                         logger.warning(f"Failed one-way draft write: {write_err}")

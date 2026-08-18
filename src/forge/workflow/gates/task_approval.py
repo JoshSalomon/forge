@@ -229,9 +229,12 @@ async def provision_tasks_from_draft(
     logger.info(f"Retrieving task draft for {ticket_key} from state")
     draft_raw = state.get("tasks_draft")
     if not draft_raw:
-        raise ValueError(f"Approved draft 'tasks_draft' not found in workflow state for {ticket_key}")
+        raise ValueError(
+            f"Approved draft 'tasks_draft' not found in workflow state for {ticket_key}"
+        )
     if isinstance(draft_raw, dict):
         from forge.models.draft import ForgeDecompositionDraft
+
         draft = ForgeDecompositionDraft.model_validate(draft_raw)
     else:
         draft = draft_raw

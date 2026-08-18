@@ -168,9 +168,7 @@ async def provision_epics_from_draft(state: WorkflowState, jira: "JiraClient") -
             f"Skipping duplicate ticket creation, deleting draft and returning existing keys."
         )
         try:
-            await DraftManager.delete_draft_attachment(
-                jira, ticket_key, FORGE_EPICS_DRAFT_FILENAME
-            )
+            await DraftManager.delete_draft_attachment(jira, ticket_key, FORGE_EPICS_DRAFT_FILENAME)
         except Exception as e:
             logger.warning(f"Draft deletion skipped or failed during idempotency recovery: {e}")
         return existing_keys
@@ -178,9 +176,12 @@ async def provision_epics_from_draft(state: WorkflowState, jira: "JiraClient") -
     logger.info(f"Retrieving plan draft for {ticket_key} from state")
     draft_raw = state.get("plan_draft")
     if not draft_raw:
-        raise ValueError(f"Approved draft 'plan_draft' not found in workflow state for {ticket_key}")
+        raise ValueError(
+            f"Approved draft 'plan_draft' not found in workflow state for {ticket_key}"
+        )
     if isinstance(draft_raw, dict):
         from forge.models.draft import ForgeDecompositionDraft
+
         draft = ForgeDecompositionDraft.model_validate(draft_raw)
     else:
         draft = draft_raw
