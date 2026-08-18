@@ -445,7 +445,7 @@ class DraftManager:
 
         chunks = []
         lines = text.split("\n")
-        current_chunk = []
+        current_chunk: list[str] = []
         current_length = 0
 
         for line in lines:
