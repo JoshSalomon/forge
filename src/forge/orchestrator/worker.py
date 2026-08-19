@@ -57,7 +57,7 @@ from forge.workflow.utils.review_decisions import (
 
 logger = logging.getLogger(__name__)
 
-_CI_STAGES = ("wait_for_ci_gate", "ci_evaluator", "attempt_ci_fix")
+_CI_STAGES = ("ci_evaluator", "attempt_ci_fix", "human_review_gate")
 
 
 def _is_workflow_errored(state: dict) -> bool:
@@ -626,8 +626,7 @@ class OrchestratorWorker:
         event = message.event_type
         is_check_event = "check_suite" in event or "check_run" in event
         if message.source == EventSource.GITHUB and (
-            current_node in ("wait_for_ci_gate", "ci_evaluator")
-            or (targets_implementation_pr and is_check_event)
+            current_node == "ci_evaluator" or (targets_implementation_pr and is_check_event)
         ):
             if is_check_event:
                 suite_status = payload.get("check_suite", {}).get("status") or payload.get(
@@ -1522,7 +1521,7 @@ class OrchestratorWorker:
                 "payload": payload,
             },
         }
-        if targets_implementation_pr and is_ci_webhook:
+        if targets_implementation_pr and is_ci_webhook and current_node != "human_review_gate":
             updated_state["current_node"] = "ci_evaluator"
         elif targets_implementation_pr and (
             "pull_request_review" in message.event_type or pr_merged
@@ -1631,6 +1630,12 @@ class OrchestratorWorker:
         elif is_ci_webhook:
             # GitHub CI event — unpause the gate and let ci_evaluator check the results
             updated_state["is_paused"] = False
+
+            if current_node == "human_review_gate":
+                # Keep current_node as human_review_gate so review webhooks arriving
+                # during the CI cycle are still accepted from the queue.
+                updated_state["pending_ci_event"] = True
+
         elif is_yolo:
             updated_state["yolo_mode"] = True
             updated_state["is_paused"] = False
@@ -1750,8 +1755,6 @@ class OrchestratorWorker:
                 "ci_evaluator",
                 "attempt_ci_fix",
                 "human_review_gate",
-                "wait_for_ci_gate",
-                "review_response_gate",
             )
             if (
                 not current_state.get("is_paused", True)

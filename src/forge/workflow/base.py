@@ -51,6 +51,7 @@ class PRIntegrationState(TypedDict, total=False):
     pull_requests: dict[str, PullRequestState]
     current_pr_url: str | None
     current_pr_number: int | None
+    pr_created_comment_posted: bool
     current_repo: str | None
     repos_to_process: list[str]
     repos_completed: list[str]
@@ -77,6 +78,7 @@ class CIIntegrationState(TypedDict, total=False):
     ci_skipped_checks: list[str]
     ci_fix_attempt: int
     ci_fix_max_attempts: int
+    pending_ci_event: bool
 
 
 class ReviewIntegrationState(TypedDict, total=False):

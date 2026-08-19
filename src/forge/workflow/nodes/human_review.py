@@ -1,39 +1,75 @@
 """Human review handling node for processing review feedback and merges."""
 
 import logging
+from typing import Any
 
 from langgraph.graph import END
 
 from forge.integrations.jira.client import JiraClient
 from forge.models.workflow import ForgeLabel, JiraStatus
 from forge.workflow.feature.state import FeatureState as WorkflowState
-from forge.workflow.utils import set_paused, update_state_timestamp
-from forge.workflow.utils.jira_status import post_status_comment
+from forge.workflow.utils import update_state_timestamp
+from forge.workflow.utils.jira_status import (
+    post_status_comment,
+    remove_implementing_label,
+    set_ci_pending_label,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def human_review_gate(state: WorkflowState) -> WorkflowState:
-    """Pause workflow for human code review.
+async def human_review_gate(state: WorkflowState) -> WorkflowState:
+    """Pause workflow for CI and human review.
 
-    Args:
-        state: Current workflow state.
-
-    Returns:
-        State with is_paused=True, unless PR is already merged.
+    On the first entry after PR creation, posts a PR creation status comment
+    and transitions Jira labels from forge:implementing to forge:ci-pending.
+    On subsequent entries (CI cycle or review cycle re-entries), skips the
+    Jira comment to avoid duplicate noise. The one-time post is tracked with
+    pr_created_comment_posted rather than ci_status, because the first CI
+    webhook re-enters this gate while ci_status is still None (ci_evaluator
+    has not run yet).
     """
     ticket_key = state["ticket_key"]
-    pr_urls = state.get("pr_urls", [])
+    ci_status = state.get("ci_status")
 
     if state.get("pr_merged"):
-        logger.info(f"Human review gate: PR already merged for {ticket_key}, skipping pause")
+        logger.info(f"PR already merged for {ticket_key}, skipping pause at human_review_gate")
         return update_state_timestamp(
             {**state, "current_node": "human_review_gate", "is_paused": False}
         )
 
-    logger.info(f"Human review gate: pausing for {ticket_key} ({len(pr_urls)} PRs)")
+    updates: dict[str, Any] = {}
+    if ci_status is None and not state.get("pr_created_comment_posted"):
+        jira = JiraClient()
+        try:
+            pr_number = state.get("current_pr_number")
+            if pr_number is not None:
+                message = (
+                    f"🚀 Pull request #{pr_number} created and submitted. "
+                    "Waiting for CI checks and human review."
+                )
+            else:
+                message = (
+                    "🚀 Pull request created and submitted. Waiting for CI checks and human review."
+                )
+            await post_status_comment(jira, ticket_key, message)
+            await remove_implementing_label(jira, ticket_key)
+            await set_ci_pending_label(jira, ticket_key)
+        finally:
+            await jira.close()
+        updates["pr_created_comment_posted"] = True
+        logger.info(f"Pausing {ticket_key} at human_review_gate after PR creation")
+    else:
+        logger.info(f"Pausing {ticket_key} at human_review_gate (ci_status={ci_status!r})")
 
-    return set_paused(state, "human_review_gate")
+    return update_state_timestamp(
+        {
+            **state,
+            **updates,
+            "is_paused": True,
+            "current_node": "human_review_gate",
+        }
+    )
 
 
 def route_human_review(state: WorkflowState) -> str:
@@ -45,6 +81,11 @@ def route_human_review(state: WorkflowState) -> str:
     Returns:
         Next node name or END.
     """
+    # CI webhook arrived while paused at this gate — route through CI cycle
+    if state.get("pending_ci_event"):
+        logger.info(f"CI event pending for {state['ticket_key']}, routing to ci_evaluator")
+        return "ci_evaluator"
+
     # Check if changes were requested — route to dedicated review implementation node
     if state.get("revision_requested") and state.get("feedback_comment"):
         logger.info(f"Changes requested for {state['ticket_key']}")

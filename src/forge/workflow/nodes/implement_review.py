@@ -450,12 +450,8 @@ async def implement_review(state: WorkflowState) -> WorkflowState:
             decisions=accepted_decisions,
         )
 
-        # Only re-enter the CI gate if we actually pushed new commits; otherwise
-        # CI won't re-trigger and wait_for_ci_gate would block forever.
-        if contested_comments:
-            next_node = "review_response_gate"
-        else:
-            next_node = "wait_for_ci_gate" if unpushed else "human_review_gate"
+        # Contested threads require human arbitration before re-entering the review cycle.
+        next_node = "review_response_gate" if contested_comments else "human_review_gate"
 
         return update_state_timestamp(
             {

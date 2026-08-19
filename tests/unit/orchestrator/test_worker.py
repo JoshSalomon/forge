@@ -182,7 +182,8 @@ async def test_multi_repo_ci_webhook_selects_earlier_pr_from_review_gate() -> No
 
     assert result["current_repo"] == "acme/backend"
     assert result["current_pr_number"] == 10
-    assert result["current_node"] == "ci_evaluator"
+    assert result["current_node"] == "human_review_gate"
+    assert result["pending_ci_event"] is True
     assert result["is_paused"] is False
 
 
@@ -1214,17 +1215,6 @@ class TestCiWebhookSignalAtCiEvaluator:
         assert result["is_paused"] is False
 
     @pytest.mark.asyncio
-    async def test_check_suite_at_wait_for_ci_gate_still_works(self, worker):
-        """Existing wait_for_ci_gate behaviour must be preserved."""
-        state = self._ci_state("wait_for_ci_gate")
-        message = self._check_suite_message("success")
-
-        result = await worker._handle_resume_event(message, state)
-
-        assert result is not state
-        assert result["is_paused"] is False
-
-    @pytest.mark.asyncio
     async def test_incomplete_check_suite_does_not_unpause_at_ci_evaluator(self, worker):
         """A check_suite with status=in_progress must not wake up the workflow."""
         state = self._ci_state("ci_evaluator")
@@ -1549,6 +1539,77 @@ class TestWorkerRouting:
         )
 
 
+class TestCiWebhookAtHumanReviewGate:
+    """Worker routes CI webhooks to human_review_gate correctly."""
+
+    @pytest.fixture
+    def worker(self) -> OrchestratorWorker:
+        return OrchestratorWorker(consumer_name="test-worker")
+
+    @pytest.mark.asyncio
+    async def test_ci_webhook_at_review_gate_sets_pending_ci_event(self, worker):
+        """CI check_suite.completed at human_review_gate sets pending_ci_event=True."""
+        current_state = {
+            "ticket_key": "TEST-1",
+            "ticket_type": "Feature",
+            "current_node": "human_review_gate",
+            "is_paused": True,
+            "pending_ci_event": False,
+            "context": {},
+            "pull_requests": {"org/repo": {"number": 42}},
+        }
+        message = QueueMessage(
+            message_id="msg-1",
+            event_id="evt-1",
+            source=EventSource.GITHUB,
+            event_type="check_suite.completed",
+            ticket_key="TEST-1",
+            payload={
+                "repository": {"full_name": "org/repo"},
+                "check_suite": {
+                    "status": "completed",
+                    "pull_requests": [{"number": 42}],
+                },
+            },
+        )
+
+        result = await worker._handle_resume_event(message, current_state)
+
+        assert result.get("pending_ci_event") is True
+        assert result.get("is_paused") is False
+        assert result.get("current_node") == "human_review_gate"  # unchanged
+
+    @pytest.mark.asyncio
+    async def test_ci_webhook_at_ci_evaluator_does_not_set_pending_ci_event(self, worker):
+        """CI webhook at ci_evaluator does NOT set pending_ci_event (old behavior preserved)."""
+        current_state = {
+            "ticket_key": "TEST-1",
+            "ticket_type": "Feature",
+            "current_node": "ci_evaluator",
+            "is_paused": False,
+            "pending_ci_event": False,
+            "context": {},
+        }
+        message = QueueMessage(
+            message_id="msg-2",
+            event_id="evt-2",
+            source=EventSource.GITHUB,
+            event_type="check_suite.completed",
+            ticket_key="TEST-1",
+            payload={
+                "check_suite": {
+                    "status": "completed",
+                    "pull_requests": [{"number": 42}],
+                }
+            },
+        )
+
+        result = await worker._handle_resume_event(message, current_state)
+
+        assert result.get("is_paused") is False
+        assert result.get("pending_ci_event", False) is False  # not set for ci_evaluator
+
+
 class TestHandleResumeEventReviewGates:
     """Tests for resuming workflows from human_review_gate and review_response_gate."""
 
@@ -1688,10 +1749,10 @@ class TestHandleResumeEventReviewGates:
     @pytest.mark.asyncio
     @patch("forge.orchestrator.worker.post_status_comment", new_callable=AsyncMock)
     @patch("forge.orchestrator.worker.GitHubClient")
-    async def test_handle_resume_event_pr_review_at_review_response_gate(
+    async def test_pr_review_changes_requested_at_review_response_gate(
         self, mock_github_client, _mock_post_comment
     ):
-        """When at review_response_gate and a PR review changes_requested/commented occurs, unpause the workflow."""
+        """changes_requested at review_response_gate unpauses and clears contested_comments."""
         mock_gh = AsyncMock()
         mock_gh.get_pull_request_review_comments.return_value = [
             {"path": "src/file.py", "position": 10, "body": "Please fix this."}
@@ -1715,16 +1776,9 @@ class TestHandleResumeEventReviewGates:
             event_type="pull_request_review",
             ticket_key="TEST-123",
             payload={
-                "review": {
-                    "state": "changes_requested",
-                    "body": "PR needs some work",
-                },
-                "pull_request": {
-                    "number": 42,
-                },
-                "repository": {
-                    "full_name": "owner/repo",
-                },
+                "review": {"state": "changes_requested", "body": "PR needs some work"},
+                "pull_request": {"number": 42},
+                "repository": {"full_name": "owner/repo"},
             },
         )
 
@@ -1741,12 +1795,11 @@ class TestHandleResumeEventReviewGates:
     @pytest.mark.asyncio
     @patch("forge.orchestrator.worker.post_status_comment", new_callable=AsyncMock)
     @patch("forge.orchestrator.worker.GitHubClient")
-    async def test_handle_resume_event_pr_review_with_review_id_at_review_response_gate(
+    async def test_pr_review_with_review_id_calls_get_review_comments(
         self, mock_github_client, _mock_post_comment
     ):
-        """When at review_response_gate and a pull_request_review payload contains a valid review ID, gh.get_review_comments is called."""
+        """When review payload contains a review ID, get_review_comments is called."""
         mock_gh = AsyncMock()
-        # Mock various position/line structures to verify fallback
         mock_gh.get_review_comments.return_value = [
             {"path": "src/file1.py", "position": 10, "body": "Fix position."},
             {"path": "src/file2.py", "line": 20, "body": "Fix line."},
@@ -1783,12 +1836,8 @@ class TestHandleResumeEventReviewGates:
                     "state": "changes_requested",
                     "body": "PR review body",
                 },
-                "pull_request": {
-                    "number": 42,
-                },
-                "repository": {
-                    "full_name": "owner/repo",
-                },
+                "pull_request": {"number": 42},
+                "repository": {"full_name": "owner/repo"},
             },
         )
 
@@ -1812,10 +1861,10 @@ class TestHandleResumeEventReviewGates:
     @pytest.mark.asyncio
     @patch("forge.orchestrator.worker.post_status_comment", new_callable=AsyncMock)
     @patch("forge.orchestrator.worker.GitHubClient")
-    async def test_handle_resume_event_pr_review_fallback_at_review_response_gate(
+    async def test_pr_review_without_review_id_falls_back(
         self, mock_github_client, _mock_post_comment
     ):
-        """When at review_response_gate and a pull_request_review payload contains NO review ID, gh.get_pull_request_review_comments is called."""
+        """When review payload has NO review ID, get_pull_request_review_comments is called."""
         mock_gh = AsyncMock()
         mock_gh.get_pull_request_review_comments.return_value = [
             {"path": "src/file1.py", "position": 10, "body": "Fix position."},
@@ -1839,16 +1888,9 @@ class TestHandleResumeEventReviewGates:
             event_type="pull_request_review",
             ticket_key="TEST-123",
             payload={
-                "review": {
-                    "state": "changes_requested",
-                    "body": "PR review body",
-                },
-                "pull_request": {
-                    "number": 42,
-                },
-                "repository": {
-                    "full_name": "owner/repo",
-                },
+                "review": {"state": "changes_requested", "body": "PR review body"},
+                "pull_request": {"number": 42},
+                "repository": {"full_name": "owner/repo"},
             },
         )
 
@@ -1868,8 +1910,8 @@ class TestHandleResumeEventReviewGates:
 
     @pytest.mark.asyncio
     @patch("forge.orchestrator.worker.post_status_comment", new_callable=AsyncMock)
-    async def test_handle_resume_event_pr_approve_at_review_response_gate(self, _mock_post_comment):
-        """When at review_response_gate and a PR review approved occurs, unpause the workflow."""
+    async def test_pr_approve_at_review_response_gate(self, _mock_post_comment):
+        """PR review approved at review_response_gate unpauses the workflow."""
         worker = OrchestratorWorker(consumer_name="test-worker")
         state = {
             "ticket_key": "TEST-123",
@@ -1884,16 +1926,9 @@ class TestHandleResumeEventReviewGates:
             event_type="pull_request_review",
             ticket_key="TEST-123",
             payload={
-                "review": {
-                    "state": "approved",
-                    "body": "Looks great!",
-                },
-                "pull_request": {
-                    "number": 42,
-                },
-                "repository": {
-                    "full_name": "owner/repo",
-                },
+                "review": {"state": "approved", "body": "Looks great!"},
+                "pull_request": {"number": 42},
+                "repository": {"full_name": "owner/repo"},
             },
         )
 
@@ -1905,8 +1940,8 @@ class TestHandleResumeEventReviewGates:
 
     @pytest.mark.asyncio
     @patch("forge.orchestrator.worker.post_status_comment", new_callable=AsyncMock)
-    async def test_handle_resume_event_pr_merge_at_review_response_gate(self, _mock_post_comment):
-        """When at review_response_gate and a PR merge occurs, unpause the workflow."""
+    async def test_pr_merge_at_review_response_gate(self, _mock_post_comment):
+        """PR merge event at review_response_gate unpauses and sets pr_merged."""
         worker = OrchestratorWorker(consumer_name="test-worker")
         state = {
             "ticket_key": "TEST-123",
@@ -1922,13 +1957,8 @@ class TestHandleResumeEventReviewGates:
             ticket_key="TEST-123",
             payload={
                 "action": "closed",
-                "pull_request": {
-                    "merged": True,
-                    "number": 42,
-                },
-                "repository": {
-                    "full_name": "owner/repo",
-                },
+                "pull_request": {"merged": True, "number": 42},
+                "repository": {"full_name": "owner/repo"},
             },
         )
 
@@ -1941,10 +1971,10 @@ class TestHandleResumeEventReviewGates:
     @pytest.mark.asyncio
     @patch("forge.orchestrator.worker.post_status_comment", new_callable=AsyncMock)
     @patch("forge.orchestrator.worker.GitHubClient")
-    async def test_handle_resume_event_pr_review_at_human_review_gate(
+    async def test_pr_review_changes_requested_at_human_review_gate(
         self, mock_github_client, _mock_post_comment
     ):
-        """When at human_review_gate and a PR review changes_requested/commented occurs, unpause the workflow."""
+        """changes_requested at human_review_gate unpauses and sets revision_requested."""
         mock_gh = AsyncMock()
         mock_gh.get_pull_request_review_comments.return_value = []
         mock_github_client.return_value = mock_gh
@@ -1963,16 +1993,9 @@ class TestHandleResumeEventReviewGates:
             event_type="pull_request_review",
             ticket_key="TEST-123",
             payload={
-                "review": {
-                    "state": "changes_requested",
-                    "body": "Needs changes",
-                },
-                "pull_request": {
-                    "number": 42,
-                },
-                "repository": {
-                    "full_name": "owner/repo",
-                },
+                "review": {"state": "changes_requested", "body": "Needs changes"},
+                "pull_request": {"number": 42},
+                "repository": {"full_name": "owner/repo"},
             },
         )
 
@@ -1986,10 +2009,10 @@ class TestHandleResumeEventReviewGates:
     @pytest.mark.asyncio
     @patch("forge.orchestrator.worker.post_status_comment", new_callable=AsyncMock)
     @patch("forge.orchestrator.worker.GitHubClient")
-    async def test_handle_resume_event_pr_commented_review_at_review_response_gate(
+    async def test_pr_commented_review_with_inline_at_review_response_gate(
         self, mock_github_client, _mock_post_comment
     ):
-        """When at review_response_gate and a PR review with state 'commented' occurs, unpause the workflow."""
+        """A 'commented' review with inline comments at review_response_gate is actionable."""
         mock_gh = AsyncMock()
         mock_gh.get_pull_request_review_comments.return_value = [
             {"path": "src/app.py", "position": 5, "body": "Nit: rename this variable."}
@@ -2010,16 +2033,9 @@ class TestHandleResumeEventReviewGates:
             event_type="pull_request_review",
             ticket_key="TEST-123",
             payload={
-                "review": {
-                    "state": "commented",
-                    "body": "",
-                },
-                "pull_request": {
-                    "number": 42,
-                },
-                "repository": {
-                    "full_name": "owner/repo",
-                },
+                "review": {"state": "commented", "body": ""},
+                "pull_request": {"number": 42},
+                "repository": {"full_name": "owner/repo"},
             },
         )
 
@@ -2033,10 +2049,11 @@ class TestHandleResumeEventReviewGates:
 
     @pytest.mark.asyncio
     @patch("forge.orchestrator.worker.post_status_comment", new_callable=AsyncMock)
-    async def test_handle_resume_event_pr_review_ignored_when_not_paused_at_review_response_gate(
+    async def test_pr_review_ignored_when_not_paused_at_review_response_gate(
         self, _mock_post_comment
     ):
-        """A PR review event arriving when is_paused=False at review_response_gate must be ignored."""
+        """A PR review event when is_paused=False at review_response_gate must not
+        trigger revision handling — the review guard skips it entirely."""
         worker = OrchestratorWorker(consumer_name="test-worker")
         state = {
             "ticket_key": "TEST-123",
@@ -2051,26 +2068,20 @@ class TestHandleResumeEventReviewGates:
             event_type="pull_request_review",
             ticket_key="TEST-123",
             payload={
-                "review": {
-                    "state": "changes_requested",
-                    "body": "Fix this",
-                },
-                "pull_request": {
-                    "number": 42,
-                },
-                "repository": {
-                    "full_name": "owner/repo",
-                },
+                "review": {"state": "changes_requested", "body": "Fix this"},
+                "pull_request": {"number": 42},
+                "repository": {"full_name": "owner/repo"},
             },
         )
 
         result = await worker._handle_resume_event(message, state)
 
-        assert result is state
+        assert result.get("revision_requested") is not True
+        assert result.get("feedback_comment") is None
 
     def test_review_response_gate_not_in_fresh_invoke_nodes(self):
-        """review_response_gate must NOT use fresh-invoke — the gate unconditionally
-        re-pauses, so ainvoke(state) would negate the is_paused=False set by the handler."""
+        """review_response_gate must NOT use fresh-invoke — the gate re-pauses,
+        so ainvoke(state) would negate is_paused=False set by the handler."""
         from forge.orchestrator.worker import _FRESH_INVOKE_NODES
 
         assert "review_response_gate" not in _FRESH_INVOKE_NODES
@@ -2078,11 +2089,10 @@ class TestHandleResumeEventReviewGates:
     @pytest.mark.asyncio
     @patch("forge.orchestrator.worker.post_status_comment", new_callable=AsyncMock)
     @patch("forge.orchestrator.worker.GitHubClient")
-    async def test_review_response_gate_resume_state_routes_to_implement_review(
+    async def test_review_response_gate_resume_routes_to_implement_review(
         self, mock_github_client, _mock_post_comment
     ):
-        """After a changes_requested event at review_response_gate, the resulting
-        state must route to implement_review (not back to human_review_gate)."""
+        """After changes_requested at review_response_gate, state routes to implement_review."""
         from forge.workflow.nodes.implement_review import route_review_response
 
         mock_gh = AsyncMock()
