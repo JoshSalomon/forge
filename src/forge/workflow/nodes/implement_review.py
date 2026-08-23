@@ -22,6 +22,7 @@ from forge.workflow.utils.review_decisions import (
     merge_review_decisions,
     reply_to_review_decisions,
 )
+from forge.workspace.handoff import capture_handoff
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +269,7 @@ async def implement_review(state: WorkflowState) -> WorkflowState:
     logger.info(f"Implementing PR review feedback for {ticket_key}")
 
     settings = get_settings()
+    fix_started = False
 
     try:
         try:
@@ -375,6 +377,7 @@ async def implement_review(state: WorkflowState) -> WorkflowState:
             fix_prompt = load_prompt("implement-review-fix", ticket_key=ticket_key)
 
             runner = ContainerRunner(settings)
+            fix_started = True
             result = await runner.run(
                 workspace_path=Path(workspace_path),
                 task_summary=f"Implement PR review plan for {ticket_key}",
@@ -387,6 +390,9 @@ async def implement_review(state: WorkflowState) -> WorkflowState:
                 skill_name="implement-review",
             )
             state = merge_review_exhaustion(state, result, ticket_key, "implement_review_fix")
+
+            state = capture_handoff(workspace_path, current_repo, f"{ticket_key}-review-fix", state)
+            fix_started = False
 
             # Commit any uncommitted changes the container left
             if git.has_uncommitted_changes():
@@ -471,6 +477,8 @@ async def implement_review(state: WorkflowState) -> WorkflowState:
 
     except Exception as e:
         logger.error(f"implement_review failed for {ticket_key}: {e}")
+        if fix_started and workspace_path:
+            state = capture_handoff(workspace_path, current_repo, f"{ticket_key}-review-fix", state)
         return {
             **state,
             "last_error": str(e),
