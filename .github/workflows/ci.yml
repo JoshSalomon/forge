@@ -6,6 +6,7 @@ on:
       - main
       - integration/dev-to-main
       - prototype/declarative-workflows
+      - prototype/layered-planning-state
 
 jobs:
   helm-lint:
