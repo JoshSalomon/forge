@@ -81,7 +81,10 @@ class Settings(BaseSettings):
     # GitHub Configuration
     github_token: SecretStr = Field(description="GitHub personal access token")
     github_webhook_secret: SecretStr = Field(
-        default=SecretStr(""), description="Shared secret for GitHub webhook validation"
+        default=SecretStr(""),
+        description=(
+            "Shared secret for GitHub webhook validation; leave empty to accept unsigned webhooks"
+        ),
     )
     github_default_repo: str = Field(
         default="",
@@ -103,6 +106,14 @@ class Settings(BaseSettings):
     github_fork_owner: str = Field(
         default="",
         description="GitHub account/org where forks are created (defaults to authenticated user if empty)",
+    )
+    forge_repos_config_path: str = Field(
+        default="config/repos.yaml",
+        description=(
+            "Path to the source control provider/connection registry config file. "
+            "Optional — repositories not listed here resolve through the implicit "
+            "default GitHub connection built from GITHUB_TOKEN/GITHUB_WEBHOOK_SECRET."
+        ),
     )
     forge_bot_comment_prefix: str = Field(
         default="",
