@@ -183,7 +183,6 @@ async def provision_tasks_from_draft(
     from forge.config import get_settings
     from forge.integrations.jira.client import MissingProjectConfig
     from forge.models.workflow import ForgeLabel
-    from forge.workflow.utils.draft_manager import FORGE_TASKS_DRAFT_FILENAME, DraftManager
 
     # Idempotency guard: check if Tasks already exist on Jira with this parent label
     jql = f'labels = "forge:parent:{ticket_key}" AND issuetype = Task'
@@ -192,7 +191,7 @@ async def provision_tasks_from_draft(
         existing_keys = [issue.key for issue in existing_issues]
         logger.info(
             f"Idempotency Guard: Found {len(existing_keys)} existing Tasks for parent {ticket_key}: {existing_keys}. "
-            f"Skipping duplicate ticket creation, deleting draft and returning existing keys."
+            "Skipping duplicate ticket creation and returning existing keys."
         )
 
         # Reconstruct tasks_by_repo from existing issues
@@ -207,21 +206,6 @@ async def provision_tasks_from_draft(
             if repo not in reconstructed_tasks_by_repo:
                 reconstructed_tasks_by_repo[repo] = []
             reconstructed_tasks_by_repo[repo].append(issue.key)
-
-        try:
-            await DraftManager.delete_draft_attachment(jira, ticket_key, FORGE_TASKS_DRAFT_FILENAME)
-            if state.get("epic_keys"):
-                for ek in state["epic_keys"]:
-                    try:
-                        await DraftManager.delete_draft_attachment(
-                            jira, ek, FORGE_TASKS_DRAFT_FILENAME
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to delete draft attachment '{FORGE_TASKS_DRAFT_FILENAME}' on Epic {ek} during idempotency recovery: {e}"
-                        )
-        except Exception as e:
-            logger.warning(f"Draft deletion skipped or failed during idempotency recovery: {e}")
 
         return existing_keys, reconstructed_tasks_by_repo
 
@@ -308,23 +292,7 @@ async def provision_tasks_from_draft(
                 tasks_by_repo[repo] = []
             tasks_by_repo[repo].append(task_key)
 
-    # Delete the draft only after 100% successful ticket creation
-    await DraftManager.delete_draft_attachment(jira, ticket_key, FORGE_TASKS_DRAFT_FILENAME)
-
-    epic_keys_to_clean = set()
-    if draft and draft.items:
-        epic_keys_to_clean.update(item.epic_key for item in draft.items if item.epic_key)
-    if state.get("epic_keys"):
-        epic_keys_to_clean.update(state["epic_keys"])
-
-    for ek in epic_keys_to_clean:
-        try:
-            await DraftManager.delete_draft_attachment(jira, ek, FORGE_TASKS_DRAFT_FILENAME)
-        except Exception as e:
-            logger.warning(
-                f"Failed to delete draft attachment '{FORGE_TASKS_DRAFT_FILENAME}' on Epic {ek}: {e}"
-            )
     logger.info(
-        f"Successfully provisioned {len(task_keys)} Tasks across {len(tasks_by_repo)} repos and deleted draft"
+        f"Successfully provisioned {len(task_keys)} Tasks across {len(tasks_by_repo)} repos"
     )
     return task_keys, tasks_by_repo

@@ -7,7 +7,7 @@ on partial ticket provisioning failure.
 
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -70,6 +70,7 @@ def base_task_state() -> dict[str, Any]:
 def mock_parent_issue() -> Any:
     """Mock Jira parent issue."""
     from forge.integrations.jira.models import JiraIssue
+
     return JiraIssue(
         key="TEST-123",
         id="10123",
@@ -84,6 +85,7 @@ def mock_parent_issue() -> Any:
 def mock_epic_issue() -> Any:
     """Mock Jira Epic issue."""
     from forge.integrations.jira.models import JiraIssue
+
     return JiraIssue(
         key="EPIC-456",
         id="10456",
@@ -318,7 +320,7 @@ class TestDraftAttachmentCreationAndCleanup:
         mock_tasks_data: list[dict[str, Any]],
         mock_settings: Settings,
     ) -> None:
-        """Verify that in non-YOLO mode, generate_tasks cleans up old drafts, saves the new draft JSON, posts comments, and pauses."""
+        """Verify task drafts stay in state while review comments are posted."""
         state = {**base_task_state, "yolo_mode": False}
 
         with (
@@ -350,14 +352,11 @@ class TestDraftAttachmentCreationAndCleanup:
 
             result = await generate_tasks(state)
 
-        # 1. Verify cleanup of any old drafts
-        MockDraftManager.delete_draft_attachment.assert_called_once_with(
-            mock_jira, "TEST-100", "forge-tasks-draft.json"
-        )
+        # Task JSON is not uploaded or cleaned up as a Jira attachment.
+        MockDraftManager.delete_draft_attachment.assert_not_called()
+        MockDraftManager.save_task_draft_with_slices.assert_not_called()
 
-        # 2. Verify draft attachment saving
-        MockDraftManager.save_task_draft_with_slices.assert_called_once()
-        saved_draft = MockDraftManager.save_task_draft_with_slices.call_args[0][2]
+        saved_draft = result["tasks_draft"]
         assert isinstance(saved_draft, ForgeDecompositionDraft)
         assert saved_draft.parent_key == "TEST-100"
         assert saved_draft.phase == "tasks"
@@ -365,7 +364,7 @@ class TestDraftAttachmentCreationAndCleanup:
         assert saved_draft.items[0].summary == "Task 1"
         assert saved_draft.items[0].repo == "acme/repo1"
 
-        # 3. Verify comments posted
+        # Verify comments posted
         assert mock_jira.add_comment.call_count == 2
         epic_comments = [
             args[0][1]
@@ -493,11 +492,10 @@ class TestTruncationFallbackBoundaries:
         ]
         assert len(epic_comments) > 0, "No draft comment found"
         comment_body = epic_comments[0]
-        assert "### 📋 Proposed Tasks Draft (Condensed)" in comment_body
-        assert "Warning" in comment_body
-        assert "exceeds character or size limits" in comment_body
-        assert "forge-tasks-draft.json" in comment_body
-        assert "#### 1. Task 1" not in comment_body
+        assert "### 📋 Proposed Tasks Draft (Condensed)" not in comment_body
+        assert "forge-tasks-draft.json" not in comment_body
+        assert "#### 1. Task 1" in comment_body
+        assert "#### 16. Task 16" in comment_body
 
     @pytest.mark.asyncio
     async def test_character_length_truncation_boundary_epics(
@@ -722,10 +720,8 @@ class TestApprovalCommandAndSkippingExcludedItems:
             labels=["forge:managed", "forge:parent:TEST-100", "repo:acme/repo1"],
         )
 
-        # Verify draft was deleted after successful provisioning
-        MockDraftManager.delete_draft_attachment.assert_any_call(
-            mock_jira, "TEST-100", "forge-tasks-draft.json"
-        )
+        # Task drafts live only in workflow state; no attachment cleanup occurs.
+        MockDraftManager.delete_draft_attachment.assert_not_called()
         assert task_keys == ["TASK-1", "TASK-3"]
         assert tasks_by_repo == {"acme/repo1": ["TASK-1"], "acme/repo3": ["TASK-3"]}
 
@@ -857,4 +853,3 @@ class TestDraftRetentionOnFailure:
 
         # Verify delete_draft_attachment was NEVER called, thus retaining the draft
         MockDraftManager.delete_draft_attachment.assert_not_called()
-

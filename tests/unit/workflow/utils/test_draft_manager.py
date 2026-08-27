@@ -209,7 +209,8 @@ class TestDraftManager:
 
         assert len(comment) <= 850
         assert "⚠️ Showing first" in comment
-        assert "items — see attached draft JSON for the full list." in comment
+        assert "items in this comment." in comment
+        assert "forge-tasks-draft.json" not in comment
         assert "Task 1" in comment
         assert "## 🤖 Forge interaction options" in comment
 

@@ -1001,6 +1001,11 @@ class OrchestratorWorker:
             if isinstance(comment_body, dict):
                 comment_body = self._extract_text_from_adf(comment_body)
 
+            # Child issue webhooks are routed to the parent Feature workflow.
+            # Keep the issue where the human actually commented as the target
+            # for draft slicing and all Jira replies/edits.
+            interaction_ticket_key = payload.get("source_ticket_key") or message.ticket_key
+
             if comment_body.strip():
                 # Check for interactive comment commands or natural language feedback when paused in PENDING_APPROVAL (BR-006)
                 if current_state.get("is_paused") and current_node in _PENDING_APPROVAL_GATES:
@@ -1022,7 +1027,7 @@ class OrchestratorWorker:
                             # 1. Handle parsing errors immediately
                             if is_forge_cmd and parsed_cmd is not None and "error" in parsed_cmd:
                                 await jira.add_comment(
-                                    message.ticket_key,
+                                    interaction_ticket_key,
                                     f"❌ **Error parsing command:** {parsed_cmd['error']}",
                                 )
                                 await jira.close()
@@ -1041,21 +1046,21 @@ class OrchestratorWorker:
                             # 2. Slice aggregate_draft if we are on an Epic (child ticket)
                             if (
                                 draft_key == "tasks_draft"
-                                and message.ticket_key != current_state.get("ticket_key")
+                                and interaction_ticket_key != current_state.get("ticket_key")
                             ):
                                 epic_items = []
                                 if original_draft:
                                     epic_items = [
                                         item.model_copy()
                                         for item in original_draft.items
-                                        if item.epic_key == message.ticket_key
+                                        if item.epic_key == interaction_ticket_key
                                     ]
                                 # Re-sequence local IDs
                                 for idx, item in enumerate(epic_items, start=1):
                                     item.id = idx
 
                                 original_draft = ForgeDecompositionDraft(
-                                    parent_key=message.ticket_key,
+                                    parent_key=interaction_ticket_key,
                                     phase="tasks",
                                     items=epic_items,
                                     version=original_draft.version if original_draft else 1,
@@ -1110,7 +1115,7 @@ class OrchestratorWorker:
                                     "parent_description": feature_description,
                                     "prd": current_state.get("prd_content", ""),
                                     "spec": current_state.get("spec_content", ""),
-                                    "ticket_key": message.ticket_key,
+                                    "ticket_key": interaction_ticket_key,
                                     "current_node": current_node,
                                 }
 
@@ -1132,7 +1137,7 @@ class OrchestratorWorker:
                                 # Update Feature state with the modified draft
                                 if (
                                     draft_key == "tasks_draft"
-                                    and message.ticket_key != current_state.get("ticket_key")
+                                    and interaction_ticket_key != current_state.get("ticket_key")
                                 ):
                                     # It's an Epic slice update. Merge back.
                                     aggregate_draft = current_state.get("tasks_draft")
@@ -1146,12 +1151,12 @@ class OrchestratorWorker:
                                         other_items = [
                                             item.model_copy()
                                             for item in aggregate_draft.items
-                                            if item.epic_key != message.ticket_key
+                                            if item.epic_key != interaction_ticket_key
                                         ]
                                         updated_epic_items = []
                                         for item in updated_draft.items:
                                             cloned_item = item.model_copy()
-                                            cloned_item.epic_key = message.ticket_key
+                                            cloned_item.epic_key = interaction_ticket_key
                                             updated_epic_items.append(cloned_item)
 
                                         combined_items = other_items + updated_epic_items
@@ -1171,7 +1176,7 @@ class OrchestratorWorker:
                                         combined_items = []
                                         for idx, item in enumerate(updated_draft.items, start=1):
                                             cloned_item = item.model_copy()
-                                            cloned_item.epic_key = message.ticket_key
+                                            cloned_item.epic_key = interaction_ticket_key
                                             cloned_item.id = idx
                                             combined_items.append(cloned_item)
 
@@ -1185,25 +1190,10 @@ class OrchestratorWorker:
                                         )
 
                                     current_state["tasks_draft"] = updated_aggregate_draft
-                                    try:
-                                        await DraftManager.save_task_draft_with_slices(
-                                            jira,
-                                            current_state.get("ticket_key") or message.ticket_key,
-                                            updated_aggregate_draft,
-                                        )
-                                    except Exception as write_err:
-                                        logger.warning(f"Failed one-way draft write: {write_err}")
                                 else:
                                     current_state[draft_key] = updated_draft
-                                    try:
-                                        if draft_key == "tasks_draft":
-                                            await DraftManager.save_task_draft_with_slices(
-                                                jira,
-                                                current_state.get("ticket_key")
-                                                or message.ticket_key,
-                                                updated_draft,
-                                            )
-                                        else:
+                                    if draft_key == "plan_draft":
+                                        try:
                                             await DraftManager.save_draft_attachment(
                                                 jira,
                                                 current_state.get("ticket_key")
@@ -1211,18 +1201,20 @@ class OrchestratorWorker:
                                                 updated_draft,
                                                 FORGE_EPICS_DRAFT_FILENAME,
                                             )
-                                    except Exception as write_err:
-                                        logger.warning(f"Failed one-way draft write: {write_err}")
+                                        except Exception as write_err:
+                                            logger.warning(
+                                                f"Failed one-way draft write: {write_err}"
+                                            )
 
                                 # Update the original review comment with the new breakdown
                                 await self._update_original_review_comment(
-                                    jira, message.ticket_key, updated_draft
+                                    jira, interaction_ticket_key, updated_draft
                                 )
 
                                 comment_id = comment.get("id") if comment else None
                                 if comment_id:
                                     await jira.edit_comment(
-                                        message.ticket_key,
+                                        interaction_ticket_key,
                                         comment_id,
                                         f"✅ {comment_body}",
                                     )
@@ -1237,7 +1229,7 @@ class OrchestratorWorker:
                             )
                             try:
                                 await jira.add_comment(
-                                    message.ticket_key,
+                                    interaction_ticket_key,
                                     f"❌ **Error processing command/revision:** {e}",
                                 )
                             except Exception as post_err:

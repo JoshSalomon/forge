@@ -33,6 +33,7 @@ def base_state():
 @pytest.fixture
 def mock_parent_issue():
     from forge.integrations.jira.models import JiraIssue
+
     return JiraIssue(
         key="MYPROJ-123",
         id="10123",
@@ -46,6 +47,7 @@ def mock_parent_issue():
 @pytest.fixture
 def mock_epic_issue():
     from forge.integrations.jira.models import JiraIssue
+
     return JiraIssue(
         key="MYPROJ-124",
         id="10124",
@@ -665,7 +667,7 @@ class TestTaskGenerationDraftReview:
     async def test_generate_tasks_draft_review_truncation_limits(
         self, base_state, mock_parent_issue, mock_epic_issue
     ):
-        """When the item list has > 15 elements, comment falls back to a condensed table."""
+        """More than 15 tasks remain fully visible without an attachment."""
         state = {**base_state, "yolo_mode": False}
 
         # Mock 16 items
@@ -704,15 +706,13 @@ class TestTaskGenerationDraftReview:
 
             await generate_tasks(state)
 
-        # Verify comment is in condensed table format
+        # All task details stay in the Epic comment; no attachment fallback is needed.
         assert mock_jira.add_comment.call_count == 2
         comment_text = mock_jira.add_comment.call_args_list[0][0][1]
-        assert "### 📋 Proposed Tasks Draft (Condensed)" in comment_text
-        assert "Warning" in comment_text
-        assert "forge-tasks-draft.json" in comment_text
-        # Condensed table should only show IDs, summaries, and target repos
-        # Detailed descriptions/plans (like Desc 1) should NOT be in the comment
-        assert "Desc 1" not in comment_text
+        assert "### 📋 Proposed Tasks Draft (Condensed)" not in comment_text
+        assert "forge-tasks-draft.json" not in comment_text
+        assert "Desc 1" in comment_text
+        assert "Desc 16" in comment_text
         assert "Task 1" in comment_text
         assert "acme/repo-1" in comment_text
 
@@ -758,11 +758,17 @@ class TestTaskGenerationDraftReview:
 
             await generate_tasks(state)
 
-        # Verify comment is in condensed table format due to length
-        assert mock_jira.add_comment.call_count == 2
-        comment_text = mock_jira.add_comment.call_args_list[0][0][1]
-        assert "Warning" in comment_text
-        assert "forge-tasks-draft.json" in comment_text
-        assert "A" * 35000 not in comment_text
-        assert "Task One" in comment_text
-        assert "acme/backend" in comment_text
+        # The oversized task review is split across Epic continuation comments,
+        # followed by the Feature navigation comment.
+        assert mock_jira.add_comment.call_count > 2
+        epic_comments = [
+            call.args[1]
+            for call in mock_jira.add_comment.call_args_list
+            if call.args[0] == "MYPROJ-10"
+        ]
+        assert all(len(comment) <= 32767 for comment in epic_comments)
+        combined = "".join(epic_comments)
+        assert "forge-tasks-draft.json" not in combined
+        assert "Task One" in combined
+        assert "A" * 30000 in combined
+        assert "A" * 5000 in combined

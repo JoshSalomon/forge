@@ -282,36 +282,6 @@ class DraftManager:
             raise
 
     @staticmethod
-    async def save_task_draft_with_slices(
-        jira_client: JiraClient,
-        issue_key: str,
-        draft: ForgeDecompositionDraft,
-        filename: str = FORGE_TASKS_DRAFT_FILENAME,
-    ) -> None:
-        """Serialize draft as JSON and attach it to Jira parent ticket.
-
-        Args:
-            jira_client: The Jira client instance.
-            issue_key: The Jira issue key.
-            draft: The draft model to save.
-            filename: The filename for the attachment.
-        """
-        try:
-            content = draft.model_dump_json(indent=2)
-            await jira_client.add_attachment(
-                issue_key=issue_key,
-                filename=filename,
-                content=content,
-                content_type="application/json",
-            )
-        except Exception as e:
-            logger.error(
-                f"Failed to save task draft with slices on {issue_key}: {e}",
-                exc_info=True,
-            )
-            raise
-
-    @staticmethod
     def _truncate_to_jira_limit(text: str, limit: int = 32767) -> str:
         """Truncate text to fit within Jira's character limit and append a [truncated] suffix."""
         if len(text) <= limit:
@@ -374,11 +344,16 @@ class DraftManager:
 
         full_comment = header + summary_list + details + footer
 
-        if len(full_comment) > limit or len(items) > 15:
+        if len(full_comment) > limit or (draft.phase == "epics" and len(items) > 15):
+            overflow_guidance = (
+                f"Please refer to the attached `{filename}` for full implementation plan details."
+                if draft.phase == "epics"
+                else "The complete task breakdown will be posted in ordered continuation comments."
+            )
             condensed_header = (
                 f"### 📋 Proposed {phase_title} Draft (Condensed)\n\n"
                 "⚠️ **Warning:** The proposed plan exceeds character or size limits for detailed display in a comment. "
-                f"Please refer to the attached `{filename}` for full implementation plan details.\n\n"
+                f"{overflow_guidance}\n\n"
             )
             rows = []
             for item in items:
@@ -395,7 +370,7 @@ class DraftManager:
             if len(full_condensed_comment) > limit:
                 allowed_rows: list[str] = []
                 for i, row in enumerate(rows, start=1):
-                    temp_warning = f"\n⚠️ Showing first {i} items — see attached draft JSON for the full list.\n\n"
+                    temp_warning = f"\n⚠️ Showing first {i} items in this comment.\n\n"
                     temp_comment = (
                         condensed_header + "".join(allowed_rows + [row]) + temp_warning + footer
                     )
@@ -405,7 +380,7 @@ class DraftManager:
                         break
 
                 count = len(allowed_rows)
-                warning_note = f"\n⚠️ Showing first {count} items — see attached draft JSON for the full list.\n\n"
+                warning_note = f"\n⚠️ Showing first {count} items in this comment.\n\n"
                 condensed_comment = condensed_header + "".join(allowed_rows) + warning_note + footer
             else:
                 condensed_comment = full_condensed_comment
@@ -426,21 +401,24 @@ class DraftManager:
         current_length = 0
 
         for line in lines:
+            if len(line) > limit:
+                if current_chunk:
+                    chunks.append("\n".join(current_chunk))
+                    current_chunk = []
+                    current_length = 0
+                while len(line) > limit:
+                    chunks.append(line[:limit])
+                    line = line[limit:]
+                if line:
+                    current_chunk = [line]
+                    current_length = len(line)
+                continue
+
             if current_length + len(line) + 1 > limit:
                 if current_chunk:
                     chunks.append("\n".join(current_chunk))
                     current_chunk = [line]
                     current_length = len(line)
-                else:
-                    # Line itself is longer than limit, split it by chars
-                    chunks.append(line[:limit])
-                    # remaining line parts
-                    remaining = line[limit:]
-                    while len(remaining) > limit:
-                        chunks.append(remaining[:limit])
-                        remaining = remaining[limit:]
-                    current_chunk = [remaining]
-                    current_length = len(remaining)
             else:
                 current_chunk.append(line)
                 current_length += len(line) + 1
@@ -485,7 +463,10 @@ class DraftManager:
             )
 
             # Format the Epic's review comment
-            epic_comment = DraftManager.format_review_comment(epic_draft)
+            # Keep every task detail visible. Jira's per-comment limit is
+            # handled below with ordered continuation comments, so no JSON
+            # attachment or condensed-only fallback is needed.
+            epic_comment = DraftManager.format_review_comment(epic_draft, limit=10**9)
 
             # Support ordered continuation comments for overflow:
             chunks = DraftManager.chunk_text_by_limit(epic_comment, limit=30000)

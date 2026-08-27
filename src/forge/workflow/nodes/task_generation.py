@@ -14,7 +14,7 @@ from forge.models.workflow import ForgeLabel
 from forge.prompts import load_prompt
 from forge.workflow.feature.state import FeatureState as WorkflowState
 from forge.workflow.utils import check_direct_mode, check_yolo_mode, update_state_timestamp
-from forge.workflow.utils.draft_manager import FORGE_TASKS_DRAFT_FILENAME, DraftManager
+from forge.workflow.utils.draft_manager import DraftManager
 from forge.workflow.utils.jira_status import post_status_comment
 from forge.workflow.utils.references import fetch_and_inject_references
 from forge.workflow.utils.repo_resolution import get_effective_default_repo
@@ -304,15 +304,6 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
                     },
                 )
 
-            # Prior to saving, check for existing forge-tasks-draft.json attachments
-            # and delete them using DraftManager/JiraClient to prevent duplicate file accumulation.
-            try:
-                await DraftManager.delete_draft_attachment(
-                    jira, ticket_key, FORGE_TASKS_DRAFT_FILENAME
-                )
-            except Exception as e:
-                logger.warning(f"Failed to delete existing draft attachment: {e}")
-
             # Convert proposed_tasks_list into DraftItem instances
             draft_items = []
             for idx, task_item in enumerate(proposed_tasks_list, start=1):
@@ -341,9 +332,6 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
             )
-
-            # Save task draft as attachment and post sliced comments to Epic tickets
-            await DraftManager.save_task_draft_with_slices(jira, ticket_key, draft)
 
             # Post task draft review comments to Epic tickets and a navigation comment on Feature
             await DraftManager.post_task_draft_review(jira, ticket_key, draft)
