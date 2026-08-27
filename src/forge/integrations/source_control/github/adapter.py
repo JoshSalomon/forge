@@ -215,7 +215,8 @@ class GitHubAdapter:
         """Verify GitHub webhook signature.
 
         Args:
-            headers: Request headers (must include X-Hub-Signature-256)
+            headers: Request headers. X-Hub-Signature-256 is required when a
+                webhook secret is configured.
             body: Raw request body bytes
 
         Returns:
@@ -223,9 +224,10 @@ class GitHubAdapter:
         """
         if not self._webhook_secret:
             logger.warning(
-                "Webhook verification failed: no webhook secret configured for this connection"
+                "GitHub webhook signature verification disabled: no webhook secret "
+                "configured for this connection"
             )
-            return False
+            return True
 
         signature_header = headers.get("X-Hub-Signature-256", "")
         if not signature_header.startswith("sha256="):

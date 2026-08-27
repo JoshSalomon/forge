@@ -81,7 +81,10 @@ class Settings(BaseSettings):
     # GitHub Configuration
     github_token: SecretStr = Field(description="GitHub personal access token")
     github_webhook_secret: SecretStr = Field(
-        default=SecretStr(""), description="Shared secret for GitHub webhook validation"
+        default=SecretStr(""),
+        description=(
+            "Shared secret for GitHub webhook validation; leave empty to accept unsigned webhooks"
+        ),
     )
     github_default_repo: str = Field(
         default="",

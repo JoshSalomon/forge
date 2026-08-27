@@ -123,6 +123,34 @@ class TestGitHubWebhookRoute:
         assert response.status_code == 401
 
     @pytest.mark.asyncio
+    async def test_missing_signature_is_accepted_when_secret_is_empty(self, mock_settings):
+        """Unsigned synthetic webhooks are accepted when verification is disabled."""
+        payload = json.dumps(WEBHOOK_CHECK_RUN_COMPLETED_SUCCESS).encode()
+        mock_settings = mock_settings.model_copy(update={"github_webhook_secret": SecretStr("")})
+        mock_producer = MagicMock()
+        mock_producer.publish_event = AsyncMock()
+
+        with (
+            patch("forge.api.routes.github.get_settings", return_value=mock_settings),
+            patch("forge.api.routes.github.QueueProducer", return_value=mock_producer),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/webhooks/github",
+                    content=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-GitHub-Event": "check_run",
+                        "X-GitHub-Delivery": "unsigned-delivery",
+                    },
+                )
+
+        assert response.status_code == 202
+        mock_producer.publish_event.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_check_run_success_published(self, mock_settings):
         """Check run success event is published."""
         payload = json.dumps(WEBHOOK_CHECK_RUN_COMPLETED_SUCCESS).encode()

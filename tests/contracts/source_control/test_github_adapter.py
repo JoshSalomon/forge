@@ -169,22 +169,15 @@ async def test_webhook_verification(github_adapter: GitHubAdapter, webhook_secre
 
 
 @pytest.mark.asyncio
-async def test_webhook_verification_fails_closed_when_secret_unset(
+async def test_webhook_verification_is_disabled_when_secret_unset(
     github_adapter: GitHubAdapter,
 ):
-    """An adapter with no configured webhook_secret must reject every signature,
-    not silently verify against an empty-string HMAC key (which anyone could forge).
-    """
+    """An adapter with no webhook secret accepts unsigned synthetic webhooks."""
     payload = {"test": "data"}
     body = json.dumps(payload).encode()
 
-    # Forged using the empty-string key an unset secret would otherwise fall back to.
-    forged_headers = {
-        "X-Hub-Signature-256": sign_webhook(payload, ""),
-    }
-
     assert github_adapter._webhook_secret is None
-    assert await github_adapter.verify_webhook(forged_headers, body) is False
+    assert await github_adapter.verify_webhook({}, body) is True
 
 
 @pytest.mark.asyncio
