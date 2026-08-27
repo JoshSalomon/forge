@@ -15,6 +15,7 @@ from forge.workflow.nodes.git_persistence import (
     push_to_fork_with_retry,
     use_fork_remote,
 )
+from forge.workflow.nodes.repository_scope import review_repository_scope
 from forge.workflow.nodes.review_utils import (
     next_review_attempt,
     parse_review_verdict,
@@ -172,6 +173,9 @@ async def _run_bug_review(state: WorkflowState, git: GitOperations) -> WorkflowS
         fix_approach_title=fix_approach.get("title", ""),
         fix_approach_description=fix_approach.get("description", ""),
         plan_content=plan_content,
+    )
+    task_description = (
+        review_repository_scope(current_repo, workspace_path) + "\n\n" + task_description
     )
 
     try:
@@ -333,6 +337,9 @@ async def _run_feature_review(state: WorkflowState, git: GitOperations) -> Workf
         workspace_path=workspace_path,
         spec_content=spec_content[:3000] if spec_content else "Not available",
         guardrails=guardrails[:2000] if guardrails else "",
+    )
+    task_description = (
+        review_repository_scope(current_repo, workspace_path) + "\n\n" + task_description
     )
 
     try:

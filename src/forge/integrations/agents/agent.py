@@ -1033,9 +1033,7 @@ class ForgeAgent:
         prompt = load_prompt(
             "generate-prd",
             raw_requirements=raw_requirements,
-            context=_prompt_context_fields(
-                context, ("project_key", "summary", "available_repos")
-            ),
+            context=_prompt_context_fields(context, ("project_key", "summary", "available_repos")),
         )
 
         logger.info("Generating PRD using Deep Agents with skill")
