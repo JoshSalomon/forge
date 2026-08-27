@@ -326,9 +326,6 @@ class DraftManager:
         """Format a human-readable review comment for a draft."""
         from forge.models.workflow import ForgeLabel
 
-        def _escape_cell(text: str) -> str:
-            return text.replace("|", "\\|")
-
         items = draft.items
         if draft.phase == "epics":
             phase_title = "Epics"
@@ -344,25 +341,23 @@ class DraftManager:
             filename = FORGE_TASKS_DRAFT_FILENAME
 
         header = f"### 📋 Proposed {phase_title} Draft\n\nThe following {phase_title} have been proposed for {phase_action}:\n\n"
-        table = "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
+        summary_list = ""
         for item in items:
-            escaped_summary = _escape_cell(item.summary)
-            escaped_repo = _escape_cell(item.repo or "unknown")
             if item.excluded:
-                summary_cell = f"~~{escaped_summary}~~ *(excluded)*"
-                repo_cell = f"~~{escaped_repo}~~"
+                summary = f"~~{item.summary}~~ *(excluded)*"
+                repo = f"~~{item.repo or 'unknown'}~~"
             else:
-                summary_cell = escaped_summary
-                repo_cell = escaped_repo
-            table += f"| {item.id} | {summary_cell} | {repo_cell} |\n"
-        table += "\n---\n\n"
+                summary = item.summary
+                repo = item.repo or "unknown"
+            summary_list += f"- **{item.id}.** {summary} — Repo: `{repo}`\n"
+        summary_list += "\n---\n\n"
 
         details = ""
         for item in items:
             heading_summary = f"~~{item.summary}~~ *(excluded)*" if item.excluded else item.summary
             details += f"#### {item.id}. {heading_summary} (Repo: {item.repo or 'unknown'})\n"
             if item.description:
-                details += f"**{item_label}:**\n{item.description}\n\n"
+                details += f"**{item_label}:**\n\n{item.description}\n\n"
             else:
                 details += "\n"
 
@@ -377,7 +372,7 @@ class DraftManager:
             f"- Ask:      comment starting with `?`"
         )
 
-        full_comment = header + table + details + footer
+        full_comment = header + summary_list + details + footer
 
         if len(full_comment) > limit or len(items) > 15:
             condensed_header = (
@@ -385,36 +380,24 @@ class DraftManager:
                 "⚠️ **Warning:** The proposed plan exceeds character or size limits for detailed display in a comment. "
                 f"Please refer to the attached `{filename}` for full implementation plan details.\n\n"
             )
-            condensed_table_header = (
-                "| ID | Summary | Target Repo |\n|----|---------|-------------|\n"
-            )
-
             rows = []
             for item in items:
-                escaped_summary = _escape_cell(item.summary)
-                escaped_repo = _escape_cell(item.repo or "unknown")
                 if item.excluded:
-                    summary_cell = f"~~{escaped_summary}~~ *(excluded)*"
-                    repo_cell = f"~~{escaped_repo}~~"
+                    summary = f"~~{item.summary}~~ *(excluded)*"
+                    repo = f"~~{item.repo or 'unknown'}~~"
                 else:
-                    summary_cell = escaped_summary
-                    repo_cell = escaped_repo
-                rows.append(f"| {item.id} | {summary_cell} | {repo_cell} |\n")
+                    summary = item.summary
+                    repo = item.repo or "unknown"
+                rows.append(f"- **{item.id}.** {summary} — Repo: `{repo}`\n")
 
-            full_condensed_comment = (
-                condensed_header + condensed_table_header + "".join(rows) + "\n" + footer
-            )
+            full_condensed_comment = condensed_header + "".join(rows) + "\n" + footer
 
             if len(full_condensed_comment) > limit:
                 allowed_rows: list[str] = []
                 for i, row in enumerate(rows, start=1):
                     temp_warning = f"\n⚠️ Showing first {i} items — see attached draft JSON for the full list.\n\n"
                     temp_comment = (
-                        condensed_header
-                        + condensed_table_header
-                        + "".join(allowed_rows + [row])
-                        + temp_warning
-                        + footer
+                        condensed_header + "".join(allowed_rows + [row]) + temp_warning + footer
                     )
                     if len(temp_comment) <= limit:
                         allowed_rows.append(row)
@@ -423,13 +406,7 @@ class DraftManager:
 
                 count = len(allowed_rows)
                 warning_note = f"\n⚠️ Showing first {count} items — see attached draft JSON for the full list.\n\n"
-                condensed_comment = (
-                    condensed_header
-                    + condensed_table_header
-                    + "".join(allowed_rows)
-                    + warning_note
-                    + footer
-                )
+                condensed_comment = condensed_header + "".join(allowed_rows) + warning_note + footer
             else:
                 condensed_comment = full_condensed_comment
 

@@ -506,6 +506,42 @@ class TestJiraClientADF:
         assert adf["version"] == 1
         assert len(adf["content"]) >= 1
 
+    def test_text_to_adf_preserves_multiline_plan_steps(self):
+        """Single-newline plan steps remain readable Jira paragraphs."""
+        adf = JiraClient._text_to_adf("**Plan:**\nInspect the handler\nAdd regression coverage")
+
+        assert [node["type"] for node in adf["content"]] == [
+            "paragraph",
+            "paragraph",
+            "paragraph",
+        ]
+        assert adf["content"][0]["content"][0]["text"] == "Plan:"
+        assert adf["content"][1]["content"][0]["text"] == "Inspect the handler"
+        assert adf["content"][2]["content"][0]["text"] == "Add regression coverage"
+
+    def test_text_to_adf_keeps_tables_lists_and_code_structured(self):
+        """Line-break preservation must not split Markdown block structures."""
+        markdown = """| ID | Summary |
+|----|---------|
+| 1 | First |
+
+- one
+- two
+
+```python
+first_line()
+second_line()
+```"""
+
+        adf = JiraClient._text_to_adf(markdown)
+
+        assert [node["type"] for node in adf["content"]] == [
+            "table",
+            "bulletList",
+            "codeBlock",
+        ]
+        assert adf["content"][2]["content"][0]["text"] == "first_line()\nsecond_line()"
+
     def test_text_to_adf_heading(self):
         """Markdown heading converts to ADF heading."""
         text = "# Heading 1"

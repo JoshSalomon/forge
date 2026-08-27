@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from pydantic import ValidationError
@@ -1410,7 +1410,7 @@ class JiraClient:
             }
 
         try:
-            adf = convert(text)
+            adf = convert(JiraClient._prepare_markdown_for_adf(text))
         except Exception as e:
             logger.warning(f"ADF conversion failed, using simple fallback: {e}")
             # Simple fallback - just paragraphs
@@ -1431,7 +1431,57 @@ class JiraClient:
             }
 
         JiraClient._link_bare_urls(adf)
-        return adf
+        return cast(dict[str, Any], adf)
+
+    @staticmethod
+    def _prepare_markdown_for_adf(text: str) -> str:
+        """Preserve intentional newlines unsupported by ``md-to-adf``.
+
+        Agent-generated plans commonly use one logical step per line without
+        inserting Markdown blank lines. ``md-to-adf`` joins such lines with a
+        space, producing a single dense Jira paragraph. Separate consecutive
+        prose lines while leaving fenced code, tables, and list structures
+        untouched.
+        """
+        lines = text.split("\n")
+        table_lines: set[int] = set()
+        for index in range(len(lines) - 1):
+            if "|" not in lines[index]:
+                continue
+            if re.fullmatch(r"[\s|:-]+", lines[index + 1]):
+                table_lines.update({index, index + 1})
+                row_index = index + 2
+                while (
+                    row_index < len(lines) and "|" in lines[row_index] and lines[row_index].strip()
+                ):
+                    table_lines.add(row_index)
+                    row_index += 1
+
+        prepared: list[str] = []
+        in_fence = False
+        list_line = re.compile(r"^\s*(?:[-*+] |\d+[.)] )")
+
+        for index, line in enumerate(lines):
+            prepared.append(line)
+            if line.strip().startswith("```"):
+                in_fence = not in_fence
+                continue
+            if in_fence or index == len(lines) - 1:
+                continue
+
+            next_line = lines[index + 1]
+            if not line.strip() or not next_line.strip():
+                continue
+            if index in table_lines or index + 1 in table_lines:
+                continue
+            if list_line.match(line) or list_line.match(next_line):
+                continue
+            if line.startswith((" ", "\t")) or next_line.startswith((" ", "\t")):
+                continue
+
+            prepared.append("")
+
+        return "\n".join(prepared)
 
     @staticmethod
     def _link_bare_urls(node: dict[str, Any], *, in_code_block: bool = False) -> None:

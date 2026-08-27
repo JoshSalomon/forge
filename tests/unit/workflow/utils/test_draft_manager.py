@@ -85,8 +85,8 @@ class TestDraftManager:
         with pytest.raises(Exception, match="Delete Error"):
             await DraftManager.delete_draft_attachment(mock_jira, "PROJ-123", filename)
 
-    def test_format_review_comment_escapes_pipes(self) -> None:
-        """Should escape pipe characters in item summary and repo for draft review comment."""
+    def test_format_review_comment_handles_pipes_without_table_cells(self) -> None:
+        """Pipe characters should not corrupt the review summary structure."""
         now = datetime.now(UTC)
         draft = ForgeDecompositionDraft(
             parent_key="PROJ-123",
@@ -107,12 +107,40 @@ class TestDraftManager:
 
         comment = DraftManager.format_review_comment(draft)
 
-        # Verify that summary and repo are escaped in the markdown table
-        assert "Task with \\| pipe in summary" in comment
-        assert "repo\\|with\\|pipe" in comment
-
-        # Also verify that the details section is not escaped
+        assert "- **1.** Task with | pipe in summary — Repo: `repo|with|pipe`" in comment
+        assert "| ID | Summary |" not in comment
         assert "#### 1. Task with | pipe in summary (Repo: repo|with|pipe)" in comment
+
+    def test_review_comment_description_renders_as_readable_adf(self) -> None:
+        """Generated review comments retain multiline descriptions in Jira."""
+        now = datetime.now(UTC)
+        draft = ForgeDecompositionDraft(
+            parent_key="PROJ-123",
+            phase="epics",
+            items=[
+                DraftItem(
+                    id=1,
+                    summary="Readable plan",
+                    description="Inspect the workflow\nImplement the fix\nAdd regression tests",
+                    repo="org/repo",
+                    acceptance_criteria=[],
+                )
+            ],
+            created_at=now,
+            updated_at=now,
+        )
+
+        adf = JiraClient._text_to_adf(DraftManager.format_review_comment(draft))
+        rendered_paragraphs = [
+            "".join(part.get("text", "") for part in node.get("content", []))
+            for node in adf["content"]
+            if node["type"] == "paragraph"
+        ]
+
+        assert "Plan:" in rendered_paragraphs
+        assert "Inspect the workflow" in rendered_paragraphs
+        assert "Implement the fix" in rendered_paragraphs
+        assert "Add regression tests" in rendered_paragraphs
 
     def test_format_review_comment_visual_indicator_excluded(self) -> None:
         """Should apply strikethrough formatting and *(excluded)* text for excluded items."""
@@ -146,16 +174,16 @@ class TestDraftManager:
         comment = DraftManager.format_review_comment(draft)
 
         # Verify normal item is formatted normally
-        assert "| 1 | Active task | repo1 |" in comment
+        assert "- **1.** Active task — Repo: `repo1`" in comment
         assert "#### 1. Active task (Repo: repo1)" in comment
 
-        # Verify excluded item formatting in table
-        assert "| 2 | ~~Excluded task~~ *(excluded)* | ~~repo2~~ |" in comment
+        # Verify excluded item formatting in summary list
+        assert "- **2.** ~~Excluded task~~ *(excluded)* — Repo: `~~repo2~~`" in comment
         # Verify excluded item heading summary in detail blocks
         assert "#### 2. ~~Excluded task~~ *(excluded)* (Repo: repo2)" in comment
 
     def test_format_review_comment_condensed_exceeds_limit(self) -> None:
-        """Should truncate table rows and use warning note when condensed comment exceeds custom limit."""
+        """Should truncate summary items and use a warning when exceeding the limit."""
         now = datetime.now(UTC)
         draft = ForgeDecompositionDraft(
             parent_key="PROJ-123",
