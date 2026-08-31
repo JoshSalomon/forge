@@ -1143,7 +1143,14 @@ class JiraClient:
         logger.info(f"No tier marker found on {issue_key}")
         return None
 
-    async def resolve_and_maybe_assign_tier(self, issue_key: str) -> None:
+    async def resolve_and_maybe_assign_tier(
+        self,
+        issue_key: str,
+        summary: str | None = None,
+        description: str | None = None,
+        *,
+        allow_overwrite: bool = False,
+    ) -> None:
         """Reconcile a Task's model tier from its labels and latest marker.
 
         Orchestration helper (SC-004 / SC-005 / SC-006):
@@ -1153,10 +1160,19 @@ class JiraClient:
         * assigns + comments when there is no existing tier label (estimated via
           the shared :func:`estimate_tier`, SC-004);
         * overwrites the label to match a divergent human marker (SC-005);
-        * no-ops when the marker already matches the label (SC-006).
+        * no-ops when the marker already matches the label (SC-006);
+        * when ``allow_overwrite`` is set, a routine re-estimate may overwrite an
+          existing auto-owned tier label (TS-015 / SC-006).
 
         Args:
             issue_key: The Jira issue key.
+            summary: Optional Task summary; when omitted the issue is fetched and
+                its summary is used for estimation.
+            description: Optional Task description; used alongside ``summary`` for
+                estimation when both are provided.
+            allow_overwrite: When ``True``, a routine re-estimate may overwrite an
+                existing auto-owned tier label. The default (routine polling)
+                leaves an existing in-sync label untouched.
         """
         issue = await self.get_issue(issue_key)
 
@@ -1166,6 +1182,9 @@ class JiraClient:
                 f"Skipping tier resolution on {issue_key}: issue_type={issue.issue_type!r} is not Task"
             )
             return
+
+        estimate_summary = summary if summary is not None else issue.summary
+        estimate_description = description if description is not None else (issue.description or "")
 
         # Derive the current tier label (if any) from the issue labels.
         current_label_tier: ModelTier | None = next(
@@ -1177,7 +1196,7 @@ class JiraClient:
 
         # No existing tier label -> estimate and assign (SC-004).
         if current_label_tier is None:
-            estimate = estimate_tier(issue.summary, issue.description or "")
+            estimate = estimate_tier(estimate_summary, estimate_description or "")
             logger.info(
                 f"Assigning estimated tier {estimate.tier.value} to {issue_key} (no existing tier)"
             )
@@ -1188,16 +1207,27 @@ class JiraClient:
         # A tier label already exists; reconcile against the latest marker.
         ownership = resolve_tier_ownership(marker=marker_tier, label=current_label_tier)
 
-        if not ownership.changed or ownership.tier is None:
-            logger.info(f"Tier already in sync on {issue_key} ({current_label_tier.value}); no-op")
+        if ownership.changed and ownership.tier is not None:
+            # Human marker diverges from the label -> overwrite to the marker tier (SC-005).
+            logger.info(
+                f"Overwriting tier label on {issue_key}: "
+                f"{current_label_tier.value} -> {ownership.tier.value} (marker ownership)"
+            )
+            await self.apply_tier_label(issue_key, ownership.tier)
             return
 
-        # Human marker diverges from the label -> overwrite to the marker tier (SC-005).
-        logger.info(
-            f"Overwriting tier label on {issue_key}: "
-            f"{current_label_tier.value} -> {ownership.tier.value} (marker ownership)"
-        )
-        await self.apply_tier_label(issue_key, ownership.tier)
+        # No divergent marker. A routine re-estimate may overwrite an existing
+        # auto-owned tier label when explicitly allowed (TS-015 / SC-006).
+        if allow_overwrite:
+            estimate = estimate_tier(estimate_summary, estimate_description or "")
+            logger.info(
+                f"Re-estimating tier on {issue_key}: "
+                f"{current_label_tier.value} -> {estimate.tier.value} (allow_overwrite)"
+            )
+            await self.apply_tier_label(issue_key, estimate.tier)
+            return
+
+        logger.info(f"Tier already in sync on {issue_key} ({current_label_tier.value}); no-op")
 
     async def search_issues(
         self,

@@ -194,6 +194,14 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
 
                         all_task_keys.append(task_key)
 
+                        # Assign the model tier for the newly created Task (BR-011).
+                        # Comment/label failures MUST NOT fail Task creation
+                        # (BR-013 / SC-001): log but continue.
+                        try:
+                            await jira.resolve_and_maybe_assign_tier(task_key)
+                        except Exception as e:
+                            logger.warning(f"Failed to assign model tier to Task {task_key}: {e}")
+
                         # Track by repository
                         if repo not in tasks_by_repo:
                             tasks_by_repo[repo] = []
@@ -812,6 +820,15 @@ async def regenerate_epic_tasks(state: WorkflowState) -> WorkflowState:
                     labels=labels,
                 )
                 new_task_keys.append(task_key)
+
+                # Assign the model tier for the newly created Task (BR-011).
+                # Comment/label failures MUST NOT fail Task creation
+                # (BR-013 / SC-001): log but continue.
+                try:
+                    await jira.resolve_and_maybe_assign_tier(task_key)
+                except Exception as e:
+                    logger.warning(f"Failed to assign model tier to Task {task_key}: {e}")
+
                 remaining_tasks_by_repo.setdefault(repo, []).append(task_key)
                 logger.info(f"Created Task {task_key}: {summary} (repo: {repo})")
             except Exception as e:
