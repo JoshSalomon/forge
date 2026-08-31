@@ -92,8 +92,6 @@ def create_mock_jira_client(
     mock.get_labels = AsyncMock(return_value=list(labels or []))
 
     # Parent / issue lookups.
-    parent = _make_issue("AISOS-1", issue_type="Epic")
-    parent.project_key  # noqa: B018 - property access, harmless
     mock.get_issue = AsyncMock(
         return_value=_make_issue("AISOS-1", issue_type=issue_type, labels=labels, summary="Parent")
     )
@@ -359,34 +357,6 @@ class TestBugFixDecomposePlanTierAssignment:
 
 class TestApprovedDraftTierAssignment:
     """TS-010: approved-draft Task creation wires tier assignment."""
-
-    @pytest.mark.asyncio
-    async def test_approved_draft_creation_wires_tier_assignment(self):
-        """TS-010: A Task materialised from an approved draft gets tier assignment.
-
-        The approved-draft creation path lives alongside the task-approval
-        workflow.  Whatever call site actually calls ``create_task`` for an
-        approved draft must also invoke the tier entry point.  This test drives
-        that contract via the JiraClient tier surface: creating a draft Task and
-        then resolving its tier must apply exactly one tier label + marker.
-        """
-        mock_jira = create_mock_jira_client(issue_type="Task")
-
-        # Simulate the approved-draft creation + (to-be-wired) assignment.
-        task_key = await mock_jira.create_task(
-            project_key="AISOS",
-            summary="Draft task",
-            description="draft",
-            labels=["forge:managed"],
-        )
-        # RED expectation: the approved-draft path must call this. Here we assert
-        # the *effect* contract the wiring must satisfy.
-        await mock_jira.resolve_and_maybe_assign_tier(task_key)
-
-        # The approved-draft wiring is verified elsewhere at the node level; this
-        # guards the effect: single label + marker semantics remain intact.
-        assert mock_jira.resolve_and_maybe_assign_tier.await_count == 1
-        assert mock_jira.resolve_and_maybe_assign_tier.await_args.args[0] == task_key
 
     @pytest.mark.asyncio
     async def test_task_approval_module_imports_tier_entry_point(self):
