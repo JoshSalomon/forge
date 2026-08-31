@@ -372,6 +372,21 @@ async def decompose_plan(state: BugState) -> BugState:
                 )
                 await jira.create_issue_link("Related", task_key, ticket_key)
 
+                # Assign the model tier for the newly created Task (BR-011).
+                # Only fresh Tasks are assigned — the covered[repo] reuse
+                # branch above intentionally skips this since a reused Task is
+                # not a fresh Task. Comment/label failures MUST NOT fail Task
+                # creation (BR-013 / SC-001): log but continue.
+                try:
+                    await jira.resolve_and_maybe_assign_tier(
+                        task_key,
+                        f"Fix: {bug_summary} ({repo})",
+                        scoped_description,
+                        allow_overwrite=False,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to assign model tier to Task {task_key}: {e}")
+
             tasks_by_repo[repo] = [task_key]
             all_task_keys.append(task_key)
 

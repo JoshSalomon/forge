@@ -1,5 +1,7 @@
 """Unit tests for Task approval gate."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from langgraph.graph import END
 
@@ -26,16 +28,28 @@ class TestTaskApprovalGate:
         state["current_node"] = "generate_tasks"
         return state
 
-    def test_gate_pauses_workflow(self, task_pending_state):
+    @pytest.mark.asyncio
+    async def test_gate_pauses_workflow(self, task_pending_state):
         """Gate sets is_paused=True and updates current_node."""
-        result = task_approval_gate(task_pending_state)
+        mock_jira = MagicMock()
+        mock_jira.close = AsyncMock()
+        mock_jira.resolve_and_maybe_assign_tier = AsyncMock()
+
+        with patch("forge.workflow.gates.task_approval.JiraClient", return_value=mock_jira):
+            result = await task_approval_gate(task_pending_state)
 
         assert result["is_paused"] is True
         assert result["current_node"] == "task_approval_gate"
 
-    def test_gate_preserves_task_keys(self, task_pending_state):
+    @pytest.mark.asyncio
+    async def test_gate_preserves_task_keys(self, task_pending_state):
         """Gate preserves existing task keys."""
-        result = task_approval_gate(task_pending_state)
+        mock_jira = MagicMock()
+        mock_jira.close = AsyncMock()
+        mock_jira.resolve_and_maybe_assign_tier = AsyncMock()
+
+        with patch("forge.workflow.gates.task_approval.JiraClient", return_value=mock_jira):
+            result = await task_approval_gate(task_pending_state)
 
         assert result["task_keys"] == ["TEST-130", "TEST-131", "TEST-132"]
 
