@@ -574,6 +574,25 @@ class OrchestratorWorker:
                 if updated_values is existing_state.values:
                     return
 
+                # Draft edits intentionally leave the approval gate paused.  Persist
+                # those edits, but do not invoke the graph: ainvoke(None) would only
+                # re-enter the same gate and gives the misleading impression that the
+                # workflow was resumed.  This is also the checkpoint write that makes
+                # a subsequent approval provision the draft the reviewer just saw.
+                if (
+                    updated_values.get("is_paused")
+                    and updated_values.get("current_node") in _PENDING_APPROVAL_GATES
+                    and updated_values.get("current_node")
+                    == existing_state.values.get("current_node")
+                ):
+                    logger.info(
+                        "Persisting paused workflow update for %s at %s without resuming",
+                        ticket_key,
+                        updated_values.get("current_node"),
+                    )
+                    await compiled_workflow.aupdate_state(config, updated_values)
+                    return
+
                 logger.info(f"Resuming workflow for {ticket_key}")
 
                 was_errored = _is_workflow_errored(existing_state.values)
@@ -1220,7 +1239,10 @@ class OrchestratorWorker:
                                     )
 
                             await jira.close()
-                            return current_state
+                            # A new mapping is the resume signal for draft mutations.
+                            # The worker uses identity to distinguish these updates from
+                            # unrelated comments while a workflow is paused.
+                            return {**current_state}
 
                         except Exception as e:
                             logger.error(
