@@ -386,20 +386,40 @@ class TestTaskTakeoverTierAssignment:
 
     @pytest.mark.asyncio
     async def test_takeover_wires_tier_where_task_created(self):
-        """TS-013: takeover entry wires tier assignment for its Task.
+        """TS-013: takeover flow creates no Tasks, so it is intentionally not wired.
 
-        RED: a takeover node that owns/creates a Task must reference the tier
-        entry point.  Verified by scanning the takeover triage/planning modules
-        for the tier helper — absent until wiring lands.
+        The task-takeover flow *takes over* an existing human-authored Task/Epic;
+        it never materialises a fresh Forge Task via ``jira.create_task``.  Per
+        the ownership rules (Section 11.1) a Task without a Forge marker is
+        human-owned, and the wiring directive is explicit: wire tier assignment
+        only at *real* Task-creation points.
+
+        This test audits the four ``task_takeover_*`` modules and asserts that
+        (a) none of them call ``jira.create_task`` (no real creation point), and
+        (b) precisely because of that they do NOT wire the tier entry point.
+        Adding tier wiring here would violate ownership rules, so its absence is
+        the correct, verified behaviour.
         """
+        import forge.workflow.nodes.task_takeover_execution as execution
         import forge.workflow.nodes.task_takeover_planning as planning
+        import forge.workflow.nodes.task_takeover_review as review
         import forge.workflow.nodes.task_takeover_triage as triage
 
-        combined = _module_source(triage) + "\n" + _module_source(planning)
-        assert "resolve_and_maybe_assign_tier" in combined or "apply_tier_label" in combined, (
-            "task-takeover Task-creation point must wire tier assignment "
-            "(TS-013) — not yet present (RED)."
-        )
+        takeover_modules = (triage, planning, execution, review)
+        for module in takeover_modules:
+            source = _module_source(module)
+            assert "create_task" not in source, (
+                f"{module.__name__} unexpectedly calls create_task — if a real "
+                "Task-creation point is added, tier assignment must be wired "
+                "there (TS-013)."
+            )
+            assert (
+                "resolve_and_maybe_assign_tier" not in source and "apply_tier_label" not in source
+            ), (
+                f"{module.__name__} must NOT wire tier assignment — the takeover "
+                "flow only adopts existing human Tasks and creates none, so tier "
+                "wiring would violate ownership rules (Section 11.1)."
+            )
 
 
 # ---------------------------------------------------------------------------
