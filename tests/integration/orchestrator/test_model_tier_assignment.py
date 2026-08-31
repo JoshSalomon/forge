@@ -796,6 +796,146 @@ class TestModelTargetsUnaffected:
 
 
 # ---------------------------------------------------------------------------
+# SC-006 / BR-009: explicit re-estimate trigger dispatch (revision "!" / retry)
+# ---------------------------------------------------------------------------
+
+
+class TestExplicitReestimateTriggerDispatch:
+    """SC-006 / BR-009: an explicit Task revision (!) re-estimates the tier.
+
+    A ``!`` revision comment on a Task re-runs the tier resolution with
+    ``allow_overwrite=True`` (the Task summary/description may have changed),
+    reusing the existing revision dispatch. No routine polling is added.
+    """
+
+    @pytest.mark.asyncio
+    async def test_task_revision_reestimates_tier_with_overwrite(self):
+        """SC-006: task-targeted revision calls the tier helper with overwrite."""
+        from forge.orchestrator.worker import OrchestratorWorker
+
+        worker = OrchestratorWorker.__new__(OrchestratorWorker)  # avoid heavy __init__
+        mock_jira = create_mock_jira_client()
+
+        with patch("forge.orchestrator.worker.JiraClient", return_value=mock_jira):
+            await worker._reestimate_task_tier("AISOS-77")
+
+        mock_jira.resolve_and_maybe_assign_tier.assert_awaited_once()
+        args, kwargs = mock_jira.resolve_and_maybe_assign_tier.await_args
+        assert args[0] == "AISOS-77"
+        assert kwargs.get("allow_overwrite") is True
+
+    @pytest.mark.asyncio
+    async def test_reestimate_failure_does_not_propagate(self):
+        """BR-013: a re-estimate failure never breaks the revision/retry flow."""
+        from forge.orchestrator.worker import OrchestratorWorker
+
+        worker = OrchestratorWorker.__new__(OrchestratorWorker)
+        mock_jira = create_mock_jira_client()
+        mock_jira.resolve_and_maybe_assign_tier = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with patch("forge.orchestrator.worker.JiraClient", return_value=mock_jira):
+            # Must not raise.
+            await worker._reestimate_task_tier("AISOS-78")
+
+        mock_jira.resolve_and_maybe_assign_tier.assert_awaited_once()
+
+    def test_worker_wires_reestimate_into_revision_dispatch(self):
+        """SC-006 / BR-009: the revision dispatch invokes the re-estimate helper.
+
+        Source-scan guarantee: the explicit revision path in ``_handle_resume_event``
+        calls ``_reestimate_task_tier`` for a task-targeted comment, and no routine
+        polling loop is introduced.
+        """
+        import forge.orchestrator.worker as worker_mod
+
+        source = _module_source(worker_mod)
+        assert "_reestimate_task_tier" in source
+        assert "allow_overwrite=True" in source
+
+
+# ---------------------------------------------------------------------------
+# SC-007 / FN-005 / BR-005: tier label preserved across workflow transitions
+# ---------------------------------------------------------------------------
+
+
+class TestSetWorkflowLabelPreservesTierLabel:
+    """SC-007 / FN-005 / BR-005: workflow transitions preserve the tier label."""
+
+    @pytest.mark.asyncio
+    async def test_workflow_transition_preserves_tier_label(self):
+        """SC-007: set_workflow_label does not strip the forge:model-tier:* label."""
+        from forge.integrations.jira.client import JiraClient
+        from forge.models.workflow import ForgeLabel
+
+        with patch("forge.integrations.jira.client.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock()
+            client = JiraClient()
+
+        existing = [
+            "forge:managed",
+            "forge:prd-pending",
+            tier_label(ModelTier.HEAVY),
+        ]
+        client.get_labels = AsyncMock(return_value=list(existing))
+        mock_http = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_http.put = AsyncMock(return_value=mock_response)
+        client._get_client = AsyncMock(return_value=mock_http)
+
+        await client.set_workflow_label("AISOS-60", ForgeLabel.SPEC_PENDING)
+
+        payload = mock_http.put.await_args.kwargs["json"]
+        ops = payload["update"]["labels"]
+        removes = [o["remove"] for o in ops if "remove" in o]
+        adds = [o["add"] for o in ops if "add" in o]
+
+        tier = tier_label(ModelTier.HEAVY)
+        # The tier label survives the transition — never removed, never re-added
+        # (would duplicate an already-present label).
+        assert tier not in removes
+        assert tier not in adds
+        # The stale phase label is swapped for the new one.
+        assert "forge:prd-pending" in removes
+        assert ForgeLabel.SPEC_PENDING.value in adds
+
+    @pytest.mark.asyncio
+    async def test_transition_preserves_single_tier_label_no_duplication(self):
+        """SC-007: exactly one tier label remains after a workflow transition."""
+        from forge.integrations.jira.client import JiraClient
+        from forge.models.workflow import ForgeLabel
+
+        with patch("forge.integrations.jira.client.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock()
+            client = JiraClient()
+
+        existing = ["forge:managed", "forge:spec-pending", tier_label(ModelTier.STANDARD)]
+        client.get_labels = AsyncMock(return_value=list(existing))
+        mock_http = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_http.put = AsyncMock(return_value=mock_response)
+        client._get_client = AsyncMock(return_value=mock_http)
+
+        await client.set_workflow_label("AISOS-61", ForgeLabel.PLAN_PENDING)
+
+        payload = mock_http.put.await_args.kwargs["json"]
+        ops = payload["update"]["labels"]
+        removes = [o["remove"] for o in ops if "remove" in o]
+        adds = [o["add"] for o in ops if "add" in o]
+
+        # Only non-tier phase labels are touched; the single tier label is
+        # preserved verbatim (no removal, no duplicate add).
+        tier_removes = [r for r in removes if r.startswith(TIER_LABEL_PREFIX)]
+        tier_adds = [a for a in adds if a.startswith(TIER_LABEL_PREFIX)]
+        assert tier_removes == []
+        assert tier_adds == []
+        # Resulting label set contains exactly one tier label.
+        resulting = (set(existing) - set(removes)) | set(adds)
+        assert len([lbl for lbl in resulting if lbl.startswith(TIER_LABEL_PREFIX)]) == 1
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

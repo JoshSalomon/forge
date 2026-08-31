@@ -936,6 +936,11 @@ class JiraClient:
             # A declarative workflow label identifies the graph definition. It
             # is not a transient phase label and must survive phase changes.
             and not label.startswith("forge:workflow:")
+            # The model-tier label records the selected model tier. It is owned
+            # by the tier-assignment flow, not the workflow-phase machinery, and
+            # must survive phase transitions without being stripped or duplicated
+            # (SC-007 / FN-005 / BR-005).
+            and not label.startswith(TIER_LABEL_PREFIX)
         ]
 
         # Build update operations

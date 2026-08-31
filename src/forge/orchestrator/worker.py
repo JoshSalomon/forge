@@ -2228,6 +2228,11 @@ class OrchestratorWorker:
             elif comment_ticket_key and comment_ticket_type == "task":
                 updated_state["current_task_key"] = comment_ticket_key
                 updated_state["current_epic_key"] = None
+                # An explicit Task revision (!) may change the Task enough to
+                # warrant a different model tier — re-estimate with overwrite
+                # (SC-006 / BR-009). Reuses this existing revision dispatch;
+                # no routine polling is added.
+                await self._reestimate_task_tier(comment_ticket_key)
             else:
                 updated_state["current_task_key"] = None
                 updated_state["current_epic_key"] = None
@@ -2348,6 +2353,28 @@ class OrchestratorWorker:
                 await jira.close()
         except Exception as e:
             logger.warning(f"Failed to post resume acknowledgement to {comment_target_key}: {e}")
+
+    async def _reestimate_task_tier(self, task_key: str) -> None:
+        """Re-estimate and (over)write a Task's model-tier label on an explicit trigger.
+
+        Called from the explicit revision (``!``) / ``forge:retry`` dispatch when
+        the trigger targets a Task. A revision or retry can change the Task's
+        summary/description enough to warrant a different model tier, so the tier
+        is re-resolved with ``allow_overwrite=True`` (SC-006 / BR-009). This is an
+        explicit-trigger re-estimate — it reuses the existing revision/retry
+        dispatch and adds no routine polling.
+
+        Failures never propagate: a tier re-estimate must not break the revision
+        or retry flow (BR-013).
+        """
+        try:
+            jira = JiraClient()
+            try:
+                await jira.resolve_and_maybe_assign_tier(task_key, allow_overwrite=True)
+            finally:
+                await jira.close()
+        except Exception as e:
+            logger.warning(f"Failed to re-estimate model tier for {task_key}: {e}")
 
     @staticmethod
     def _stage_label_for_node(current_node: str) -> str:
