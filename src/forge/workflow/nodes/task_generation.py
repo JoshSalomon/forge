@@ -194,6 +194,14 @@ async def generate_tasks(state: WorkflowState) -> WorkflowState:
 
                         all_task_keys.append(task_key)
 
+                        # Assign the model tier for the newly created Task (BR-011).
+                        # Comment/label failures MUST NOT fail Task creation
+                        # (BR-013 / SC-001): log but continue.
+                        try:
+                            await jira.resolve_and_maybe_assign_tier(task_key)
+                        except Exception as e:
+                            logger.warning(f"Failed to assign model tier to Task {task_key}: {e}")
+
                         # Track by repository
                         if repo not in tasks_by_repo:
                             tasks_by_repo[repo] = []
@@ -812,6 +820,15 @@ async def regenerate_epic_tasks(state: WorkflowState) -> WorkflowState:
                     labels=labels,
                 )
                 new_task_keys.append(task_key)
+
+                # Assign the model tier for the newly created Task (BR-011).
+                # Comment/label failures MUST NOT fail Task creation
+                # (BR-013 / SC-001): log but continue.
+                try:
+                    await jira.resolve_and_maybe_assign_tier(task_key)
+                except Exception as e:
+                    logger.warning(f"Failed to assign model tier to Task {task_key}: {e}")
+
                 remaining_tasks_by_repo.setdefault(repo, []).append(task_key)
                 logger.info(f"Created Task {task_key}: {summary} (repo: {repo})")
             except Exception as e:
@@ -956,6 +973,20 @@ async def update_single_task(state: WorkflowState) -> WorkflowState:
 
         # Update Task in Jira
         await jira.update_description(task_key, new_description)
+
+        # Explicit Task revision may change complexity enough to warrant a
+        # different model tier — re-estimate from the *revised* description
+        # with overwrite (SC-006 / BR-009). Failures must not break revision.
+        try:
+            await jira.resolve_and_maybe_assign_tier(
+                task_key,
+                description=new_description,
+                allow_overwrite=True,
+            )
+        except Exception as tier_err:
+            logger.warning(
+                f"Failed to re-estimate model tier for {task_key} after revision: {tier_err}"
+            )
 
         # Add comment acknowledging revision
         await post_status_comment(

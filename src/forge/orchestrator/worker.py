@@ -2228,6 +2228,9 @@ class OrchestratorWorker:
             elif comment_ticket_key and comment_ticket_type == "task":
                 updated_state["current_task_key"] = comment_ticket_key
                 updated_state["current_epic_key"] = None
+                # Tier re-estimate for Task revisions runs after
+                # update_single_task persists the new description (see that
+                # node). Doing it here would classify from stale text.
             else:
                 updated_state["current_task_key"] = None
                 updated_state["current_epic_key"] = None

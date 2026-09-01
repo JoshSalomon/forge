@@ -11,7 +11,22 @@ from pydantic import ValidationError
 
 from forge.config import Settings, get_settings
 from forge.integrations.jira.models import JiraComment, JiraIssue
+from forge.models.model_tier import (
+    TIER_LABEL_PREFIX,
+    TIER_MARKER_PREFIX,
+    ModelTier,
+    format_marker,
+    parse_tier_label,
+    tier_label,
+)
+from forge.models.model_tier_estimator import estimate_tier
+from forge.models.model_tier_ownership import (
+    enforce_single_tier,
+    parse_latest_tier_marker,
+    resolve_ownership_kind,
+)
 from forge.models.workflow import ForgeLabel
+from forge.prompts import load_prompt
 from forge.skills.models import SkillEntry
 from forge.utils.redaction import redact_secrets
 
@@ -922,6 +937,11 @@ class JiraClient:
             # A declarative workflow label identifies the graph definition. It
             # is not a transient phase label and must survive phase changes.
             and not label.startswith("forge:workflow:")
+            # The model-tier label records the selected model tier. It is owned
+            # by the tier-assignment flow, not the workflow-phase machinery, and
+            # must survive phase transitions without being stripped or duplicated
+            # (SC-007 / FN-005 / BR-005).
+            and not label.startswith(TIER_LABEL_PREFIX)
         ]
 
         # Build update operations
@@ -1003,6 +1023,253 @@ class JiraClient:
                 return body[start_idx:end_idx].strip()
 
         return None
+
+    # ------------------------------------------------------------------
+    # Model-tier labeling (AISOS-2445)
+    # ------------------------------------------------------------------
+    async def apply_tier_label(self, issue_key: str, tier: ModelTier) -> None:
+        """Enforce exactly one ``forge:model-tier:*`` label via a single PUT.
+
+        Reads the current labels, computes the add / remove operations through
+        the shared :func:`enforce_single_tier` helper, and issues a single
+        ``PUT /issue/{key}`` whose ``update.labels`` combines both so the
+        exactly-one-valid-tier invariant is applied atomically (FR-007 /
+        BR-004).  Non-tier labels are never touched and an already-correct tier
+        label is not removed.
+
+        Args:
+            issue_key: The Jira issue key.
+            tier: The tier whose label must become the sole tier label.
+
+        Raises:
+            ValueError / KeyError / TypeError: If ``tier`` is not a valid
+                :class:`ModelTier`.  No PUT is issued in that case, so labels
+                are left untouched.
+        """
+        # Reject out-of-set values before touching labels (BR-004).
+        tier = ModelTier(tier)
+
+        current_labels = await self.get_labels(issue_key)
+        change = enforce_single_tier(current_labels, tier)
+
+        operations: list[dict[str, str]] = []
+        for label in change.remove:
+            operations.append({"remove": label})
+        for label in change.add:
+            operations.append({"add": label})
+
+        if not operations:
+            logger.info(f"Tier label {tier_label(tier)} already set on {issue_key} (no-op)")
+            return
+
+        client = await self._get_client()
+        response = await client.put(
+            f"/issue/{issue_key}",
+            json={"update": {"labels": operations}},
+        )
+        response.raise_for_status()
+        logger.info(
+            f"Applied tier label {tier_label(tier)} on {issue_key} "
+            f"(added: {change.add}, removed: {change.remove})"
+        )
+
+    async def post_tier_comment(
+        self,
+        issue_key: str,
+        tier: ModelTier,
+        reasons: list[str],
+    ) -> JiraComment:
+        """Post a model-tier explanation comment via the shared prompt template.
+
+        Renders the ``model-tier-comment`` prompt and posts it through
+        :meth:`add_comment` (ADF conversion handled there).  The body carries
+        the verbatim marker line ``forge.model-tier: {tier}`` as its own
+        paragraph, a human-readable *Why* section that surfaces each estimator
+        reason verbatim, an explicit demotion basis for the ``light`` tier, and
+        an override-instructions section referencing the tier label mechanism
+        (FN-003 / Section 9.6 / BR-012 / NFR-006).
+
+        Args:
+            issue_key: The Jira issue key.
+            tier: The estimated model tier.
+            reasons: The estimator's non-empty list of reasons.
+
+        Returns:
+            The created :class:`JiraComment`.
+        """
+        tier = ModelTier(tier)
+
+        why_section = "\n".join(f"- {reason}" for reason in reasons)
+
+        demotion_section = ""
+        if tier == ModelTier.LIGHT:
+            demotion_section = (
+                "## Demotion basis\n\n"
+                "This ticket was demoted to the light tier because the signals "
+                "above indicate a small, isolated change. If that is inaccurate, "
+                "override the tier as described below.\n\n"
+            )
+
+        body = load_prompt(
+            "model-tier-comment",
+            marker=format_marker(tier),
+            tier=tier.value,
+            why_section=why_section,
+            demotion_section=demotion_section,
+            tier_label_prefix=TIER_LABEL_PREFIX,
+            marker_prefix=TIER_MARKER_PREFIX,
+        )
+
+        logger.info(f"Posting tier comment ({tier.value}) to {issue_key}")
+        return await self.add_comment(issue_key, body)
+
+    async def get_latest_tier_marker(self, issue_key: str) -> ModelTier | None:
+        """Return the tier from the most recent Forge marker comment, or ``None``.
+
+        Reads comments (chronological, newest-last) and scans them in reverse
+        order, reusing the shared latest-wins parser
+        :func:`parse_latest_tier_marker` per comment body.  A later *invalid*
+        marker never overrides an earlier valid one, and ``None`` is returned
+        when no valid marker is present (FN-006 / BR-008).
+
+        Args:
+            issue_key: The Jira issue key.
+
+        Returns:
+            The newest valid marker's tier, or ``None``.
+        """
+        comments = await self.get_comments(issue_key)
+
+        for comment in reversed(comments):
+            tier = parse_latest_tier_marker(comment.body)
+            if tier is not None:
+                logger.info(f"Latest tier marker on {issue_key}: {tier.value}")
+                return tier
+
+        logger.info(f"No tier marker found on {issue_key}")
+        return None
+
+    async def resolve_and_maybe_assign_tier(
+        self,
+        issue_key: str,
+        summary: str | None = None,
+        description: str | None = None,
+        *,
+        allow_overwrite: bool = False,
+    ) -> None:
+        """Reconcile a Task's model tier from its labels and latest marker.
+
+        Orchestration helper (SC-004 / SC-005 / SC-006):
+
+        * guards ``issuetype == "Task"`` as defense-in-depth (BR-006): non-Task
+          issues are skipped entirely;
+        * assigns + comments when there is no existing tier label (estimated via
+          the shared :func:`estimate_tier`, SC-004);
+        * treats marker/label divergence (or a missing marker) as **human-owned**
+          and no-ops unless ``allow_overwrite`` is set — never clobbers a
+          human-changed label back to the Forge marker (SC-005 / BR-012);
+        * no-ops when auto-owned (marker matches label) and overwrite is not
+          requested (SC-006);
+        * when ``allow_overwrite`` is set (explicit revision/retry), re-estimates
+          from summary/description and may overwrite the label + marker
+          (TS-015 / SC-006).
+
+        Args:
+            issue_key: The Jira issue key.
+            summary: Optional Task summary; when omitted the issue is fetched and
+                its summary is used for estimation.
+            description: Optional Task description; used alongside ``summary`` for
+                estimation when both are provided.
+            allow_overwrite: When ``True``, an explicit re-estimate may overwrite
+                an existing tier label (including human-owned). The default
+                (routine polling) leaves human-owned and in-sync labels untouched.
+        """
+        issue = await self.get_issue(issue_key)
+
+        # Task-only guard (BR-006).
+        if issue.issue_type != "Task":
+            logger.info(
+                f"Skipping tier resolution on {issue_key}: issue_type={issue.issue_type!r} is not Task"
+            )
+            return
+
+        estimate_summary = summary if summary is not None else issue.summary
+        estimate_description = description if description is not None else (issue.description or "")
+
+        # Preserve Jira's label order while de-duplicating recognized tiers so
+        # malformed multi-tier states can be repaired deterministically.
+        label_tiers = list(
+            dict.fromkeys(
+                tier for label in issue.labels if (tier := parse_tier_label(label)) is not None
+            )
+        )
+        current_label_tier = label_tiers[0] if label_tiers else None
+
+        marker_tier = await self.get_latest_tier_marker(issue_key)
+
+        # No existing tier label. A marker without a label is the recoverable
+        # half-state left when comment creation succeeded but label mutation
+        # failed; finish that assignment without posting a duplicate comment.
+        if current_label_tier is None:
+            if marker_tier is not None:
+                logger.info(
+                    f"Recovering tier label {marker_tier.value} on {issue_key} from existing marker"
+                )
+                await self.apply_tier_label(issue_key, marker_tier)
+                return
+
+            estimate = estimate_tier(estimate_summary, estimate_description or "")
+            logger.info(
+                f"Assigning estimated tier {estimate.tier.value} to {issue_key} (no existing tier)"
+            )
+            # Post the marker first. If it fails, no label is left behind to be
+            # mistaken for a human-owned override. If the subsequent label PUT
+            # fails, the marker branch above completes it on the next pass.
+            await self.post_tier_comment(issue_key, estimate.tier, estimate.reasons)
+            await self.apply_tier_label(issue_key, estimate.tier)
+            return
+
+        # Repair malformed states with multiple valid tier labels. If one label
+        # differs from Forge's marker, treat that label as the human override;
+        # otherwise retain the first Jira label. apply_tier_label removes every
+        # other valid tier label in one request, restoring the invariant.
+        if len(label_tiers) > 1:
+            human_tiers = [tier for tier in label_tiers if tier != marker_tier]
+            intended_tier = human_tiers[0] if human_tiers else current_label_tier
+            logger.warning(
+                f"Repairing multiple model-tier labels on {issue_key}; "
+                f"retaining {intended_tier.value}"
+            )
+            await self.apply_tier_label(issue_key, intended_tier)
+            return
+
+        ownership_kind = resolve_ownership_kind(
+            current_label_tier=current_label_tier,
+            latest_marker_tier=marker_tier,
+        )
+
+        # Human changed the label (or no Forge marker): sticky unless explicitly
+        # asked to overwrite. Never push the stale Forge marker onto the label.
+        if ownership_kind == "human-owned" and not allow_overwrite:
+            logger.info(
+                f"Tier on {issue_key} is human-owned "
+                f"(label={current_label_tier.value}, marker={getattr(marker_tier, 'value', None)}); "
+                "no-op"
+            )
+            return
+
+        # Explicit re-estimate (revision/retry) may overwrite any existing tier.
+        if allow_overwrite:
+            estimate = estimate_tier(estimate_summary, estimate_description or "")
+            logger.info(
+                f"Re-estimating tier on {issue_key}: "
+                f"{current_label_tier.value} -> {estimate.tier.value} (allow_overwrite)"
+            )
+            await self.apply_tier_label(issue_key, estimate.tier)
+            await self.post_tier_comment(issue_key, estimate.tier, estimate.reasons)
+            return
+
+        logger.info(f"Tier already in sync on {issue_key} ({current_label_tier.value}); no-op")
 
     async def search_issues(
         self,

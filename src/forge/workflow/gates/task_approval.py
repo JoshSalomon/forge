@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 from langgraph.graph import END
 
 from forge.api.routes.metrics import record_approval, record_revision_requested
+from forge.integrations.jira.client import JiraClient
 from forge.workflow.feature.state import FeatureState as WorkflowState
 from forge.workflow.utils import check_direct_mode, check_yolo_mode, set_paused
 
@@ -23,7 +24,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def task_approval_gate(state: WorkflowState) -> WorkflowState:
+async def _assign_tiers_for_approved_tasks(task_keys: list[str]) -> None:
+    """Reconcile the model tier for each Task presented for approval (BR-011).
+
+    Approved-draft Tasks are Forge-managed Tasks that must carry a model-tier
+    label + marker. This reconciles each pending Task's tier: it is a no-op for
+    Tasks that already carry an in-sync auto-owned label and assigns a tier to
+    any Task that lacks one (``allow_overwrite=False`` never clobbers a
+    human-owned tier). Per BR-013 / SC-001, tier assignment failures MUST NOT
+    fail or roll back the approval flow, so each call is failure-isolated.
+    """
+    jira = JiraClient()
+    try:
+        for task_key in task_keys:
+            try:
+                await jira.resolve_and_maybe_assign_tier(task_key, allow_overwrite=False)
+            except Exception as e:
+                logger.warning(f"Failed to assign model tier to Task {task_key}: {e}")
+    finally:
+        await jira.close()
+
+
+async def task_approval_gate(state: WorkflowState) -> WorkflowState:
     """Pause workflow for human to review generated Tasks before implementation.
 
     This gate pauses the workflow after task generation, allowing humans to:
@@ -60,6 +82,14 @@ def task_approval_gate(state: WorkflowState) -> WorkflowState:
                 "retry_count": state.get("retry_count", 0) + 1,
             },
         )
+
+    # Assign the model tier for the approved-draft Tasks (BR-011). This is
+    # failure-isolated so a tier-assignment failure can never fail or roll back
+    # the approval gate (BR-013 / SC-001).
+    try:
+        await _assign_tiers_for_approved_tasks(task_keys)
+    except Exception as e:
+        logger.warning(f"Model-tier assignment step failed for {ticket_key}: {e}")
 
     logger.info(
         f"Task approval gate: pausing workflow for {ticket_key} "
