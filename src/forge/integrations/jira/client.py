@@ -22,7 +22,7 @@ from forge.models.model_tier_estimator import estimate_tier
 from forge.models.model_tier_ownership import (
     enforce_single_tier,
     parse_latest_tier_marker,
-    resolve_tier_ownership,
+    resolve_ownership_kind,
 )
 from forge.models.workflow import ForgeLabel
 from forge.prompts import load_prompt
@@ -1164,10 +1164,14 @@ class JiraClient:
           issues are skipped entirely;
         * assigns + comments when there is no existing tier label (estimated via
           the shared :func:`estimate_tier`, SC-004);
-        * overwrites the label to match a divergent human marker (SC-005);
-        * no-ops when the marker already matches the label (SC-006);
-        * when ``allow_overwrite`` is set, a routine re-estimate may overwrite an
-          existing auto-owned tier label (TS-015 / SC-006).
+        * treats marker/label divergence (or a missing marker) as **human-owned**
+          and no-ops unless ``allow_overwrite`` is set — never clobbers a
+          human-changed label back to the Forge marker (SC-005 / BR-012);
+        * no-ops when auto-owned (marker matches label) and overwrite is not
+          requested (SC-006);
+        * when ``allow_overwrite`` is set (explicit revision/retry), re-estimates
+          from summary/description and may overwrite the label + marker
+          (TS-015 / SC-006).
 
         Args:
             issue_key: The Jira issue key.
@@ -1175,9 +1179,9 @@ class JiraClient:
                 its summary is used for estimation.
             description: Optional Task description; used alongside ``summary`` for
                 estimation when both are provided.
-            allow_overwrite: When ``True``, a routine re-estimate may overwrite an
-                existing auto-owned tier label. The default (routine polling)
-                leaves an existing in-sync label untouched.
+            allow_overwrite: When ``True``, an explicit re-estimate may overwrite
+                an existing tier label (including human-owned). The default
+                (routine polling) leaves human-owned and in-sync labels untouched.
         """
         issue = await self.get_issue(issue_key)
 
@@ -1209,20 +1213,22 @@ class JiraClient:
             await self.post_tier_comment(issue_key, estimate.tier, estimate.reasons)
             return
 
-        # A tier label already exists; reconcile against the latest marker.
-        ownership = resolve_tier_ownership(marker=marker_tier, label=current_label_tier)
+        ownership_kind = resolve_ownership_kind(
+            current_label_tier=current_label_tier,
+            latest_marker_tier=marker_tier,
+        )
 
-        if ownership.changed and ownership.tier is not None:
-            # Human marker diverges from the label -> overwrite to the marker tier (SC-005).
+        # Human changed the label (or no Forge marker): sticky unless explicitly
+        # asked to overwrite. Never push the stale Forge marker onto the label.
+        if ownership_kind == "human-owned" and not allow_overwrite:
             logger.info(
-                f"Overwriting tier label on {issue_key}: "
-                f"{current_label_tier.value} -> {ownership.tier.value} (marker ownership)"
+                f"Tier on {issue_key} is human-owned "
+                f"(label={current_label_tier.value}, marker={getattr(marker_tier, 'value', None)}); "
+                "no-op"
             )
-            await self.apply_tier_label(issue_key, ownership.tier)
             return
 
-        # No divergent marker. A routine re-estimate may overwrite an existing
-        # auto-owned tier label when explicitly allowed (TS-015 / SC-006).
+        # Explicit re-estimate (revision/retry) may overwrite any existing tier.
         if allow_overwrite:
             estimate = estimate_tier(estimate_summary, estimate_description or "")
             logger.info(
@@ -1230,6 +1236,7 @@ class JiraClient:
                 f"{current_label_tier.value} -> {estimate.tier.value} (allow_overwrite)"
             )
             await self.apply_tier_label(issue_key, estimate.tier)
+            await self.post_tier_comment(issue_key, estimate.tier, estimate.reasons)
             return
 
         logger.info(f"Tier already in sync on {issue_key} ({current_label_tier.value}); no-op")

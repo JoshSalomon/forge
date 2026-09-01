@@ -37,6 +37,7 @@ __all__ = [
     "TierOwnership",
     "enforce_single_tier",
     "parse_latest_tier_marker",
+    "resolve_ownership_kind",
     "resolve_tier_ownership",
 ]
 

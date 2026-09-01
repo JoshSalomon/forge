@@ -396,11 +396,12 @@ class TestResolveAndMaybeAssignTier:
         jira_client.post_tier_comment.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_overwrites_label_to_match_human_marker(self, jira_client):
-        """A human marker that differs from the label takes ownership (SC-005).
+    async def test_diverged_marker_and_label_is_human_owned_noop(self, jira_client):
+        """Marker/label divergence is human-owned and must not clobber (SC-005).
 
-        When the latest marker (CRITICAL) diverges from the current label
-        (LIGHT), the label is overwritten to the marker's tier.
+        Forge initially writes a matching marker + label. If a human changes
+        only the label (LIGHT) while the Forge marker remains CRITICAL, routine
+        resolution must no-op — never push the stale marker onto the label.
         """
         jira_client.get_issue = AsyncMock(
             return_value=self._issue("Task", ["forge:managed", tier_label(ModelTier.LIGHT)])
@@ -411,6 +412,5 @@ class TestResolveAndMaybeAssignTier:
 
         await jira_client.resolve_and_maybe_assign_tier("TEST-123")
 
-        jira_client.apply_tier_label.assert_awaited_once()
-        applied_tier = jira_client.apply_tier_label.await_args.args[1]
-        assert applied_tier == ModelTier.CRITICAL
+        jira_client.apply_tier_label.assert_not_awaited()
+        jira_client.post_tier_comment.assert_not_awaited()

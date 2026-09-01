@@ -150,6 +150,7 @@ class TestStandardPathTierAssignment:
             epic_keys=["AISOS-1"],
         )
         state["spec_content"] = "spec"
+        state["yolo_mode"] = True
 
         with (
             patch("forge.workflow.nodes.task_generation.JiraClient", return_value=mock_jira),
@@ -201,6 +202,7 @@ class TestStandardPathTierAssignment:
 
         state = create_initial_feature_state(ticket_key="FEAT-2", epic_keys=["AISOS-1"])
         state["spec_content"] = "spec"
+        state["yolo_mode"] = True
 
         with (
             patch("forge.workflow.nodes.task_generation.JiraClient", return_value=mock_jira),
@@ -457,8 +459,13 @@ class TestOwnershipNoOpAndOverwrite:
         assert client.post_tier_comment.await_count == 0
 
     @pytest.mark.asyncio
-    async def test_human_marker_diverges_overwrites_label(self):
-        """SC-005 (TS-014): human marker != label -> overwrite label to marker."""
+    async def test_human_label_diverges_from_marker_is_noop(self):
+        """SC-005 (TS-014): human-changed label != Forge marker -> no-op.
+
+        After Forge writes matching marker+label, a human may change only the
+        label. Divergence means human-owned: routine resolution must not
+        clobber the label back to the stale marker.
+        """
         from forge.integrations.jira.client import JiraClient
 
         with patch("forge.integrations.jira.client.get_settings") as mock_settings:
@@ -478,9 +485,8 @@ class TestOwnershipNoOpAndOverwrite:
 
         await client.resolve_and_maybe_assign_tier("AISOS-10")
 
-        # Marker ownership wins -> overwrite to CRITICAL.
-        assert client.apply_tier_label.await_count == 1
-        assert client.apply_tier_label.await_args.args[1] == ModelTier.CRITICAL
+        assert client.apply_tier_label.await_count == 0
+        assert client.post_tier_comment.await_count == 0
 
     @pytest.mark.asyncio
     async def test_reestimate_overwrite_allows_overwrite_flag(self):
@@ -620,6 +626,7 @@ class TestCommentFailureDoesNotFailCreation:
 
         state = create_initial_feature_state(ticket_key="FEAT-18", epic_keys=["AISOS-1"])
         state["spec_content"] = "spec"
+        state["yolo_mode"] = True
 
         with (
             patch("forge.workflow.nodes.task_generation.JiraClient", return_value=mock_jira),
@@ -803,54 +810,124 @@ class TestModelTargetsUnaffected:
 class TestExplicitReestimateTriggerDispatch:
     """SC-006 / BR-009: an explicit Task revision (!) re-estimates the tier.
 
-    A ``!`` revision comment on a Task re-runs the tier resolution with
-    ``allow_overwrite=True`` (the Task summary/description may have changed),
-    reusing the existing revision dispatch. No routine polling is added.
+    After ``update_single_task`` persists the revised description, tier
+    resolution re-runs with ``allow_overwrite=True`` and the *new* description
+    (not the pre-revision text). No routine polling is added.
     """
 
     @pytest.mark.asyncio
-    async def test_task_revision_reestimates_tier_with_overwrite(self):
-        """SC-006: task-targeted revision calls the tier helper with overwrite."""
-        from forge.orchestrator.worker import OrchestratorWorker
+    async def test_update_single_task_reestimates_tier_after_description(self):
+        """SC-006: update_single_task re-estimates from the revised description."""
+        from forge.workflow.nodes.task_generation import update_single_task
 
-        worker = OrchestratorWorker.__new__(OrchestratorWorker)  # avoid heavy __init__
         mock_jira = create_mock_jira_client()
+        mock_jira.get_issue = AsyncMock(
+            return_value=_make_issue("AISOS-77", issue_type="Task", description="old desc")
+        )
+        mock_jira.update_description = AsyncMock()
+        mock_agent = MagicMock()
+        mock_agent.regenerate_with_feedback = AsyncMock(return_value="revised desc with more detail")
+        mock_agent.close = AsyncMock()
 
-        with patch("forge.orchestrator.worker.JiraClient", return_value=mock_jira):
-            await worker._reestimate_task_tier("AISOS-77")
+        state = {
+            "ticket_key": "AISOS-1",
+            "current_task_key": "AISOS-77",
+            "feedback_comment": "! please expand scope",
+            "ticket_type": "task",
+            "current_node": "task_approval_gate",
+            "context": {},
+            "retry_count": 0,
+        }
 
+        with (
+            patch("forge.workflow.nodes.task_generation.JiraClient", return_value=mock_jira),
+            patch("forge.workflow.nodes.task_generation.ForgeAgent", return_value=mock_agent),
+            patch(
+                "forge.workflow.nodes.task_generation.fetch_and_inject_references",
+                new_callable=AsyncMock,
+                return_value="old desc",
+            ),
+            patch(
+                "forge.workflow.nodes.task_generation.post_status_comment",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await update_single_task(state)
+
+        mock_jira.update_description.assert_awaited_once_with(
+            "AISOS-77", "revised desc with more detail"
+        )
         mock_jira.resolve_and_maybe_assign_tier.assert_awaited_once()
         args, kwargs = mock_jira.resolve_and_maybe_assign_tier.await_args
         assert args[0] == "AISOS-77"
         assert kwargs.get("allow_overwrite") is True
+        assert kwargs.get("description") == "revised desc with more detail"
+        # Re-estimate must run after the description write.
+        method_names = [name for name, *_ in mock_jira.method_calls]
+        assert method_names.index("update_description") < method_names.index(
+            "resolve_and_maybe_assign_tier"
+        )
 
     @pytest.mark.asyncio
-    async def test_reestimate_failure_does_not_propagate(self):
-        """BR-013: a re-estimate failure never breaks the revision/retry flow."""
-        from forge.orchestrator.worker import OrchestratorWorker
+    async def test_reestimate_failure_does_not_break_update_single_task(self):
+        """BR-013: a re-estimate failure never breaks the Task revision flow."""
+        from forge.workflow.nodes.task_generation import update_single_task
 
-        worker = OrchestratorWorker.__new__(OrchestratorWorker)
         mock_jira = create_mock_jira_client()
+        mock_jira.get_issue = AsyncMock(
+            return_value=_make_issue("AISOS-78", issue_type="Task", description="old")
+        )
+        mock_jira.update_description = AsyncMock()
         mock_jira.resolve_and_maybe_assign_tier = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_agent = MagicMock()
+        mock_agent.regenerate_with_feedback = AsyncMock(return_value="new desc")
+        mock_agent.close = AsyncMock()
 
-        with patch("forge.orchestrator.worker.JiraClient", return_value=mock_jira):
-            # Must not raise.
-            await worker._reestimate_task_tier("AISOS-78")
+        state = {
+            "ticket_key": "AISOS-1",
+            "current_task_key": "AISOS-78",
+            "feedback_comment": "! revise",
+            "ticket_type": "task",
+            "current_node": "task_approval_gate",
+            "context": {},
+            "retry_count": 0,
+        }
 
+        with (
+            patch("forge.workflow.nodes.task_generation.JiraClient", return_value=mock_jira),
+            patch("forge.workflow.nodes.task_generation.ForgeAgent", return_value=mock_agent),
+            patch(
+                "forge.workflow.nodes.task_generation.fetch_and_inject_references",
+                new_callable=AsyncMock,
+                return_value="old",
+            ),
+            patch(
+                "forge.workflow.nodes.task_generation.post_status_comment",
+                new_callable=AsyncMock,
+            ) as mock_comment,
+        ):
+            result = await update_single_task(state)
+
+        assert result.get("last_error") is None
         mock_jira.resolve_and_maybe_assign_tier.assert_awaited_once()
+        mock_comment.assert_awaited()
 
-    def test_worker_wires_reestimate_into_revision_dispatch(self):
-        """SC-006 / BR-009: the revision dispatch invokes the re-estimate helper.
+    def test_update_single_task_wires_reestimate_after_description(self):
+        """SC-006 / BR-009: update_single_task re-estimates after description write.
 
-        Source-scan guarantee: the explicit revision path in ``_handle_resume_event``
-        calls ``_reestimate_task_tier`` for a task-targeted comment, and no routine
-        polling loop is introduced.
+        Source-scan: the revision path passes the new description with
+        ``allow_overwrite=True``. Worker resume no longer re-estimates early.
         """
         import forge.orchestrator.worker as worker_mod
+        import forge.workflow.nodes.task_generation as task_gen_mod
 
-        source = _module_source(worker_mod)
-        assert "_reestimate_task_tier" in source
-        assert "allow_overwrite=True" in source
+        task_source = _module_source(task_gen_mod)
+        assert "resolve_and_maybe_assign_tier" in task_source
+        assert "allow_overwrite=True" in task_source
+        assert "description=new_description" in task_source
+
+        worker_source = _module_source(worker_mod)
+        assert "_reestimate_task_tier" not in worker_source
 
 
 # ---------------------------------------------------------------------------
