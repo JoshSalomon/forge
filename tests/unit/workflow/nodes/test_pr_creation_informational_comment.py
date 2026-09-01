@@ -173,6 +173,10 @@ class TestPRInformationalComment:
         mock_adapter.create_comment.assert_awaited_once()
         call_args = mock_adapter.create_comment.call_args[0]
         assert call_args[1].native_id == 456
+        assert "**Review changes**" in call_args[2]
+        assert "**Request changes**" in call_args[2]
+        assert "address the review feedback automatically" in call_args[2]
+        assert "Regular comments are ignored by the review workflow" in call_args[2]
         assert "/forge rebase" in call_args[2]
         assert "/forge skip-gate" in call_args[2]
         assert "/forge unskip-gate" in call_args[2]

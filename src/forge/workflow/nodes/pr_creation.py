@@ -343,12 +343,15 @@ async def _post_pr_commands_comment(
     """Post informational PR commands comment on a newly created pull request."""
     try:
         comment_body = (
-            "### 🛠️ Forge PR Commands\n\n"
-            "This pull request was created by Forge! You can use the following commands by commenting on this PR:\n\n"
+            "### 🤖 Reviewing a Forge pull request\n\n"
+            "To send code feedback to Forge, open **Files changed**, select "
+            "**Review changes**, and submit a **Request changes** review. Forge will "
+            "address the review feedback automatically and push updates to this pull request.\n\n"
+            "Regular comments are ignored by the review workflow. Use them for conversation "
+            "or the Forge commands below:\n\n"
             "*   `/forge rebase` - Merge the base branch (e.g. `main`) into this PR branch, with conflicts resolved by AI.\n"
             "*   `/forge skip-gate <name>` - Skip a named CI check (substring match) for this PR. This setting persists across subsequent pushes.\n"
-            "*   `/forge unskip-gate <name>` - Remove a previously set CI check skip.\n\n"
-            "Feel free to use these commands to manage your workflow!"
+            "*   `/forge unskip-gate <name>` - Remove a previously set CI check skip."
         )
         await adapter.create_comment(repo_ref, identity_for(repo_ref, pr_number), comment_body)
         logger.info(f"Posted informational command comment on newly created PR #{pr_number}")
