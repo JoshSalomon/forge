@@ -376,6 +376,54 @@ class TestResolveAndMaybeAssignTier:
         jira_client.post_tier_comment.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_comment_failure_leaves_assignment_retryable(self, jira_client):
+        """A failed marker comment must not leave an orphan auto-owned label."""
+        jira_client.get_issue = AsyncMock(return_value=self._issue("Task", ["forge:managed"]))
+        jira_client.get_latest_tier_marker = AsyncMock(return_value=None)
+        jira_client.apply_tier_label = AsyncMock()
+        jira_client.post_tier_comment = AsyncMock(side_effect=RuntimeError("comment failed"))
+
+        with pytest.raises(RuntimeError, match="comment failed"):
+            await jira_client.resolve_and_maybe_assign_tier("TEST-123")
+
+        jira_client.apply_tier_label.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_recovers_label_from_marker_after_partial_assignment(self, jira_client):
+        """An existing marker completes a previously failed label mutation."""
+        jira_client.get_issue = AsyncMock(return_value=self._issue("Task", ["forge:managed"]))
+        jira_client.get_latest_tier_marker = AsyncMock(return_value=ModelTier.HEAVY)
+        jira_client.apply_tier_label = AsyncMock()
+        jira_client.post_tier_comment = AsyncMock()
+
+        await jira_client.resolve_and_maybe_assign_tier("TEST-123")
+
+        jira_client.apply_tier_label.assert_awaited_once_with("TEST-123", ModelTier.HEAVY)
+        jira_client.post_tier_comment.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_repairs_multiple_tier_labels_preserving_human_override(self, jira_client):
+        """Multiple labels converge to the label differing from Forge's marker."""
+        jira_client.get_issue = AsyncMock(
+            return_value=self._issue(
+                "Task",
+                [
+                    "forge:managed",
+                    tier_label(ModelTier.HEAVY),
+                    tier_label(ModelTier.LIGHT),
+                ],
+            )
+        )
+        jira_client.get_latest_tier_marker = AsyncMock(return_value=ModelTier.HEAVY)
+        jira_client.apply_tier_label = AsyncMock()
+        jira_client.post_tier_comment = AsyncMock()
+
+        await jira_client.resolve_and_maybe_assign_tier("TEST-123")
+
+        jira_client.apply_tier_label.assert_awaited_once_with("TEST-123", ModelTier.LIGHT)
+        jira_client.post_tier_comment.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_no_op_when_marker_matches_label(self, jira_client):
         """Marker present and equal to the current label -> no-op (SC-006).
 

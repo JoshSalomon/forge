@@ -16,6 +16,7 @@ from forge.models.model_tier import (
     TIER_MARKER_PREFIX,
     ModelTier,
     format_marker,
+    parse_tier_label,
     tier_label,
 )
 from forge.models.model_tier_estimator import estimate_tier
@@ -1195,22 +1196,51 @@ class JiraClient:
         estimate_summary = summary if summary is not None else issue.summary
         estimate_description = description if description is not None else (issue.description or "")
 
-        # Derive the current tier label (if any) from the issue labels.
-        current_label_tier: ModelTier | None = next(
-            (t for t in ModelTier if tier_label(t) in issue.labels),
-            None,
+        # Preserve Jira's label order while de-duplicating recognized tiers so
+        # malformed multi-tier states can be repaired deterministically.
+        label_tiers = list(
+            dict.fromkeys(
+                tier for label in issue.labels if (tier := parse_tier_label(label)) is not None
+            )
         )
+        current_label_tier = label_tiers[0] if label_tiers else None
 
         marker_tier = await self.get_latest_tier_marker(issue_key)
 
-        # No existing tier label -> estimate and assign (SC-004).
+        # No existing tier label. A marker without a label is the recoverable
+        # half-state left when comment creation succeeded but label mutation
+        # failed; finish that assignment without posting a duplicate comment.
         if current_label_tier is None:
+            if marker_tier is not None:
+                logger.info(
+                    f"Recovering tier label {marker_tier.value} on {issue_key} from existing marker"
+                )
+                await self.apply_tier_label(issue_key, marker_tier)
+                return
+
             estimate = estimate_tier(estimate_summary, estimate_description or "")
             logger.info(
                 f"Assigning estimated tier {estimate.tier.value} to {issue_key} (no existing tier)"
             )
-            await self.apply_tier_label(issue_key, estimate.tier)
+            # Post the marker first. If it fails, no label is left behind to be
+            # mistaken for a human-owned override. If the subsequent label PUT
+            # fails, the marker branch above completes it on the next pass.
             await self.post_tier_comment(issue_key, estimate.tier, estimate.reasons)
+            await self.apply_tier_label(issue_key, estimate.tier)
+            return
+
+        # Repair malformed states with multiple valid tier labels. If one label
+        # differs from Forge's marker, treat that label as the human override;
+        # otherwise retain the first Jira label. apply_tier_label removes every
+        # other valid tier label in one request, restoring the invariant.
+        if len(label_tiers) > 1:
+            human_tiers = [tier for tier in label_tiers if tier != marker_tier]
+            intended_tier = human_tiers[0] if human_tiers else current_label_tier
+            logger.warning(
+                f"Repairing multiple model-tier labels on {issue_key}; "
+                f"retaining {intended_tier.value}"
+            )
+            await self.apply_tier_label(issue_key, intended_tier)
             return
 
         ownership_kind = resolve_ownership_kind(
