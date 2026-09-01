@@ -1,6 +1,5 @@
 """Tests for complete feature workflow flow."""
 
-
 import pytest
 
 from forge.models.workflow import TicketType
@@ -66,6 +65,7 @@ class TestFeatureWorkflowPhases:
         )
 
         from forge.workflow.gates import route_prd_approval
+
         next_node = route_prd_approval(state)
 
         assert next_node == "generate_spec"
@@ -81,11 +81,13 @@ class TestFeatureWorkflowPhases:
         )
 
         from forge.workflow.gates import route_spec_approval
+
         next_node = route_spec_approval(state)
 
         assert next_node == "decompose_epics"
 
-    def test_plan_approved_to_task_generation(self):
+    @pytest.mark.asyncio
+    async def test_plan_approved_to_task_generation(self):
         """Approved plan progresses to task generation when resumed."""
         state = make_workflow_state(
             ticket_key="TEST-123",
@@ -95,9 +97,10 @@ class TestFeatureWorkflowPhases:
         )
 
         from forge.workflow.gates import route_plan_approval
-        next_node = route_plan_approval(state)
 
-        assert next_node == "generate_tasks"
+        next_node = await route_plan_approval(state)
+
+        assert next_node == "provision_epics"
 
 
 class TestFeatureWorkflowCompletion:
@@ -142,7 +145,8 @@ class TestMultiEpicFeature:
         """Multiple epics are tracked in state."""
         assert len(multi_epic_state["epic_keys"]) == 4
 
-    def test_all_epics_must_be_approved(self, multi_epic_state):
+    @pytest.mark.asyncio
+    async def test_all_epics_must_be_approved(self, multi_epic_state):
         """All epics must be approved for plan approval - workflow pauses to wait."""
         # Workflow is paused waiting for approval
         multi_epic_state["is_paused"] = True
@@ -151,7 +155,7 @@ class TestMultiEpicFeature:
 
         from forge.workflow.gates import route_plan_approval
 
-        result = route_plan_approval(multi_epic_state)
+        result = await route_plan_approval(multi_epic_state)
 
         # Should wait (END) until approved via webhook
         assert result == END
@@ -195,7 +199,8 @@ class TestMultiRepoFeature:
 
         # Should have more repos to process
         remaining = [
-            r for r in multi_repo_state["repos_to_process"]
+            r
+            for r in multi_repo_state["repos_to_process"]
             if r not in multi_repo_state["repos_completed"]
         ]
 

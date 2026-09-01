@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from pydantic import ValidationError
@@ -85,7 +85,6 @@ class JiraClient:
                 ),
                 headers={
                     "Accept": "application/json",
-                    "Content-Type": "application/json",
                 },
                 timeout=30.0,
             )
@@ -419,58 +418,86 @@ class JiraClient:
         Args:
             issue_key: The Jira issue key.
             filename: Name for the attachment file.
-            content: File content (string or bytes).
-            content_type: MIME type of the content.
+            content: File content as string or bytes.
+            content_type: The content type of the file.
 
         Returns:
             The attachment metadata from Jira API.
         """
-        # Attachments require a separate client without JSON content-type
-        async with httpx.AsyncClient(
-            base_url=self.base_url,
-            auth=(
-                self.settings.jira_user_email,
-                self.settings.jira_api_token.get_secret_value(),
-            ),
-            headers={
-                "Accept": "application/json",
-                "X-Atlassian-Token": "no-check",  # Required for attachments
-            },
-            timeout=60.0,
-        ) as client:
-            # Convert string to bytes if needed
-            if isinstance(content, str):
-                content = content.encode("utf-8")
+        if isinstance(content, str):
+            content = content.encode("utf-8")
 
-            files = {"file": (filename, content, content_type)}
-            response = await client.post(
-                f"/issue/{issue_key}/attachments",
-                files=files,
-            )
-            response.raise_for_status()
-            data = response.json()
-            logger.info(f"Added attachment {filename} to {issue_key}")
-            return data[0] if data else {}
+        if content_type == "text/markdown" and filename.endswith(".json"):
+            content_type = "application/json"
+
+        headers = {
+            "X-Atlassian-Token": "no-check",
+        }
+        files = {"file": (filename, content, content_type)}
+
+        response = await self._request_with_retry(
+            "POST",
+            f"/issue/{issue_key}/attachments",
+            headers=headers,
+            files=files,
+        )
+        response.raise_for_status()
+        data = response.json()
+        logger.info(f"Added attachment {filename} to {issue_key}")
+        return data[0] if data else {}
 
     async def get_attachments(self, issue_key: str) -> list[dict[str, Any]]:
-        """Get all attachments for a Jira issue.
+        """Get all attachments for a Jira issue by querying the issue's details.
 
         Args:
             issue_key: The Jira issue key.
 
         Returns:
-            List of attachment metadata dicts with 'id', 'filename', 'size', etc.
+            A list of attachment metadata dicts containing id, filename, and content URL.
         """
-        client = await self._get_client()
-        response = await client.get(
+        response = await self._request_with_retry(
+            "GET",
             f"/issue/{issue_key}",
             params={"fields": "attachment"},
         )
         response.raise_for_status()
         data = response.json()
         attachments = data.get("fields", {}).get("attachment", [])
-        logger.debug(f"Found {len(attachments)} attachments on {issue_key}")
-        return attachments
+
+        result = []
+        for att in attachments:
+            result.append(
+                {
+                    "id": att.get("id"),
+                    "filename": att.get("filename"),
+                    "content_url": att.get("content"),
+                }
+            )
+        logger.debug(f"Found {len(result)} attachments on {issue_key}")
+        return result
+
+    async def download_attachment(self, content_url: str) -> bytes:
+        """Download attachment raw binary content from the given content URL.
+
+        Args:
+            content_url: The full URL to download the attachment.
+
+        Returns:
+            The raw binary content of the attachment.
+        """
+        response = await self._request_with_retry("GET", content_url, follow_redirects=False)
+        if response.status_code in (301, 302, 303, 307, 308):
+            redirect_url = response.headers.get("Location")
+            if not redirect_url:
+                raise ValueError("Redirect response missing Location header")
+            logger.info("Downloading attachment securely via unauthenticated redirect")
+            async with httpx.AsyncClient(follow_redirects=True) as anon_client:
+                anon_response = await anon_client.get(redirect_url)
+                anon_response.raise_for_status()
+                return anon_response.content
+
+        response.raise_for_status()
+        return response.content
 
     async def delete_attachment(self, attachment_id: str) -> None:
         """Delete an attachment by ID.
@@ -478,8 +505,7 @@ class JiraClient:
         Args:
             attachment_id: The Jira attachment ID.
         """
-        client = await self._get_client()
-        response = await client.delete(f"/attachment/{attachment_id}")
+        response = await self._request_with_retry("DELETE", f"/attachment/{attachment_id}")
         response.raise_for_status()
         logger.info(f"Deleted attachment {attachment_id}")
 
@@ -591,6 +617,11 @@ class JiraClient:
         Returns:
             The created JiraComment.
         """
+        if len(body) > 32767:
+            raise ValueError(
+                f"Comment body length ({len(body)}) exceeds maximum Jira limit of 32767 characters"
+            )
+
         client = await self._get_client()
         adf_content = self._text_to_adf(body)
 
@@ -1350,7 +1381,7 @@ class JiraClient:
             }
 
         try:
-            adf = convert(text)
+            adf = convert(JiraClient._prepare_markdown_for_adf(text))
         except Exception as e:
             logger.warning(f"ADF conversion failed, using simple fallback: {e}")
             # Simple fallback - just paragraphs
@@ -1371,7 +1402,57 @@ class JiraClient:
             }
 
         JiraClient._link_bare_urls(adf)
-        return adf
+        return cast(dict[str, Any], adf)
+
+    @staticmethod
+    def _prepare_markdown_for_adf(text: str) -> str:
+        """Preserve intentional newlines unsupported by ``md-to-adf``.
+
+        Agent-generated plans commonly use one logical step per line without
+        inserting Markdown blank lines. ``md-to-adf`` joins such lines with a
+        space, producing a single dense Jira paragraph. Separate consecutive
+        prose lines while leaving fenced code, tables, and list structures
+        untouched.
+        """
+        lines = text.split("\n")
+        table_lines: set[int] = set()
+        for index in range(len(lines) - 1):
+            if "|" not in lines[index]:
+                continue
+            if re.fullmatch(r"[\s|:-]+", lines[index + 1]):
+                table_lines.update({index, index + 1})
+                row_index = index + 2
+                while (
+                    row_index < len(lines) and "|" in lines[row_index] and lines[row_index].strip()
+                ):
+                    table_lines.add(row_index)
+                    row_index += 1
+
+        prepared: list[str] = []
+        in_fence = False
+        list_line = re.compile(r"^\s*(?:[-*+] |\d+[.)] )")
+
+        for index, line in enumerate(lines):
+            prepared.append(line)
+            if line.strip().startswith("```"):
+                in_fence = not in_fence
+                continue
+            if in_fence or index == len(lines) - 1:
+                continue
+
+            next_line = lines[index + 1]
+            if not line.strip() or not next_line.strip():
+                continue
+            if index in table_lines or index + 1 in table_lines:
+                continue
+            if list_line.match(line) or list_line.match(next_line):
+                continue
+            if line.startswith((" ", "\t")) or next_line.startswith((" ", "\t")):
+                continue
+
+            prepared.append("")
+
+        return "\n".join(prepared)
 
     @staticmethod
     def _link_bare_urls(node: dict[str, Any], *, in_code_block: bool = False) -> None:

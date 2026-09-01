@@ -9,8 +9,9 @@ import signal
 import sys
 import uuid
 from dataclasses import replace as dataclass_replace
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from forge.api.routes.metrics import (
     record_workflow_completed,
@@ -18,6 +19,7 @@ from forge.api.routes.metrics import (
     record_workflow_started,
 )
 from forge.config import get_settings
+from forge.integrations.agents import ForgeAgent
 from forge.integrations.github.comment_signature import is_self_comment
 from forge.integrations.jira.client import JiraClient
 from forge.integrations.source_control.contracts import (
@@ -30,6 +32,7 @@ from forge.integrations.source_control.contracts import (
     ReviewState,
 )
 from forge.integrations.source_control.registry import get_registry
+from forge.models.draft import DraftItem, ForgeDecompositionDraft
 from forge.models.events import EventSource
 from forge.models.workflow import ForgeLabel, TicketType
 from forge.orchestrator.checkpointer import get_checkpointer, get_ticket_from_pr_index
@@ -43,6 +46,8 @@ from forge.workflow.declarative.resolver import (
     selected_workflow_name,
 )
 from forge.workflow.declarative.workflow import DeclarativeWorkflow
+from forge.workflow.gates.plan_approval import provision_epics_from_draft
+from forge.workflow.gates.task_approval import provision_tasks_from_draft
 from forge.workflow.nodes.error_handler import notify_error
 from forge.workflow.nodes.workspace_setup import teardown_workspace
 from forge.workflow.pr_state import (
@@ -54,11 +59,20 @@ from forge.workflow.pr_state import (
 )
 from forge.workflow.registry import create_default_router
 from forge.workflow.router import WorkflowRouter
+from forge.workflow.utils import check_direct_mode
 from forge.workflow.utils.automated_review_triage import (
     is_bot_sender,
     triage_automated_review,
 )
-from forge.workflow.utils.comment_classifier import CommentType, classify_comment
+from forge.workflow.utils.comment_classifier import (
+    CommentType,
+    classify_comment,
+    parse_comment_command,
+)
+from forge.workflow.utils.draft_manager import (
+    FORGE_EPICS_DRAFT_FILENAME,
+    DraftManager,
+)
 from forge.workflow.utils.jira_status import post_status_comment
 from forge.workflow.utils.proposal_review_threads import (
     reply_to_proposal_decisions,
@@ -177,6 +191,12 @@ _YOLO_GATES = {
     "task_plan_approval_gate",
     "task_approval_gate",
     "rca_option_gate",
+}
+
+_PENDING_APPROVAL_GATES = {
+    "plan_approval_gate",
+    "task_plan_approval_gate",
+    "task_approval_gate",
 }
 
 
@@ -553,6 +573,25 @@ class OrchestratorWorker:
                 if updated_values is existing_state.values:
                     return
 
+                # Draft edits intentionally leave the approval gate paused.  Persist
+                # those edits, but do not invoke the graph: ainvoke(None) would only
+                # re-enter the same gate and gives the misleading impression that the
+                # workflow was resumed.  This is also the checkpoint write that makes
+                # a subsequent approval provision the draft the reviewer just saw.
+                if (
+                    updated_values.get("is_paused")
+                    and updated_values.get("current_node") in _PENDING_APPROVAL_GATES
+                    and updated_values.get("current_node")
+                    == existing_state.values.get("current_node")
+                ):
+                    logger.info(
+                        "Persisting paused workflow update for %s at %s without resuming",
+                        ticket_key,
+                        updated_values.get("current_node"),
+                    )
+                    await compiled_workflow.aupdate_state(config, updated_values)
+                    return
+
                 logger.info(f"Resuming workflow for {ticket_key}")
 
                 was_errored = _is_workflow_errored(existing_state.values)
@@ -878,6 +917,24 @@ class OrchestratorWorker:
                 is_retry = True
                 logger.info(f"Detected retry signal via forge:retry label for {current_node}")
 
+            # Direct check for forge:plan-approved and forge:task-approved additions
+            to_lower = to_labels.lower() if to_labels else ""
+            from_lower = from_labels.lower() if from_labels else ""
+            if (
+                "forge:plan-approved" in to_lower
+                and "forge:plan-approved" not in from_lower
+                and current_node in ("plan_approval_gate", "task_plan_approval_gate")
+            ):
+                is_approved = True
+                logger.info(f"Detected forge:plan-approved addition on {message.ticket_key}")
+            if (
+                "forge:task-approved" in to_lower
+                and "forge:task-approved" not in from_lower
+                and current_node == "task_approval_gate"
+            ):
+                is_approved = True
+                logger.info(f"Detected forge:task-approved addition on {message.ticket_key}")
+
             # Check for approval labels - but only if it matches the current stage
             if "approved" in to_labels.lower() and "pending" in from_labels.lower():
                 # Validate the approval matches the workflow stage
@@ -962,7 +1019,273 @@ class OrchestratorWorker:
             if isinstance(comment_body, dict):
                 comment_body = self._extract_text_from_adf(comment_body)
 
+            # Child issue webhooks are routed to the parent Feature workflow.
+            # Keep the issue where the human actually commented as the target
+            # for draft slicing and all Jira replies/edits.
+            interaction_ticket_key = payload.get("source_ticket_key") or message.ticket_key
+
             if comment_body.strip():
+                # Check for interactive comment commands or natural language feedback when paused in PENDING_APPROVAL (BR-006)
+                if current_state.get("is_paused") and current_node in _PENDING_APPROVAL_GATES:
+                    parsed_cmd = parse_comment_command(comment_body)
+                    is_forge_cmd = parsed_cmd is not None
+                    # Revision comment check allows leading whitespace for consistency with the comment classifier
+                    is_revision_comment = bool(re.match(r"^\s*!", comment_body))
+
+                    is_direct_mode = check_direct_mode(current_state)
+                    if not is_direct_mode and (is_forge_cmd or is_revision_comment):
+                        draft_key = (
+                            "plan_draft"
+                            if current_node in ("plan_approval_gate", "task_plan_approval_gate")
+                            else "tasks_draft"
+                        )
+
+                        jira = JiraClient()
+                        try:
+                            # 1. Handle parsing errors immediately
+                            if is_forge_cmd and parsed_cmd is not None and "error" in parsed_cmd:
+                                await jira.add_comment(
+                                    interaction_ticket_key,
+                                    f"❌ **Error parsing command:** {parsed_cmd['error']}",
+                                )
+                                await jira.close()
+                                return current_state
+
+                            original_draft_raw = current_state.get(draft_key)
+                            original_draft = None
+                            if original_draft_raw is not None:
+                                if isinstance(original_draft_raw, dict):
+                                    original_draft = ForgeDecompositionDraft.model_validate(
+                                        original_draft_raw
+                                    )
+                                else:
+                                    original_draft = original_draft_raw
+
+                            # 2. Slice aggregate_draft if we are on an Epic (child ticket)
+                            if (
+                                draft_key == "tasks_draft"
+                                and interaction_ticket_key != current_state.get("ticket_key")
+                            ):
+                                epic_items = []
+                                if original_draft:
+                                    epic_items = [
+                                        item.model_copy()
+                                        for item in original_draft.items
+                                        if item.epic_key == interaction_ticket_key
+                                    ]
+                                # Re-sequence local IDs
+                                for idx, item in enumerate(epic_items, start=1):
+                                    item.id = idx
+
+                                original_draft = ForgeDecompositionDraft(
+                                    parent_key=interaction_ticket_key,
+                                    phase="tasks",
+                                    items=epic_items,
+                                    version=original_draft.version if original_draft else 1,
+                                    created_at=original_draft.created_at
+                                    if original_draft
+                                    else datetime.now(UTC),
+                                    updated_at=original_draft.updated_at
+                                    if original_draft
+                                    else datetime.now(UTC),
+                                )
+
+                            if original_draft is None or (
+                                original_draft_raw is None and not original_draft.items
+                            ):
+                                # Workflows checkpointed before draft state was persisted
+                                # still use the legacy revision signal.  Let the graph
+                                # regenerate their draft instead of attempting an LLM
+                                # edit with no source document.
+                                if is_revision_comment:
+                                    feedback_text = re.sub(r"^\s*!\s*", "", comment_body)
+                                    await post_status_comment(
+                                        jira,
+                                        interaction_ticket_key,
+                                        "✅ Forge received your revision request "
+                                        f"from {interaction_ticket_key}.",
+                                    )
+                                    await jira.close()
+                                    return {
+                                        **current_state,
+                                        "revision_requested": True,
+                                        "feedback_comment": feedback_text,
+                                        "current_epic_key": (
+                                            interaction_ticket_key
+                                            if interaction_ticket_key
+                                            != current_state.get("ticket_key")
+                                            else None
+                                        ),
+                                        "current_task_key": None,
+                                    }
+                                raise ValueError(f"Draft '{draft_key}' not found in state.")
+
+                            updated_draft = None
+                            if is_forge_cmd and parsed_cmd is not None:
+                                draft_json = [item.model_dump() for item in original_draft.items]
+                                mutated_json = DraftManager.apply_draft_modification(
+                                    draft_json, parsed_cmd
+                                )
+
+                                updated_items = [
+                                    DraftItem.model_validate(item) for item in mutated_json
+                                ]
+                                updated_draft = ForgeDecompositionDraft(
+                                    parent_key=original_draft.parent_key,
+                                    phase=original_draft.phase,
+                                    items=updated_items,
+                                    version=original_draft.version,
+                                    created_at=original_draft.created_at,
+                                    updated_at=datetime.now(UTC),
+                                )
+
+                            elif is_revision_comment:
+                                feedback_text = re.sub(r"^\s*!\s*", "", comment_body)
+                                if not feedback_text:
+                                    raise ValueError("Revision feedback cannot be empty.")
+
+                                feature_key = current_state.get("ticket_key") or message.ticket_key
+                                feature_issue = await jira.get_issue(feature_key)
+                                feature_summary = ""
+                                feature_description = ""
+                                if feature_issue:
+                                    if hasattr(feature_issue, "summary"):
+                                        feature_summary = str(feature_issue.summary)
+                                    if hasattr(feature_issue, "description"):
+                                        feature_description = str(feature_issue.description)
+
+                                context_data = {
+                                    "parent_key": feature_key,
+                                    "parent_summary": feature_summary,
+                                    "parent_description": feature_description,
+                                    "prd": current_state.get("prd_content", ""),
+                                    "spec": current_state.get("spec_content", ""),
+                                    "ticket_key": interaction_ticket_key,
+                                    "current_node": current_node,
+                                }
+
+                                agent = ForgeAgent()
+                                try:
+                                    revised_json_str = await agent.revise_draft_with_feedback(
+                                        draft_content=original_draft.model_dump_json(),
+                                        feedback=feedback_text,
+                                        context=context_data,
+                                    )
+                                finally:
+                                    await agent.close()
+
+                                updated_draft = ForgeDecompositionDraft.model_validate_json(
+                                    revised_json_str
+                                )
+
+                            if updated_draft is not None:
+                                # Update Feature state with the modified draft
+                                if (
+                                    draft_key == "tasks_draft"
+                                    and interaction_ticket_key != current_state.get("ticket_key")
+                                ):
+                                    # It's an Epic slice update. Merge back.
+                                    aggregate_draft = current_state.get("tasks_draft")
+                                    if aggregate_draft:
+                                        if isinstance(aggregate_draft, dict):
+                                            aggregate_draft = (
+                                                ForgeDecompositionDraft.model_validate(
+                                                    aggregate_draft
+                                                )
+                                            )
+                                        other_items = [
+                                            item.model_copy()
+                                            for item in aggregate_draft.items
+                                            if item.epic_key != interaction_ticket_key
+                                        ]
+                                        updated_epic_items = []
+                                        for item in updated_draft.items:
+                                            cloned_item = item.model_copy()
+                                            cloned_item.epic_key = interaction_ticket_key
+                                            updated_epic_items.append(cloned_item)
+
+                                        combined_items = other_items + updated_epic_items
+
+                                        for idx, item in enumerate(combined_items, start=1):
+                                            item.id = idx
+
+                                        updated_aggregate_draft = ForgeDecompositionDraft(
+                                            parent_key=current_state.get("ticket_key"),
+                                            phase="tasks",
+                                            items=combined_items,
+                                            version=aggregate_draft.version,
+                                            created_at=aggregate_draft.created_at,
+                                            updated_at=datetime.now(UTC),
+                                        )
+                                    else:
+                                        combined_items = []
+                                        for idx, item in enumerate(updated_draft.items, start=1):
+                                            cloned_item = item.model_copy()
+                                            cloned_item.epic_key = interaction_ticket_key
+                                            cloned_item.id = idx
+                                            combined_items.append(cloned_item)
+
+                                        updated_aggregate_draft = ForgeDecompositionDraft(
+                                            parent_key=current_state.get("ticket_key"),
+                                            phase="tasks",
+                                            items=combined_items,
+                                            version=updated_draft.version,
+                                            created_at=updated_draft.created_at,
+                                            updated_at=datetime.now(UTC),
+                                        )
+
+                                    current_state["tasks_draft"] = updated_aggregate_draft
+                                else:
+                                    current_state[draft_key] = updated_draft
+                                    if draft_key == "plan_draft":
+                                        try:
+                                            await DraftManager.save_draft_attachment(
+                                                jira,
+                                                current_state.get("ticket_key")
+                                                or message.ticket_key,
+                                                updated_draft,
+                                                FORGE_EPICS_DRAFT_FILENAME,
+                                            )
+                                        except Exception as write_err:
+                                            logger.warning(
+                                                f"Failed one-way draft write: {write_err}"
+                                            )
+
+                                # Preserve the original proposal and publish the revised
+                                # breakdown as a new comment so the planning history remains
+                                # visible to reviewers.
+                                await self._post_updated_review_comment(
+                                    jira, interaction_ticket_key, updated_draft
+                                )
+
+                                # Do not alter the reviewer's command or feedback either.
+                                # An acknowledgement is a separate event in the discussion.
+                                await jira.add_comment(
+                                    interaction_ticket_key,
+                                    f"✅ {comment_body}",
+                                )
+
+                            await jira.close()
+                            # A new mapping is the resume signal for draft mutations.
+                            # The worker uses identity to distinguish these updates from
+                            # unrelated comments while a workflow is paused.
+                            return {**current_state}
+
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to process comment command/revision: {e}",
+                                exc_info=True,
+                            )
+                            try:
+                                await jira.add_comment(
+                                    interaction_ticket_key,
+                                    f"❌ **Error processing command/revision:** {e}",
+                                )
+                            except Exception as post_err:
+                                logger.error(f"Failed to post error comment: {post_err}")
+                            await jira.close()
+                            return current_state
+
                 # >option N detection for rca_option_gate (runs before general classification)
                 if current_node == "rca_option_gate":
                     option_match = _OPTION_PATTERN.search(comment_body)
@@ -1333,7 +1656,7 @@ class OrchestratorWorker:
                         else None
                     )
                     pr_number = int(native_id) if native_id is not None else None
-                    inline_comments: list[dict[str, Any]] = []
+                    inline_comments = []
                     if repo_full and pr_number:
                         _repo_ref_obj, _adapter = get_adapter(repo_full)
                         _identity = identity_for(_repo_ref_obj, pr_number)
@@ -1821,6 +2144,54 @@ class OrchestratorWorker:
                     updated_state["automated_review_revision_count"] = 0
                     updated_state["automated_review_revision_pending"] = False
                     updated_state["proposal_review_decisions"] = []
+
+            # Ticket provisioning step on approval!
+            # Note on split ownership: The worker call site handles unpausing from human manual comments (webhook triggers)
+            # to catch and report provisioning errors early without breaking the LangGraph execution flow.
+            if current_node == "plan_approval_gate" and not updated_state.get("epic_keys"):
+                jira = JiraClient()
+                try:
+                    epic_keys = await provision_epics_from_draft(cast(Any, updated_state), jira)
+                    updated_state["epic_keys"] = epic_keys
+                except Exception as e:
+                    logger.error(
+                        f"Failed ticket provisioning during plan approval for {message.ticket_key}: {e}",
+                        exc_info=True,
+                    )
+                    # Keep paused in PENDING_APPROVAL and post error comment
+                    error_comment_text = f"❌ Ticket provisioning failed: {redact_secrets(e)}"
+                    try:
+                        await jira.add_comment(message.ticket_key, error_comment_text)
+                    except Exception as post_err:
+                        logger.error(f"Failed to post error comment: {post_err}", exc_info=True)
+                    return current_state
+                finally:
+                    await jira.close()
+
+            elif current_node == "task_approval_gate" and not updated_state.get("task_keys"):
+                # Note on split ownership: The worker call site handles unpausing from human manual comments (webhook triggers)
+                # to catch and report provisioning errors early without breaking the LangGraph execution flow.
+                jira = JiraClient()
+                try:
+                    task_keys, tasks_by_repo = await provision_tasks_from_draft(
+                        cast(Any, updated_state), jira
+                    )
+                    updated_state["task_keys"] = task_keys
+                    updated_state["tasks_by_repo"] = tasks_by_repo
+                except Exception as e:
+                    logger.error(
+                        f"Failed ticket provisioning during task approval for {message.ticket_key}: {e}",
+                        exc_info=True,
+                    )
+                    # Keep paused in PENDING_APPROVAL and post error comment
+                    error_comment_text = f"❌ Ticket provisioning failed: {redact_secrets(e)}"
+                    try:
+                        await jira.add_comment(message.ticket_key, error_comment_text)
+                    except Exception as post_err:
+                        logger.error(f"Failed to post error comment: {post_err}", exc_info=True)
+                    return current_state
+                finally:
+                    await jira.close()
         elif is_question:
             # Unpause so answer_question node runs, it will re-pause after answering
             updated_state["is_paused"] = False
@@ -2110,6 +2481,22 @@ class OrchestratorWorker:
         except Exception as e:
             logger.warning(f"Failed to post rebase feedback: {e}")
 
+    async def _post_updated_review_comment(
+        self, jira: JiraClient, ticket_key: str, draft: ForgeDecompositionDraft
+    ) -> None:
+        """Post a revised planning breakdown without changing prior comments.
+
+        Args:
+            jira: The Jira client.
+            ticket_key: The Jira ticket key.
+            draft: The updated draft decomposition.
+        """
+        try:
+            await jira.add_comment(ticket_key, DraftManager.format_review_comment(draft))
+            logger.info("Posted revised %s draft comment on %s", draft.phase, ticket_key)
+        except Exception as c_err:
+            logger.warning(f"Could not post revised review comment: {c_err}")
+
     async def _post_terminal_error_comment(self, ticket_key: str, error: str) -> None:
         """Post a comment explaining how to retry a terminal error.
 
@@ -2341,6 +2728,7 @@ class OrchestratorWorker:
             )
 
         yolo_mode = ForgeLabel.YOLO in labels
+        direct_mode = ForgeLabel.DIRECT_MODE in labels
 
         event_state = {
             "ticket_key": message.ticket_key,
@@ -2355,6 +2743,7 @@ class OrchestratorWorker:
             "is_paused": False,
             "retry_count": message.retry_count,
             "yolo_mode": yolo_mode,
+            "direct_mode": direct_mode,
         }
         if isinstance(workflow_instance, DeclarativeWorkflow):
             initial = workflow_instance.create_initial_state(message.ticket_key)

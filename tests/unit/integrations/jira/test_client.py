@@ -463,6 +463,28 @@ class TestJiraClientErrorComments:
         assert "https://[REDACTED]@github.com/org/repo.git" in posted_text
 
 
+class TestJiraClientCommentLimit:
+    """Tests for Jira client comment length limits."""
+
+    @pytest.fixture
+    def mock_client(self):
+        """Create client with mocked settings."""
+        with patch("forge.integrations.jira.client.get_settings") as mock_settings:
+            mock_settings.return_value.jira_base_url = "https://test.atlassian.net"
+            mock_settings.return_value.jira_api_token = MagicMock()
+            mock_settings.return_value.jira_api_token.get_secret_value.return_value = "token"
+            mock_settings.return_value.jira_user_email = "test@example.com"
+
+            client = JiraClient()
+            return client
+
+    @pytest.mark.asyncio
+    async def test_add_comment_exceeds_limit_raises_value_error(self, mock_client):
+        """Should raise ValueError if the body exceeds 32767 characters in add_comment."""
+        huge_body = "a" * 32768
+        with pytest.raises(ValueError, match="exceeds maximum Jira limit of 32767"):
+            await mock_client.add_comment("TEST-123", huge_body)
+
 class TestJiraClientADF:
     """Tests for ADF conversion."""
 
@@ -475,6 +497,42 @@ class TestJiraClientADF:
         assert adf["type"] == "doc"
         assert adf["version"] == 1
         assert len(adf["content"]) >= 1
+
+    def test_text_to_adf_preserves_multiline_plan_steps(self):
+        """Single-newline plan steps remain readable Jira paragraphs."""
+        adf = JiraClient._text_to_adf("**Plan:**\nInspect the handler\nAdd regression coverage")
+
+        assert [node["type"] for node in adf["content"]] == [
+            "paragraph",
+            "paragraph",
+            "paragraph",
+        ]
+        assert adf["content"][0]["content"][0]["text"] == "Plan:"
+        assert adf["content"][1]["content"][0]["text"] == "Inspect the handler"
+        assert adf["content"][2]["content"][0]["text"] == "Add regression coverage"
+
+    def test_text_to_adf_keeps_tables_lists_and_code_structured(self):
+        """Line-break preservation must not split Markdown block structures."""
+        markdown = """| ID | Summary |
+|----|---------|
+| 1 | First |
+
+- one
+- two
+
+```python
+first_line()
+second_line()
+```"""
+
+        adf = JiraClient._text_to_adf(markdown)
+
+        assert [node["type"] for node in adf["content"]] == [
+            "table",
+            "bulletList",
+            "codeBlock",
+        ]
+        assert adf["content"][2]["content"][0]["text"] == "first_line()\nsecond_line()"
 
     def test_text_to_adf_heading(self):
         """Markdown heading converts to ADF heading."""

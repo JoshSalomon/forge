@@ -240,7 +240,7 @@ class ContainerRunner:
         Returns:
             Dict of environment variables.
         """
-        env = {}
+        env: dict[str, str] = {}
 
         selected_backend = model_target.backend if model_target else self.settings.llm_backend
         if not selected_backend:
@@ -586,7 +586,7 @@ class ContainerRunner:
         task_key: str,
         skill_name: str,
         collected_cycles: list[ReviewCycleData],
-    ) -> tuple[ReviewCyclePoller | None, ReviewCycleRecorder | None, asyncio.Task | None]:
+    ) -> tuple[ReviewCyclePoller | None, ReviewCycleRecorder | None, asyncio.Task[Any] | None]:
         """Create review poller, recorder, and start background polling task.
 
         Args:
@@ -659,7 +659,7 @@ class ContainerRunner:
         self,
         poller: ReviewCyclePoller | None,
         recorder: ReviewCycleRecorder | None,
-        polling_task: asyncio.Task | None,
+        polling_task: asyncio.Task[Any] | None,
         workspace_path: Path,
         step_name: str | None,
         task_key: str,
@@ -877,7 +877,7 @@ class ContainerRunner:
         collected_cycles: list[ReviewCycleData] = []
         poller: ReviewCyclePoller | None = None
         recorder: ReviewCycleRecorder | None = None
-        polling_task: asyncio.Task | None = None
+        polling_task: asyncio.Task[Any] | None = None
 
         try:
             # Build container name and execution spec

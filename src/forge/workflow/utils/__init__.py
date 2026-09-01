@@ -5,7 +5,16 @@ from typing import Any
 
 from langgraph.graph import END
 
-from forge.workflow.utils.comment_classifier import CommentType, classify_comment
+from forge.workflow.utils.comment_classifier import (
+    CommentType,
+    classify_comment,
+    parse_comment_command,
+)
+from forge.workflow.utils.draft_manager import (
+    FORGE_EPICS_DRAFT_FILENAME,
+    FORGE_TASKS_DRAFT_FILENAME,
+    DraftManager,
+)
 from forge.workflow.utils.jira_status import (
     post_status_comment,
     remove_implementing_label,
@@ -89,11 +98,50 @@ def set_error(state: dict[str, Any], error: str) -> dict[str, Any]:
     }
 
 
+def check_yolo_mode(state: Any, labels: list[str] | None = None) -> bool:
+    """Check if YOLO mode is enabled based on labels or state.
+
+    The components are:
+    1. 'forge:yolo' label in the provided labels or the state context labels.
+    2. State yolo_mode.
+    """
+    # 1. Label check
+    has_label = False
+    if (labels and "forge:yolo" in labels) or "forge:yolo" in state.get("context", {}).get(
+        "labels", []
+    ):
+        has_label = True
+
+    # 2. State check
+    return has_label or bool(state.get("yolo_mode", False))
+
+
+def check_direct_mode(state: Any, labels: list[str] | None = None) -> bool:
+    """Check if direct ticket creation mode is enabled based on labels or state.
+
+    The components are:
+    1. ForgeLabel.DIRECT_MODE label in the provided labels or the state context labels.
+    2. State direct_mode.
+    """
+    from forge.models.workflow import ForgeLabel
+
+    has_label = False
+    if (labels and ForgeLabel.DIRECT_MODE in labels) or ForgeLabel.DIRECT_MODE in state.get(
+        "context", {}
+    ).get("labels", []):
+        has_label = True
+
+    return has_label or bool(state.get("direct_mode", False))
+
+
 __all__ = [
+    "check_yolo_mode",
+    "check_direct_mode",
     "CommentType",
     "classify_comment",
     "collect_review_exhaustion",
     "merge_review_exhaustion",
+    "parse_comment_command",
     "post_qa_summary_if_needed",
     "post_status_comment",
     "remove_implementing_label",
@@ -106,4 +154,7 @@ __all__ = [
     "set_review_pending_label",
     "transition_tasks_to_in_progress",
     "update_state_timestamp",
+    "FORGE_EPICS_DRAFT_FILENAME",
+    "FORGE_TASKS_DRAFT_FILENAME",
+    "DraftManager",
 ]
