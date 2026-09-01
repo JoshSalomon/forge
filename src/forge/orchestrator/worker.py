@@ -1225,18 +1225,19 @@ class OrchestratorWorker:
                                                 f"Failed one-way draft write: {write_err}"
                                             )
 
-                                # Update the original review comment with the new breakdown
-                                await self._update_original_review_comment(
+                                # Preserve the original proposal and publish the revised
+                                # breakdown as a new comment so the planning history remains
+                                # visible to reviewers.
+                                await self._post_updated_review_comment(
                                     jira, interaction_ticket_key, updated_draft
                                 )
 
-                                comment_id = comment.get("id") if comment else None
-                                if comment_id:
-                                    await jira.edit_comment(
-                                        interaction_ticket_key,
-                                        comment_id,
-                                        f"✅ {comment_body}",
-                                    )
+                                # Do not alter the reviewer's command or feedback either.
+                                # An acknowledgement is a separate event in the discussion.
+                                await jira.add_comment(
+                                    interaction_ticket_key,
+                                    f"✅ {comment_body}",
+                                )
 
                             await jira.close()
                             # A new mapping is the resume signal for draft mutations.
@@ -2454,10 +2455,10 @@ class OrchestratorWorker:
         except Exception as e:
             logger.warning(f"Failed to post rebase feedback: {e}")
 
-    async def _update_original_review_comment(
+    async def _post_updated_review_comment(
         self, jira: JiraClient, ticket_key: str, draft: ForgeDecompositionDraft
     ) -> None:
-        """Update the original review comment with the new breakdown (SC-002).
+        """Post a revised planning breakdown without changing prior comments.
 
         Args:
             jira: The Jira client.
@@ -2465,27 +2466,10 @@ class OrchestratorWorker:
             draft: The updated draft decomposition.
         """
         try:
-            comments_list = await jira.get_comments(ticket_key)
-            target_prefix = (
-                "### 📋 Proposed Epics Draft"
-                if draft.phase == "epics"
-                else "### 📋 Proposed Tasks Draft"
-            )
-            review_comment_id = None
-            for c in reversed(comments_list):
-                if c.body.startswith(target_prefix):
-                    review_comment_id = c.id
-                    break
-            if review_comment_id:
-                new_comment_body = DraftManager.format_review_comment(draft)
-                await jira.edit_comment(
-                    ticket_key,
-                    review_comment_id,
-                    new_comment_body,
-                )
-                logger.info(f"Edited original review comment {review_comment_id}")
+            await jira.add_comment(ticket_key, DraftManager.format_review_comment(draft))
+            logger.info("Posted revised %s draft comment on %s", draft.phase, ticket_key)
         except Exception as c_err:
-            logger.warning(f"Could not update original review comment: {c_err}")
+            logger.warning(f"Could not post revised review comment: {c_err}")
 
     async def _post_terminal_error_comment(self, ticket_key: str, error: str) -> None:
         """Post a comment explaining how to retry a terminal error.
