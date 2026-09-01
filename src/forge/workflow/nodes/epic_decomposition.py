@@ -102,7 +102,7 @@ async def decompose_epics(state: WorkflowState) -> WorkflowState:
         settings = get_settings()
         try:
             for repo in await get_effective_repos(jira, project_key):
-                available_repos.add(repo)
+                available_repos_set.add(repo)
         except MissingProjectConfig as e:
             if settings.forge_require_project_config:
                 logger.error(
