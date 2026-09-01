@@ -104,11 +104,11 @@ async def resolve_current_repo(
     ticket_text = "\n\n".join(
         part
         for part in [
-            getattr(issue, "summary", "") or "",
-            getattr(issue, "description", "") or "",
+            getattr(issue, "summary", ""),
+            getattr(issue, "description", ""),
             comments,
         ]
-        if part
+        if isinstance(part, str) and part
     )
     mentioned_repo = repo_mentioned_in_text(ticket_text, known_repos)
     if mentioned_repo:

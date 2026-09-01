@@ -21,9 +21,7 @@ from forge.api.routes.metrics import (
 from forge.config import get_settings
 from forge.integrations.agents import ForgeAgent
 from forge.integrations.github.comment_signature import is_self_comment
-from forge.integrations.github.client import GitHubClient
 from forge.integrations.jira.client import JiraClient
-from forge.models.draft import DraftItem, ForgeDecompositionDraft
 from forge.integrations.source_control.contracts import (
     ChangeRequestState,
     CheckStatus,
@@ -34,6 +32,7 @@ from forge.integrations.source_control.contracts import (
     ReviewState,
 )
 from forge.integrations.source_control.registry import get_registry
+from forge.models.draft import DraftItem, ForgeDecompositionDraft
 from forge.models.events import EventSource
 from forge.models.workflow import ForgeLabel, TicketType
 from forge.orchestrator.checkpointer import get_checkpointer, get_ticket_from_pr_index
@@ -1091,7 +1090,34 @@ class OrchestratorWorker:
                                     else datetime.now(UTC),
                                 )
 
-                            if not original_draft:
+                            if original_draft is None or (
+                                original_draft_raw is None and not original_draft.items
+                            ):
+                                # Workflows checkpointed before draft state was persisted
+                                # still use the legacy revision signal.  Let the graph
+                                # regenerate their draft instead of attempting an LLM
+                                # edit with no source document.
+                                if is_revision_comment:
+                                    feedback_text = re.sub(r"^\s*!\s*", "", comment_body)
+                                    await post_status_comment(
+                                        jira,
+                                        interaction_ticket_key,
+                                        "✅ Forge received your revision request "
+                                        f"from {interaction_ticket_key}.",
+                                    )
+                                    await jira.close()
+                                    return {
+                                        **current_state,
+                                        "revision_requested": True,
+                                        "feedback_comment": feedback_text,
+                                        "current_epic_key": (
+                                            interaction_ticket_key
+                                            if interaction_ticket_key
+                                            != current_state.get("ticket_key")
+                                            else None
+                                        ),
+                                        "current_task_key": None,
+                                    }
                                 raise ValueError(f"Draft '{draft_key}' not found in state.")
 
                             updated_draft = None

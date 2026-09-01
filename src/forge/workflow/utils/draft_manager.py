@@ -138,6 +138,7 @@ class DraftManager:
                 "repo": params.get("repo", ""),
                 "acceptance_criteria": params.get("acceptance_criteria", []),
                 "excluded": params.get("excluded", False),
+                "epic_key": params.get("epic_key"),
             }
 
             mutated_list.append(new_item)
