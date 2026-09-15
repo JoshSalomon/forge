@@ -7,6 +7,9 @@
         <loc>https://forge-sdlc.github.io/forge/getting-started/</loc>
       </url>
       <url>
+        <loc>https://forge-sdlc.github.io/forge/operations/</loc>
+      </url>
+      <url>
         <loc>https://forge-sdlc.github.io/forge/roadmap/</loc>
       </url>
       <url>
@@ -40,10 +43,16 @@
         <loc>https://forge-sdlc.github.io/forge/architecture/</loc>
       </url>
       <url>
+        <loc>https://forge-sdlc.github.io/forge/architecture/control-plane/</loc>
+      </url>
+      <url>
         <loc>https://forge-sdlc.github.io/forge/architecture/overview/</loc>
       </url>
       <url>
         <loc>https://forge-sdlc.github.io/forge/architecture/internals/</loc>
+      </url>
+      <url>
+        <loc>https://forge-sdlc.github.io/forge/architecture/structured-output/</loc>
       </url>
       <url>
         <loc>https://forge-sdlc.github.io/forge/architecture/reference/</loc>
